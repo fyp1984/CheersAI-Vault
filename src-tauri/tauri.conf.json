@@ -1,49 +1,48 @@
 {
-    "$schema":  "https://schema.tauri.app/config/2",
-    "productName":  "CheersAI Desktop",
-    "version":  "0.1.2",
-    "identifier":  "com.cheersai.vault",
-    "build":  {
-                  "beforeDevCommand":  "pnpm dev",
-                  "devUrl":  "http://localhost:1420",
-                  "beforeBuildCommand":  "pnpm build",
-                  "frontendDist":  "../dist"
-              },
-    "app":  {
-                "windows":  [
-                                {
-                                    "title":  "CheersAI Desktop",
-                                    "width":  1200,
-                                    "height":  800,
-                                    "minWidth":  900,
-                                    "minHeight":  600,
-                                    "resizable":  true,
-                                    "center":  true
-                                }
-                            ],
-                "security":  {
-                                 "csp":  null
-                             }
-            },
-    "bundle":  {
-                   "active":  true,
-                   "targets":  [
-                                   "nsis"
-                               ],
-                   "icon":  [
-                                "icons/32x32.png",
-                                "icons/128x128.png",
-                                "icons/128x128@2x.png",
-                                "icons/icon.png",
-                                "icons/icon.ico"
-                            ],
-                   "resources":  [
-                                     "scripts/*"
-                                 ],
-                   "publisher":  "CheersAI Team",
-                   "copyright":  "Copyright © 2024 CheersAI Team. All rights reserved.",
-                   "category":  "Utility",
-                   "shortDescription":  "Secure Data Masking Desktop Application",
-                   "longDescription":  "CheersAI Vault is a secure desktop application for data masking and privacy protection."
-               }
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CheersAI Desktop",
+  "version": "0.1.2",
+  "identifier": "com.cheersai.vault",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "CheersAI Desktop · 智享AI，安全随行",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "scripts/*"
+    ],
+    "publisher": "CheersAI Team",
+    "copyright": "Copyright © 2024 CheersAI Team. All rights reserved.",
+    "category": "Utility",
+    "shortDescription": "CheersAI Desktop secure workspace application",
+    "longDescription": "CheersAI Desktop is a secure desktop workspace that combines local Vault capabilities with online Desktop services in a single window."
+  }
 }

@@ -47,7 +47,10 @@ export function Sidebar() {
       <div className="flex items-center gap-3 px-4 py-4 border-b border-white/10">
         <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg shrink-0" />
         {!sidebarCollapsed && (
-          <span className="text-base font-medium text-white">CheersAI Vault</span>
+          <div className="min-w-0">
+            <div className="truncate text-base font-medium text-white">CheersAI Desktop</div>
+            <div className="truncate text-[11px] text-slate-400">智享AI，安全随行</div>
+          </div>
         )}
       </div>
 
