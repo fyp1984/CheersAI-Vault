@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -43,7 +43,7 @@ pulldown-cmark = "0.9"
 encoding_rs = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "native-tls"] }
 url = "2.4"
 pdf-extract = "0.7"
 

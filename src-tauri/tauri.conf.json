@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "CheersAI Desktop",
+        "title": "CheersAI Desktop · 智享AI，安全随行",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
@@ -33,6 +33,7 @@
       "icons/128x128.png", 
       "icons/128x128@2x.png",
       "icons/icon.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "resources": [
@@ -41,7 +42,7 @@
     "publisher": "CheersAI Team",
     "copyright": "Copyright © 2024 CheersAI Team. All rights reserved.",
     "category": "Utility",
-    "shortDescription": "Secure Data Masking Desktop Application",
-    "longDescription": "CheersAI Vault is a secure desktop application for data masking and privacy protection."
+    "shortDescription": "CheersAI Desktop secure workspace application",
+    "longDescription": "CheersAI Desktop is a secure desktop workspace that combines local Vault capabilities with online Desktop services in a single window."
   }
 }

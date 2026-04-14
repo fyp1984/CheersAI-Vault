@@ -20,7 +20,7 @@ interface EmbeddedBrowserProps {
 }
 
 export default function EmbeddedBrowser({ 
-  initialUrl = "https://7smile.dlithink.com/cheersai_desktop/apps/",
+  initialUrl = "https://uat-desktop.cheersai.cloud/",
   onUrlChange 
 }: EmbeddedBrowserProps) {
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
@@ -80,11 +80,6 @@ export default function EmbeddedBrowser({
         setDebugInfo(debugResult);
         
         analyzePageContent(response.content, url);
-        
-        // 尝试自动处理登录跳转
-        setTimeout(() => {
-          handleAutoRedirect(url, response.content);
-        }, 3000);
         
       } else {
         setError(`加载失败: HTTP ${response.status}`);
@@ -375,42 +370,6 @@ export default function EmbeddedBrowser({
     return injectedContent;
   };
 
-  const handleAutoRedirect = async (url: string, content: string) => {
-    // 检查是否需要自动跳转
-    if (url.includes('/apps/') && !url.includes('login')) {
-      console.log("Analyzing page for auto-redirect opportunities...");
-      
-      // 分析页面内容寻找登录相关信息
-      const loginPatterns = [
-        /href="([^"]*login[^"]*)"/gi,
-        /href="([^"]*auth[^"]*)"/gi,
-        /location\.href\s*=\s*["']([^"']*login[^"']*)["']/gi,
-        /window\.location\s*=\s*["']([^"']*login[^"']*)["']/gi
-      ];
-      
-      for (const pattern of loginPatterns) {
-        const matches = [...content.matchAll(pattern)];
-        if (matches.length > 0) {
-          const loginUrl = matches[0][1];
-          if (loginUrl && !loginUrl.includes('javascript:')) {
-            console.log("Found potential login URL in content:", loginUrl);
-            
-            // 构建完整 URL
-            const fullLoginUrl = loginUrl.startsWith('http') 
-              ? loginUrl 
-              : `https://7smile.dlithink.com${loginUrl.startsWith('/') ? '' : '/'}${loginUrl}`;
-            
-            console.log("Auto-redirecting to:", fullLoginUrl);
-            setTimeout(() => {
-              loadPage(fullLoginUrl);
-            }, 5000);
-            break;
-          }
-        }
-      }
-    }
-  };
-
   const handleNavigate = (url: string) => {
     if (url && url.trim()) {
       const fullUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -459,8 +418,7 @@ export default function EmbeddedBrowser({
   const handleForceRedirect = async () => {
     if (iframeRef.current) {
       try {
-        // 直接尝试导航到登录页面
-        handleNavigate('https://7smile.dlithink.com/login');
+        handleNavigate('https://uat-desktop.cheersai.cloud/signin/');
       } catch (error) {
         console.error("Failed to force redirect:", error);
       }
@@ -587,7 +545,7 @@ export default function EmbeddedBrowser({
           variant="outline"
           size="sm"
           onClick={handleForceRedirect}
-          title="强制跳转登录"
+          title="回到 Desktop 登录页"
           className="text-orange-600 border-orange-300 hover:bg-orange-50"
         >
           🔄

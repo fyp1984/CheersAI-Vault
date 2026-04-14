@@ -169,6 +169,18 @@ export const tauriCommands = {
   openWebviewWindow: (options: { url: string; title?: string; width?: number; height?: number }) =>
     invoke<string>("open_webview_window", { options }),
 
+  openDesktopWindowWithButton: (url: string) =>
+    invoke<void>("open_desktop_window_with_button", { url }),
+
+  ensureDesktopChildWebview: () =>
+    invoke<void>("ensure_desktop_child_webview"),
+
+  updateDesktopChildWebviewBounds: () =>
+    invoke<void>("update_desktop_child_webview_bounds"),
+
+  hideDesktopChildWebview: () =>
+    invoke<void>("hide_desktop_child_webview"),
+
   navigateWebview: (label: string, url: string) =>
     invoke<void>("navigate_webview", { label, url }),
 

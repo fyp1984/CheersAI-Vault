@@ -1,5 +1,6 @@
 use reqwest;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProxyResponse {
@@ -11,12 +12,21 @@ pub struct ProxyResponse {
 #[tauri::command]
 pub async fn fetch_webpage(url: String) -> Result<ProxyResponse, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let response = client
         .get(&url)
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
+        .header("Upgrade-Insecure-Requests", "1")
         .send()
         .await
         .map_err(|e| format!("Failed to fetch webpage: {}", e))?;
@@ -75,6 +85,6 @@ fn extract_base_domain(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""))
     } else {
-        "https://7smile.dlithink.com".to_string()
+        "https://uat-desktop.cheersai.cloud".to_string()
     }
 }

@@ -17,6 +17,10 @@ function AppRoutes() {
   const { initializeDatabase } = useLogStore();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    document.title = "CheersAI Desktop · 智享AI，安全随行";
+  }, []);
+
   // 应用启动时初始化数据库和迁移旧数据
   useEffect(() => {
     const init = async () => {
@@ -66,7 +70,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route element={<MainLayout />}>
-        <Route index element={<Navigate to="/cloud" replace />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="/process" element={<FileProcess />} />
         <Route path="/unmask" element={<FileUnmask />} />
         <Route path="/files" element={<FileManager />} />
@@ -78,6 +82,14 @@ function AppRoutes() {
       </Route>
     </Routes>
   );
+}
+
+function HomeRedirect() {
+  const target = new URLSearchParams(window.location.search).get("target");
+  if (target === "process") {
+    return <Navigate to="/process" replace />;
+  }
+  return <Navigate to="/cloud" replace />;
 }
 
 function App() {
