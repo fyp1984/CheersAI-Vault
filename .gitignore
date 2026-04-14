@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python embedded libraries (too large for GitHub)
+python-embed/
+src-tauri/resources/

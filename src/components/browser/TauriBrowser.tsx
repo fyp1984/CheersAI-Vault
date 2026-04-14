@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Globe
 } from "lucide-react";
+import { CLOUD_APP_URL } from "@/lib/cloud";
 
 interface TauriBrowserProps {
   initialUrl?: string;
@@ -18,7 +19,7 @@ interface TauriBrowserProps {
 }
 
 export default function TauriBrowser({ 
-  initialUrl = "https://7smile.dlithink.com/cheersai_desktop/apps/",
+  initialUrl = CLOUD_APP_URL,
   onUrlChange 
 }: TauriBrowserProps) {
   const [currentUrl, setCurrentUrl] = useState(initialUrl);

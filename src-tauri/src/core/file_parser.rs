@@ -383,12 +383,17 @@ fn parse_text_file(path: &str) -> Result<String> {
 // PDF parsing with OCR fallback
 pub fn parse_pdf(path: &str) -> Result<String> {
     use pdf_extract::extract_text;
+    use std::panic;
     
     println!("Attempting to parse PDF: {}", path);
     
-    // 首先尝试直接提取文本
-    match extract_text(path) {
-        Ok(text) => {
+    // 使用 catch_unwind 捕获 panic
+    let result = panic::catch_unwind(|| {
+        extract_text(path)
+    });
+    
+    match result {
+        Ok(Ok(text)) => {
             println!("Successfully extracted {} characters from PDF", text.len());
             
             if text.trim().is_empty() {
@@ -400,113 +405,203 @@ pub fn parse_pdf(path: &str) -> Result<String> {
                 Ok(text)
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             println!("Failed to extract text from PDF: {:?}, trying OCR...", e);
             // 提取失败，尝试 OCR
+            parse_pdf_with_python_ocr(path)
+        }
+        Err(panic_err) => {
+            println!("PDF parsing panicked: {:?}, trying OCR...", panic_err);
+            // Panic 发生，尝试 OCR
             parse_pdf_with_python_ocr(path)
         }
     }
 }
 
-// OCR-based PDF parsing using Python script
+// OCR-based PDF parsing using Python script or bundled executable
 fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     use std::process::{Command, Stdio};
-    use std::io::{BufRead, BufReader};
     use std::time::Duration;
+    use std::thread;
+    use std::sync::mpsc;
+    use std::io::{BufRead, BufReader};
     
-    println!("Starting Python OCR processing for PDF: {}", path);
-    println!("Note: OCR processing may take several minutes for the first run (downloading models)");
+    println!("Starting OCR processing for PDF: {}", path);
+    println!("Note: OCR processing may take 30-60 seconds");
     
-    // 获取 Python 脚本路径
-    let script_path = if cfg!(debug_assertions) {
-        // 开发模式：使用项目中的脚本
+    // 获取应用目录和应用数据目录
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    
+    // 尝试从应用数据目录获取 OCR 包（用户下载的）
+    let app_data_dir = dirs_next::data_dir()
+        .map(|d| d.join("com.cheersai.vault"))
+        .unwrap_or_else(|| exe_dir.clone());
+    
+    // 方案 1: 使用应用数据目录中下载的 Python 环境（推荐）
+    let downloaded_python = app_data_dir.join("ocr-package").join("python").join("python.exe");
+    let downloaded_script = app_data_dir.join("ocr-package").join("pdf_ocr.py");
+    
+    if downloaded_python.exists() && downloaded_script.exists() {
+        println!("Using downloaded Python OCR: {}", downloaded_python.display());
+        return run_ocr_command(
+            &downloaded_python.to_string_lossy(), 
+            &[&downloaded_script.to_string_lossy(), path], 
+            300  // 5 分钟超时
+        );
+    }
+    
+    // 方案 2: 使用打包的 Python 环境
+    let bundled_python = exe_dir.join("ocr-package").join("python").join("python.exe");
+    let bundled_script = exe_dir.join("ocr-package").join("pdf_ocr.py");
+    
+    if bundled_python.exists() && bundled_script.exists() {
+        println!("Using bundled Python OCR: {}", bundled_python.display());
+        return run_ocr_command(
+            &bundled_python.to_string_lossy(), 
+            &[&bundled_script.to_string_lossy(), path], 
+            300  // 5 分钟超时
+        );
+    }
+    
+    // 方案 3: 使用打包的 exe（PyInstaller）
+    let bundled_exe = exe_dir.join("pdf_ocr.exe");
+    if bundled_exe.exists() {
+        println!("Using bundled OCR executable: {}", bundled_exe.display());
+        return run_ocr_command(&bundled_exe.to_string_lossy(), &[path], 300);  // 5 分钟超时
+    }
+    
+    // 方案 4: 开发环境，使用项目中的脚本
+    let dev_script = if cfg!(debug_assertions) {
         std::path::PathBuf::from("scripts/pdf_ocr.py")
     } else {
-        // 生产模式：使用打包后的脚本路径
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
         exe_dir.join("scripts").join("pdf_ocr.py")
     };
     
-    println!("Using OCR script: {}", script_path.display());
-    
-    // 检查脚本是否存在
-    if !script_path.exists() {
+    if dev_script.exists() {
+        println!("Using development OCR script: {}", dev_script.display());
+        
+        // 尝试系统 Python
+        let python_commands = vec!["python", "python3", "py"];
+        let mut last_error = String::new();
+        
+        for python_cmd in &python_commands {
+            println!("Trying Python command: {}", python_cmd);
+            
+            match run_ocr_command(python_cmd, &[&dev_script.to_string_lossy(), path], 300) {  // 5 分钟超时
+                Ok(text) => return Ok(text),
+                Err(e) => {
+                    last_error = e.to_string();
+                    println!("Failed with {}: {}", python_cmd, last_error);
+                }
+            }
+        }
+        
+        // 系统 Python 失败 - 提示下载 OCR 包
         return Err(anyhow::anyhow!(
-            "OCR 脚本未找到: {}\n\n请确保 pdf_ocr.py 脚本存在于 scripts 目录中。",
-            script_path.display()
+            "⚠️ 检测到扫描版 PDF，需要 OCR 功能\n\n\
+            OCR 依赖未安装。请选择以下方式之一：\n\n\
+            方法 1：自动下载 OCR 包（推荐）\n\
+            • 点击下载 OCR 依赖按钮\n\
+            • 大小约 100MB，首次下载需要 2-5 分钟\n\
+            • 下载后自动安装，无需重启\n\n\
+            方法 2：手动安装 Python 环境\n\
+            1. 安装 Python 3.7+ (https://www.python.org/)\n\
+            2. 运行命令: pip install easyocr PyMuPDF\n\
+            3. 重新处理文件\n\n\
+            方法 3：使用在线 OCR 工具\n\
+            • https://www.onlineocr.net/\n\
+            • https://ocr.space/\n\
+            • 百度 OCR、腾讯 OCR"
         ));
     }
     
-    // 尝试调用 Python
-    let python_commands = vec!["python", "python3", "py"];
-    let mut last_error = String::new();
+    // 所有方案都不可用 - 提示下载
+    Err(anyhow::anyhow!(
+        "⚠️ OCR 功能未安装\n\n\
+        检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
+        解决方案：\n\n\
+        方法 1：自动下载 OCR 包（推荐）\n\
+        • 应用会提示下载 OCR 依赖包\n\
+        • 大小约 100MB\n\
+        • 下载后自动配置，无需重启\n\n\
+        方法 2：手动安装 Python OCR 环境\n\
+        1. 安装 Python 3.7+ (https://www.python.org/)\n\
+        2. 运行命令: pip install easyocr PyMuPDF\n\
+        3. 重新尝试处理文件\n\n\
+        方法 3：使用在线 OCR 工具\n\
+        • https://www.onlineocr.net/\n\
+        • https://ocr.space/\n\
+        • 百度 OCR、腾讯 OCR"
+    ))
+}
+
+// 运行 OCR 命令，支持实时输出和超时控制
+fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<String> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    use std::thread;
+    use std::sync::mpsc;
+    use std::io::{BufRead, BufReader};
     
-    for python_cmd in &python_commands {
-        println!("Trying Python command: {}", python_cmd);
-        
-        // 直接调用并等待完成
-        match Command::new(python_cmd)
-            .arg(&script_path)
-            .arg(path)
-            .output()
+    let (tx, rx) = mpsc::channel();
+    let command_clone = command.to_string();
+    let args_clone: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    
+    // 在新线程中执行命令
+    thread::spawn(move || {
+        let mut child = match Command::new(&command_clone)
+            .args(&args_clone)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
         {
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                
-                // 显示 stderr 输出（进度信息）
-                if !stderr.is_empty() {
-                    println!("OCR stderr:\n{}", stderr);
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(Err(anyhow::anyhow!("Failed to spawn process: {}", e)));
+                return;
+            }
+        };
+        
+        // 读取 stderr（进度信息）
+        if let Some(stderr) = child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            thread::spawn(move || {
+                for line in reader.lines() {
+                    if let Ok(line) = line {
+                        println!("OCR: {}", line);
+                    }
                 }
-                
+            });
+        }
+        
+        // 等待进程完成
+        match child.wait_with_output() {
+            Ok(output) => {
                 if output.status.success() {
                     let text = String::from_utf8_lossy(&output.stdout).to_string();
-                    
-                    println!("OCR completed successfully");
-                    println!("Extracted {} characters", text.len());
-                    
                     if text.trim().is_empty() {
-                        last_error = format!("{} returned empty result", python_cmd);
-                        continue; // 尝试下一个 Python 命令
+                        let _ = tx.send(Err(anyhow::anyhow!("OCR returned empty result")));
+                    } else {
+                        println!("OCR completed: {} characters extracted", text.len());
+                        let _ = tx.send(Ok(text));
                     }
-                    
-                    return Ok(text);
                 } else {
-                    last_error = format!("{}: {}", python_cmd, stderr);
-                    println!("OCR failed with {}: {}", python_cmd, stderr);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let _ = tx.send(Err(anyhow::anyhow!("OCR failed: {}", stderr)));
                 }
             }
             Err(e) => {
-                last_error = format!("Failed to execute {}: {}", python_cmd, e);
-                println!("{}", last_error);
+                let _ = tx.send(Err(anyhow::anyhow!("Failed to wait for process: {}", e)));
             }
         }
-    }
+    });
     
-    // 所有 Python 命令都失败了
-    Err(anyhow::anyhow!(
-        "⚠️ 检测到扫描版 PDF，但 OCR 处理失败\n\n\
-        错误信息: {}\n\n\
-        可能原因：\n\
-        1. 未安装 Python 环境\n\
-        2. 缺少必要的 Python 包（easyocr, PyMuPDF）\n\
-        3. 首次运行需要下载 OCR 模型（约 100MB）\n\n\
-        解决方案：\n\n\
-        方法 1：安装 OCR 环境（推荐）\n\
-        1. 确保已安装 Python 3.7+\n\
-        2. 运行命令安装依赖:\n\
-           pip install easyocr PyMuPDF\n\
-        3. 首次使用会自动下载模型，请耐心等待\n\n\
-        方法 2：使用在线 OCR 工具\n\
-        • https://www.onlineocr.net/\n\
-        • https://ocr.space/\n\
-        • 百度 OCR、腾讯 OCR\n\n\
-        方法 3：使用桌面 OCR 软件\n\
-        • Adobe Acrobat Pro\n\
-        • ABBYY FineReader\n\
-        • 福昕 PDF 编辑器",
-        last_error
-    ))
+    // 等待结果，带超时
+    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} seconds", timeout_secs)),
+    }
 }

@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "filebay-proxy",
+  "description": "Minimal IPC capability for the hidden FileBay API proxy window",
+  "windows": ["filebay-api-proxy"],
+  "permissions": [
+    "core:default"
+  ]
+}

@@ -56,7 +56,9 @@ export function GiteaSettings() {
   };
 
   const handleSave = async () => {
-    if (!config.url || !config.token || !config.owner || !config.repo) {
+    const tokenProvided = !!config.token;
+    const tokenAlreadySaved = !!status?.config.has_token;
+    if (!config.url || (!tokenProvided && !tokenAlreadySaved) || !config.owner || !config.repo) {
       alert('请填写完整的配置信息');
       return;
     }
@@ -65,22 +67,34 @@ export function GiteaSettings() {
       setSaving(true);
       await updateGiteaConfig({
         url: config.url,
-        token: config.token,
+        ...(tokenProvided ? { token: config.token } : {}),
         owner: config.owner,
         repo: config.repo,
         enabled: config.enabled,
       });
       
-      // 重新加载状态但不清空表单
       const result = await getGiteaStatus();
       setStatus(result);
-      
+      setConfig(prev => ({ ...prev, enabled: result.config.enabled }));
       alert('配置已保存');
     } catch (error) {
       console.error('Failed to save config:', error);
       alert('保存失败: ' + error);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleEnabled = async () => {
+    const newEnabled = !config.enabled;
+    setConfig({ ...config, enabled: newEnabled });
+    try {
+      await updateGiteaConfig({ enabled: newEnabled });
+      const result = await getGiteaStatus();
+      setStatus(result);
+    } catch (error) {
+      console.error('Failed to toggle enabled:', error);
+      setConfig({ ...config, enabled: !newEnabled });
     }
   };
 
@@ -184,7 +198,7 @@ export function GiteaSettings() {
           </div>
           <button
             type="button"
-            onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+            onClick={handleToggleEnabled}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
               config.enabled ? 'bg-blue-600' : 'bg-gray-200'
             }`}

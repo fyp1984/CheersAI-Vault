@@ -3,13 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, ExternalLink, AlertCircle, Globe } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
+import { CLOUD_APP_URL } from "@/lib/cloud";
 
 export default function CheersAICloud() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [htmlContent, setHtmlContent] = useState("");
-  const cloudUrl = "https://7smile.dlithink.com/cheersai_desktop/apps/";
+  const cloudUrl = CLOUD_APP_URL;
 
   const loadContent = async () => {
     setIsLoading(true);

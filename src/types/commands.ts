@@ -1,9 +1,19 @@
+// Custom rule (frontend-defined, passed to backend)
+export interface CustomRule {
+  id: string;
+  name: string;
+  pattern: string;
+  replacement_template: string;
+  use_counter?: boolean;
+}
+
 // Masking commands
 export interface MaskFileOptions {
   file_path: string;
   output_path: string;
   rule_ids: string[];
   passphrase?: string;
+  custom_rules?: CustomRule[];
 }
 
 export interface MaskResult {
@@ -16,6 +26,7 @@ export interface PreviewOptions {
   file_path: string;
   rule_ids: string[];
   max_rows?: number;
+  custom_rules?: CustomRule[];
 }
 
 export interface EntityMatch {
@@ -84,6 +95,7 @@ export interface BatchJobOptions {
   output_dir: string;
   rule_ids: string[];
   passphrase?: string;
+  custom_rules?: CustomRule[];
 }
 
 export interface BatchStatus {
@@ -94,4 +106,12 @@ export interface BatchStatus {
   status: "Pending" | "Running" | "Completed" | "Failed" | "Cancelled";
   current_file?: string;
   error?: string;
+}
+
+// OCR commands
+export interface OcrDownloadProgress {
+  downloaded: number;
+  total: number;
+  percentage: number;
+  status: string;
 }

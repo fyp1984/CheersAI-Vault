@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .manage(gitea::GiteaState::default())
+        .manage(webview::BrowserFetchPending::default())
         .invoke_handler(tauri::generate_handler![
             masking::mask_file,
             masking::preview_masking,
@@ -87,6 +88,7 @@ pub fn run() {
             webview::get_webview_url,
             webview::webview_eval_script,
             webview::navigate_main_window_with_button,
+            webview::on_browser_fetch_result,
             webview::navigate_to_local,
             gitea::get_gitea_status,
             gitea::update_gitea_config,
@@ -111,6 +113,10 @@ pub fn run() {
             sandbox::clear_sandbox_dir,
             sandbox::lock_sandbox_files,
             sandbox::unlock_sandbox_files,
+            ocr::check_ocr_installed,
+            ocr::get_ocr_install_path,
+            ocr::download_ocr_package,
+            ocr::uninstall_ocr_package,
         ])
         .setup(|_app| {
             println!("=== Tauri Setup Complete ===");

@@ -1,13 +1,15 @@
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { listen } from '@tauri-apps/api/event';
 import { MainLayout } from "@/components/layout/MainLayout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import FileProcess from "@/pages/FileProcess";
 import FileUnmask from "@/pages/FileUnmask";
 import RuleConfig from "@/pages/RuleConfig";
 import SandboxManager from "@/pages/SandboxManager";
 import OperationLog from "@/pages/OperationLog";
 import CheersAICloudBrowser from "@/pages/CheersAICloudBrowser";
+import TestPage from "@/pages/TestPage";
 import { FileManager } from "@/components/file/FileManager";
 import { GiteaSettings } from "@/components/settings/GiteaSettings";
 import { useLogStore } from "@/store/logStore";
@@ -43,6 +45,20 @@ function AppRoutes() {
     init();
   }, [initializeDatabase]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get("target");
+
+    if (target === "process") {
+      navigate("/process", { replace: true });
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.hash}`
+      );
+    }
+  }, [navigate]);
+
   // 监听导航事件
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -71,7 +87,8 @@ function AppRoutes() {
     <Routes>
       <Route element={<MainLayout />}>
         <Route index element={<HomeRedirect />} />
-        <Route path="/process" element={<FileProcess />} />
+        <Route path="/test" element={<TestPage />} />
+        <Route path="/process" element={<ErrorBoundary><FileProcess /></ErrorBoundary>} />
         <Route path="/unmask" element={<FileUnmask />} />
         <Route path="/files" element={<FileManager />} />
         <Route path="/gitea" element={<GiteaSettings />} />
@@ -94,9 +111,9 @@ function HomeRedirect() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <AppRoutes />
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 

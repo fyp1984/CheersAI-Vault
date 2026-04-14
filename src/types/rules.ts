@@ -9,6 +9,8 @@ export interface MaskRule {
   name: string;
   pattern: string;
   replacement: string;
+  replacement_template: string;
+  use_counter: boolean;
   enabled: boolean;
   builtin: boolean;
   description?: string;

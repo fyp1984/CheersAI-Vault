@@ -3,12 +3,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, Globe, Sparkles, Shield, Zap, RefreshCw, Code } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
+import { CLOUD_APP_URL, CLOUD_LOGIN_URLS } from "@/lib/cloud";
 
 export default function CheersAICloud() {
   const [isOpening, setIsOpening] = useState(false);
   const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(null);
   const [isDebugging, setIsDebugging] = useState(false);
-  const cloudUrl = "https://7smile.dlithink.com/cheersai_desktop/apps/";
+  const cloudUrl = CLOUD_APP_URL;
   const debugIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleOpenInWebView = async () => {
@@ -161,12 +162,7 @@ export default function CheersAICloud() {
 
     try {
       // 先尝试多个可能的登录页面 URL
-      const possibleLoginUrls = [
-        "https://7smile.dlithink.com/login",
-        "https://7smile.dlithink.com/cheersai_desktop/login", 
-        "https://7smile.dlithink.com/auth/login",
-        "https://7smile.dlithink.com/user/login"
-      ];
+      const possibleLoginUrls = CLOUD_LOGIN_URLS;
       
       console.log("Trying multiple login URLs...");
       

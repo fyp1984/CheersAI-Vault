@@ -109,6 +109,27 @@ pub fn generate_passphrase_words() -> String {
         .join("-")
 }
 
+/// Save plain JSON mapping to file（无 passphrase 时使用）
+pub fn save_plain_mapping(
+    path: &str,
+    mappings: &[crate::core::masking_engine::MappingEntry],
+) -> Result<(), String> {
+    use std::fs;
+    let json = serde_json::to_string_pretty(mappings)
+        .map_err(|e| format!("Failed to serialize mappings: {}", e))?;
+    fs::write(path, json.as_bytes())
+        .map_err(|e| format!("Failed to write mapping file: {}", e))?;
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::Path;
+        let win_path = Path::new(path).to_string_lossy().replace("/", "\\");
+        let _ = std::process::Command::new("attrib")
+            .args(["-h", "-s", &win_path])
+            .output();
+    }
+    Ok(())
+}
+
 /// Save encrypted mapping to file
 pub fn save_encrypted_mapping(
     path: &str,
@@ -128,31 +149,43 @@ pub fn save_encrypted_mapping(
     // Windows: 确保 .cmap 文件不被隐藏
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("attrib")
-            .args(["-h", "-s", path])
+        use std::path::Path;
+        let win_path = Path::new(path).to_string_lossy().replace("/", "\\");
+        let result = std::process::Command::new("attrib")
+            .args(["-h", "-s", &win_path])
             .output();
+        if let Err(e) = result {
+            eprintln!("Warning: Failed to set file attributes for {}: {}", win_path, e);
+        }
     }
 
     Ok(())
 }
 
-/// Load and decrypt mapping from file
+/// Load and decrypt mapping from file（自动兼容加密和明文 JSON 两种格式）
 pub fn load_encrypted_mapping(
     path: &str,
     passphrase: &str,
 ) -> Result<Vec<crate::core::masking_engine::MappingEntry>, String> {
     use std::fs;
 
-    let encrypted = fs::read(path)
+    let data = fs::read(path)
         .map_err(|e| format!("Failed to read mapping file: {}", e))?;
 
-    let decrypted = CryptoEngine::decrypt(&encrypted, passphrase)?;
-
-    let json = String::from_utf8(decrypted)
-        .map_err(|e| format!("Invalid UTF-8 in decrypted data: {}", e))?;
-
-    let mappings: Vec<crate::core::masking_engine::MappingEntry> = serde_json::from_str(&json)
-        .map_err(|e| format!("Failed to deserialize mappings: {}", e))?;
-
-    Ok(mappings)
+    // 检测是否为加密格式（以 MAGIC bytes 开头）
+    if data.starts_with(MAGIC) {
+        let decrypted = CryptoEngine::decrypt(&data, passphrase)?;
+        let json = String::from_utf8(decrypted)
+            .map_err(|e| format!("Invalid UTF-8 in decrypted data: {}", e))?;
+        let mappings: Vec<crate::core::masking_engine::MappingEntry> = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to deserialize mappings: {}", e))?;
+        Ok(mappings)
+    } else {
+        // 明文 JSON 格式（无 passphrase 时生成）
+        let json = String::from_utf8(data)
+            .map_err(|e| format!("Invalid UTF-8 in mapping file: {}", e))?;
+        let mappings: Vec<crate::core::masking_engine::MappingEntry> = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to deserialize plain mappings: {}", e))?;
+        Ok(mappings)
+    }
 }

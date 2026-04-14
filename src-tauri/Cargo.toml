@@ -1,6 +1,6 @@
 [package]
 name = "cheersai-vault"
-version = "0.1.0"
+version = "0.1.2"
 description = "CheersAI Vault - Secure Data Masking Desktop Application"
 authors = ["CheersAI Team"]
 edition = "2021"
@@ -43,7 +43,8 @@ pulldown-cmark = "0.9"
 encoding_rs = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "native-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "native-tls", "stream"] }
+futures-util = "0.3"
 url = "2.4"
 pdf-extract = "0.7"
 

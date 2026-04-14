@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
+import {
   ArrowLeft, 
   ArrowRight, 
   RotateCcw, 
@@ -13,6 +13,7 @@ import {
   Bug
 } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
+import { CLOUD_APP_URL } from "@/lib/cloud";
 
 interface EmbeddedBrowserProps {
   initialUrl?: string;
@@ -20,7 +21,7 @@ interface EmbeddedBrowserProps {
 }
 
 export default function EmbeddedBrowser({ 
-  initialUrl = "https://uat-desktop.cheersai.cloud/",
+  initialUrl = CLOUD_APP_URL,
   onUrlChange 
 }: EmbeddedBrowserProps) {
   const [currentUrl, setCurrentUrl] = useState(initialUrl);

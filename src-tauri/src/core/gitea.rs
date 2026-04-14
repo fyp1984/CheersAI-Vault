@@ -40,12 +40,6 @@ impl GiteaClient {
         let client = if config.url.contains("uat-filebay") {
             reqwest::Client::builder()
                 .danger_accept_invalid_certs(true)
-                .min_tls_version(reqwest::tls::Version::TLS_1_2)
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .pool_max_idle_per_host(0)
-                .pool_idle_timeout(None)
-                .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new())
         } else {

@@ -1,116 +1,99 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { tauriCommands } from "@/lib/tauri";
-import type { MaskRule } from "@/types/commands";
+import { useRuleStore } from "@/store/ruleStore";
 
 interface RuleSelectorProps {
   selectedRules: string[];
   onRulesChange: (ruleIds: string[]) => void;
 }
 
-// 从 localStorage 获取保存的规则选择
-const getSavedRules = (): string[] => {
-  try {
-    const saved = localStorage.getItem("selected-rules");
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
-  }
-};
-
-// 保存规则选择到 localStorage
 const saveRules = (ruleIds: string[]) => {
-  try {
-    localStorage.setItem("selected-rules", JSON.stringify(ruleIds));
-  } catch (error) {
-    console.error("Failed to save rules:", error);
-  }
+  try { localStorage.setItem("selected-rules", JSON.stringify(ruleIds)); }
+  catch { /* ignore */ }
 };
 
 export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps) {
-  const [rules, setRules] = useState<MaskRule[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { rules } = useRuleStore();
 
+  // 初始化时恢复 localStorage 选择或使用默认启用规则
   useEffect(() => {
-    const loadRules = async () => {
-      try {
-        const allRules = await tauriCommands.getRules();
-        setRules(allRules);
-        
-        // 首先尝试使用保存的规则选择
-        const savedRules = getSavedRules();
-        if (savedRules.length > 0) {
-          // 验证保存的规则是否仍然有效
-          const validSavedRules = savedRules.filter(ruleId => 
-            allRules.some(rule => rule.id === ruleId)
-          );
-          if (validSavedRules.length > 0) {
-            onRulesChange(validSavedRules);
-            return;
-          }
-        }
-        
-        // 如果没有保存的规则或保存的规则无效，使用默认规则
-        const defaultRules = allRules
-          .filter(rule => rule.builtin && rule.enabled)
-          .map(rule => rule.id);
-        onRulesChange(defaultRules);
-      } catch (error) {
-        console.error("Failed to load rules:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadRules();
-  }, [onRulesChange]);
-
-  const handleRuleToggle = (ruleId: string, enabled: boolean) => {
-    let newRules: string[];
-    if (enabled) {
-      newRules = [...selectedRules, ruleId];
-    } else {
-      newRules = selectedRules.filter(id => id !== ruleId);
-    }
+    // 只在规则加载完成且还没有选择时初始化
+    if (rules.length === 0) return;
+    if (selectedRules.length > 0) return;
     
-    onRulesChange(newRules);
-    saveRules(newRules); // 保存到 localStorage
+    try {
+      const saved = localStorage.getItem("selected-rules");
+      const savedIds: string[] = saved ? JSON.parse(saved) : [];
+      const valid = savedIds.filter((id) => rules.some((r) => r.id === id));
+      if (valid.length > 0) { 
+        console.log("Restoring saved rules:", valid);
+        onRulesChange(valid); 
+        return; 
+      }
+    } catch { /* ignore */ }
+    
+    // 默认选择所有启用的规则
+    const defaultRules = rules.filter((r) => r.enabled).map((r) => r.id);
+    console.log("Using default enabled rules:", defaultRules);
+    onRulesChange(defaultRules);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rules]);
+
+  const handleToggle = (ruleId: string, checked: boolean) => {
+    const next = checked
+      ? [...selectedRules, ruleId]
+      : selectedRules.filter((id) => id !== ruleId);
+    onRulesChange(next);
+    saveRules(next);
   };
 
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">脱敏规则</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-gray-500">加载中...</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  const builtin = rules.filter((r) => r.builtin);
+  const custom = rules.filter((r) => !r.builtin);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm">脱敏规则</CardTitle>
-        <p className="text-xs text-gray-500">选择的规则会自动保存</p>
+        <p className="text-xs text-gray-500">选择后自动保存</p>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {rules.map((rule) => (
+      <CardContent className="space-y-2">
+        {builtin.map((rule) => (
           <div key={rule.id} className="flex items-center justify-between">
-            <Label htmlFor={rule.id} className="text-sm font-normal">
+            <Label htmlFor={rule.id} className="text-sm font-normal cursor-pointer">
               {rule.name}
             </Label>
             <Switch
               id={rule.id}
               checked={selectedRules.includes(rule.id)}
-              onCheckedChange={(checked) => handleRuleToggle(rule.id, checked)}
+              onCheckedChange={(checked) => handleToggle(rule.id, checked)}
             />
           </div>
         ))}
+        {custom.length > 0 && (
+          <>
+            <div className="border-t pt-2 mt-2">
+              <p className="text-xs text-gray-400 mb-2">自定义规则</p>
+              {custom.map((rule) => (
+                <div key={rule.id} className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor={rule.id} className="text-sm font-normal cursor-pointer">
+                      {rule.name}
+                    </Label>
+                    <Badge variant="secondary" className="text-xs px-1 py-0">自定义</Badge>
+                  </div>
+                  <Switch
+                    id={rule.id}
+                    checked={selectedRules.includes(rule.id)}
+                    onCheckedChange={(checked) => handleToggle(rule.id, checked)}
+                  />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -67,11 +67,16 @@ function DiffLine({ original, masked }: { original: string; masked: string }) {
   );
 }
 
+export interface ManualReplacement {
+  find: string;
+  replace: string;
+}
+
 interface MaskingPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   previews: FilePreview[];
-  onConfirm: () => void;
+  onConfirm: (manualReplacements: ManualReplacement[]) => void;
   onCancel: () => void;
 }
 
@@ -85,12 +90,13 @@ export function MaskingPreviewDialog({
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
   const [modifiedPreviews, setModifiedPreviews] = useState(previews);
+  const [manualReplacements, setManualReplacements] = useState<ManualReplacement[]>([]);
 
   // 同步 previews 状态
   useEffect(() => {
-    console.log('MaskingPreviewDialog: previews updated', previews);
     setModifiedPreviews(previews);
-    setCurrentFileIndex(0); // 重置索引
+    setManualReplacements([]);
+    setCurrentFileIndex(0);
   }, [previews]);
 
   if (!previews || previews.length === 0) {
@@ -124,17 +130,39 @@ export function MaskingPreviewDialog({
     ).length;
   }, 0);
 
-  // 处理查找替换
-  const handleReplace = (findText: string, replaceText: string) => {
-    const newPreviews = [...modifiedPreviews];
-    const currentPreview = newPreviews[currentFileIndex].preview;
-    
-    // 在所有行中查找并替换
-    currentPreview.masked_rows = currentPreview.masked_rows.map(row => 
-      row.map(cell => cell.split(findText).join(replaceText))
-    );
-    
+  // 处理查找替换：
+  // 1. 优先在当前 masked_rows 中搜索（包含历次手动替换的累积结果，避免二次替换回退）
+  // 2. 当前 masked 中未找到时，fallback 到 original_rows（处理已被自动脱敏为占位符的情况）
+  const handleReplace = (findText: string, replaceText: string): number => {
+    if (!findText.trim()) return 0;
+    let count = 0;
+    const newPreviews = modifiedPreviews.map((fp, idx) => {
+      if (idx !== currentFileIndex) return fp;
+      const newMasked = fp.preview.masked_rows.map((row, rowIdx) => {
+        const origRow = fp.preview.original_rows[rowIdx] ?? [];
+        return row.map((cell, cellIdx) => {
+          const origCell = origRow[cellIdx] ?? '';
+          // 先在当前 masked 内容（含前次手动替换结果）里找
+          if (cell.includes(findText)) {
+            count += cell.split(findText).length - 1;
+            return cell.split(findText).join(replaceText);
+          }
+          // 找不到时 fallback：原文有但被自动脱敏掉了，以原文为基础替换
+          if (origCell.includes(findText)) {
+            count += origCell.split(findText).length - 1;
+            return origCell.split(findText).join(replaceText);
+          }
+          return cell;
+        });
+      });
+      return { ...fp, preview: { ...fp.preview, masked_rows: newMasked } };
+    });
+    setManualReplacements(prev => [
+      ...prev.filter(r => r.find !== findText),
+      { find: findText, replace: replaceText },
+    ]);
     setModifiedPreviews(newPreviews);
+    return count;
   };
 
   // 收集所有检测到的实体
@@ -239,11 +267,13 @@ export function MaskingPreviewDialog({
             重新开始
           </Button>
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm(manualReplacements)}
             className="bg-blue-600 hover:bg-blue-700 flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
-            执行脱敏并保存
+            {manualReplacements.length > 0
+              ? `执行脱敏并保存（含 ${manualReplacements.length} 条手动替换）`
+              : "执行脱敏并保存"}
           </Button>
         </DialogFooter>
       </DialogContent>

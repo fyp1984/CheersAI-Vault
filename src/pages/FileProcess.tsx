@@ -4,10 +4,12 @@ import { FileQueueItem } from "@/components/file/FileQueueItem";
 import { BatchProgress } from "@/components/file/BatchProgress";
 import { RuleSelector } from "@/components/file/RuleSelector";
 import { PassphraseBox } from "@/components/common/PassphraseBox";
-import { MaskingPreviewDialog } from "@/components/file/MaskingPreviewDialog";
+import { MaskingPreviewDialog, type ManualReplacement } from "@/components/file/MaskingPreviewDialog";
+import { OcrDownloadDialog } from "@/components/file/OcrDownloadDialog";
 import { Button } from "@/components/ui/button";
 import { useFileStore } from "@/store/fileStore";
 import { useLogStore } from "@/store/logStore";
+import { useRuleStore } from "@/store/ruleStore";
 import { Play, Trash2, FolderOpen } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { stat, exists } from "@tauri-apps/plugin-fs";
@@ -33,11 +35,26 @@ export default function FileProcess() {
   } = useFileStore();
 
   const { addLog } = useLogStore();
+  const { rules } = useRuleStore();
 
   const [batchStatus, setBatchStatus] = useState<BatchStatus | null>(null);
-  const [selectedRules, setSelectedRules] = useState<string[]>([]);
+  const [selectedRules, setSelectedRules] = useState<string[]>(() => {
+    // 初始化时使用所有启用的规则
+    return rules.filter((r) => r.enabled).map((r) => r.id);
+  });
   const [previewData, setPreviewData] = useState<Array<{ fileName: string; preview: PreviewResult }>>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [showOcrDownload, setShowOcrDownload] = useState(false);
+
+  // 检测是否是 OCR 相关错误
+  const isOcrError = (error: unknown): boolean => {
+    const errorStr = String(error).toLowerCase();
+    return errorStr.includes('ocr') || 
+           errorStr.includes('扫描版') || 
+           errorStr.includes('python') ||
+           errorStr.includes('easyocr');
+  };
 
   // 轮询批处理状态
   useEffect(() => {
@@ -155,13 +172,24 @@ export default function FileProcess() {
     const pendingFiles = files.filter(f => f.status === "pending");
     if (pendingFiles.length === 0) return;
 
+    setIsLoadingPreview(true);
     try {
+      const customRules = rules
+        .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          pattern: r.pattern,
+          replacement_template: r.replacement_template,
+          use_counter: r.use_counter,
+        }));
+
       const previews = await Promise.all(
         pendingFiles.map(async (file) => {
           const preview = await tauriCommands.previewMasking({
             file_path: file.path,
             rule_ids: selectedRules,
-            // 不限制行数，加载完整文件
+            custom_rules: customRules.length > 0 ? customRules : undefined,
           });
           return {
             fileName: file.name,
@@ -173,20 +201,61 @@ export default function FileProcess() {
       setShowPreview(true);
     } catch (error) {
       console.error("Failed to load preview:", error);
-      alert(`加载预览失败: ${error}`);
+      
+      // 检查是否是 OCR 错误
+      if (isOcrError(error)) {
+        setShowOcrDownload(true);
+      } else {
+        alert(`加载预览失败: ${error}`);
+      }
+    } finally {
+      setIsLoadingPreview(false);
     }
   };
 
-  const executeActualMasking = async () => {
-    // 记录开始处理日志
+  const executeActualMasking = async (manualReplacements: ManualReplacement[] = []) => {
+    // 检查是否选择了规则
+    if (selectedRules.length === 0 && manualReplacements.length === 0) {
+      alert("请至少选择一个脱敏规则或添加手动替换规则");
+      return;
+    }
+
     await addLog("info", `开始批处理 ${pendingCount} 个文件`, `输出目录: ${outputDir}`, undefined, "batch_start");
 
     try {
+      const customRulesForBatch = rules
+        .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          pattern: r.pattern,
+          replacement_template: r.replacement_template,
+          use_counter: r.use_counter,
+        }));
+
+      // 将手动查找替换条目转成精确匹配自定义规则（固定文本、不追加序号）
+      const manualRules = manualReplacements
+        .filter(mr => mr.find.trim())
+        .map((mr, i) => ({
+          id: `manual_replace_${i}`,
+          name: `手动替换: ${mr.find}`,
+          pattern: mr.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), // 转义为字面量
+          replacement_template: mr.replace,
+          use_counter: false,
+        }));
+
+      const allCustomRules = [...customRulesForBatch, ...manualRules];
+      const allRuleIds = [
+        ...selectedRules,
+        ...manualRules.map(r => r.id),
+      ];
+
       const jobId = await tauriCommands.startBatchJob({
         file_paths: files.filter(f => f.status === "pending").map(f => f.path),
         output_dir: outputDir,
-        rule_ids: selectedRules,
+        rule_ids: allRuleIds,
         passphrase: passphrase || undefined,
+        custom_rules: allCustomRules.length > 0 ? allCustomRules : undefined,
       });
 
       setActiveJob(jobId);
@@ -200,17 +269,22 @@ export default function FileProcess() {
     } catch (error) {
       console.error("Failed to start batch job:", error);
       await addLog("error", "启动批处理失败", `错误: ${error}`, undefined, "batch_error");
-      alert(`启动批处理失败: ${error}`);
+      
+      // 检查是否是 OCR 错误
+      if (isOcrError(error)) {
+        setShowOcrDownload(true);
+      } else {
+        alert(`启动批处理失败: ${error}`);
+      }
     }
   };
 
   const pendingCount = files.filter((f) => f.status === "pending").length;
 
-  const handlePreviewConfirm = async () => {
+  const handlePreviewConfirm = async (manualReplacements: ManualReplacement[]) => {
     setShowPreview(false);
     setPreviewData([]);
-    // 执行实际的脱敏操作
-    await executeActualMasking();
+    await executeActualMasking(manualReplacements);
   };
 
   const handlePreviewCancel = () => {
@@ -268,11 +342,23 @@ export default function FileProcess() {
             <Button
               size="sm"
               onClick={handleStart}
-              disabled={pendingCount === 0 || !outputDir || !!activeJobId || selectedRules.length === 0}
+              disabled={pendingCount === 0 || !outputDir || !!activeJobId || selectedRules.length === 0 || isLoadingPreview}
               className="bg-indigo-500 hover:bg-indigo-600"
             >
-              <Play className="w-4 h-4 mr-1" />
-              {activeJobId ? "处理中..." : `开始处理 ${pendingCount > 0 ? `(${pendingCount})` : ""}`}
+              {isLoadingPreview ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  正在分析...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 mr-1" />
+                  {activeJobId ? "处理中..." : `开始处理 ${pendingCount > 0 ? `(${pendingCount})` : ""}`}
+                </>
+              )}
             </Button>
           </div>
         }
@@ -349,6 +435,16 @@ export default function FileProcess() {
         previews={previewData}
         onConfirm={handlePreviewConfirm}
         onCancel={handlePreviewCancel}
+      />
+
+      {/* OCR 下载对话框 */}
+      <OcrDownloadDialog
+        open={showOcrDownload}
+        onOpenChange={setShowOcrDownload}
+        onComplete={() => {
+          // OCR 安装完成后，可以重试之前失败的操作
+          console.log('OCR installed successfully');
+        }}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::core::batch;
+use crate::commands::masking::CustomRule;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BatchJobOptions {
@@ -7,6 +8,7 @@ pub struct BatchJobOptions {
     pub output_dir: String,
     pub rule_ids: Vec<String>,
     pub passphrase: Option<String>,
+    pub custom_rules: Option<Vec<CustomRule>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

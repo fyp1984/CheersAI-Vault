@@ -11,6 +11,7 @@ import {
   Monitor
 } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
+import { CLOUD_APP_URL, resolveCloudUrl } from "@/lib/cloud";
 
 interface NativeBrowserProps {
   initialUrl?: string;
@@ -18,7 +19,7 @@ interface NativeBrowserProps {
 }
 
 export default function NativeBrowser({ 
-  initialUrl = "https://7smile.dlithink.com/cheersai_desktop/apps/",
+  initialUrl = CLOUD_APP_URL,
   onUrlChange 
 }: NativeBrowserProps) {
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
@@ -159,7 +160,7 @@ export default function NativeBrowser({
           } else {
             // 直接跳转到登录页面
             console.log('No login links found, direct navigation...');
-            window.location.href = 'https://7smile.dlithink.com/login';
+            window.location.href = '${resolveCloudUrl("/login")}';
           }
         }
         

@@ -1,12 +1,23 @@
 use serde::{Deserialize, Serialize};
 use crate::core::{masking_engine, file_parser, ner, crypto};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomRule {
+    pub id: String,
+    pub name: String,
+    pub pattern: String,
+    pub replacement_template: String,
+    /// false = 直接使用 replacement_template 作为固定文本（不追加计数器）
+    pub use_counter: Option<bool>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MaskFileOptions {
     pub file_path: String,
     pub output_path: String,
     pub rule_ids: Vec<String>,
     pub passphrase: Option<String>,
+    pub custom_rules: Option<Vec<CustomRule>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +32,7 @@ pub struct PreviewOptions {
     pub file_path: String,
     pub rule_ids: Vec<String>,
     pub max_rows: Option<usize>,
+    pub custom_rules: Option<Vec<CustomRule>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,19 +55,45 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
     
     let mut mapping = std::collections::HashMap::new();
     let mut counter = 0usize;
-    let mapping_path = options.passphrase.as_ref().map(|_| {
-        format!("{}.cmap", options.output_path)
-    });
+    // 无论有无 passphrase 都生成 .cmap 路径
+    let mapping_path = Some(format!("{}.cmap", options.output_path));
 
-    // Get rules by IDs
-    let all_rules = masking_engine::get_builtin_rules();
-    let active_rules: Vec<_> = all_rules
+    // 合并 builtin + custom 规则，并强制 enabled=true（用户主动选择优先于默认禁用状态）
+    let builtin = masking_engine::get_builtin_rules();
+    let mut custom_masking_rules: Vec<masking_engine::MaskingRule> = options.custom_rules
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|cr| masking_engine::MaskingRule {
+            id: cr.id.clone(),
+            name: cr.name.clone(),
+            pattern: cr.pattern.clone(),
+            replacement_template: cr.replacement_template.clone(),
+            use_counter: cr.use_counter.unwrap_or(true),
+            enabled: true,
+            builtin: false,
+        })
+        .collect();
+    let mut all_combined: Vec<masking_engine::MaskingRule> = builtin.to_vec();
+    all_combined.append(&mut custom_masking_rules);
+
+    let active_rules: Vec<_> = all_combined
         .iter()
         .filter(|r| options.rule_ids.contains(&r.id))
-        .cloned()
+        .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
         .collect();
     
+    println!("=== Masking Debug Info ===");
+    println!("Total available rules: {}", all_combined.len());
+    println!("Requested rule IDs: {:?}", options.rule_ids);
     println!("Active rules count: {}", active_rules.len());
+    for rule in &active_rules {
+        println!("  - {} ({}): pattern={}", rule.name, rule.id, rule.pattern);
+    }
+    println!("========================");
+    
+    // 创建 NER 检测器
+    let ner_detector = ner::NERDetector::new();
 
     match format {
         file_parser::FileFormat::Csv => {
@@ -74,7 +112,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                 println!("Processing row {}/{}", row_idx + 1, rows.len());
                 let mut masked_row = Vec::new();
                 for cell in row {
-                    let masked = masking_engine::mask_value(&cell, &active_rules, &mut mapping, &mut counter);
+                    let masked = masking_engine::mask_value_with_ner(&cell, &active_rules, &ner_detector, &mut mapping, &mut counter);
                     masked_row.push(masked);
                 }
                 masked_rows.push(masked_row);
@@ -87,15 +125,16 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to write CSV: {}", e)
                 })?;
 
-            if let Some(passphrase) = &options.passphrase {
-                if let Some(ref map_path) = mapping_path {
-                    println!("Saving encrypted mapping...");
-                    let mappings: Vec<_> = mapping.values().cloned().collect();
+            if let Some(ref map_path) = mapping_path {
+                let mappings: Vec<_> = mapping.values().cloned().collect();
+                if let Some(passphrase) = &options.passphrase {
+                    println!("Saving encrypted mapping to: {}", map_path);
                     crypto::save_encrypted_mapping(map_path, &mappings, passphrase)
-                        .map_err(|e| {
-                            println!("Mapping save error: {}", e);
-                            format!("Failed to save mapping: {}", e)
-                        })?;
+                        .map_err(|e| { println!("Mapping save error: {}", e); format!("Failed to save mapping: {}", e) })?;
+                } else {
+                    println!("Saving plain JSON mapping to: {}", map_path);
+                    crypto::save_plain_mapping(map_path, &mappings)
+                        .map_err(|e| { println!("Mapping save error: {}", e); format!("Failed to save mapping: {}", e) })?;
                 }
             }
         }
@@ -107,7 +146,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to parse Word: {}", e)
                 })?;
 
-            let masked_content = masking_engine::mask_value(&content, &active_rules, &mut mapping, &mut counter);
+            let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
 
             // Output as .txt file instead of .docx for simplicity
             let txt_output = options.output_path.replace(".docx", ".txt").replace(".doc", ".txt");
@@ -118,10 +157,13 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to write Word: {}", e)
                 })?;
 
-            if let Some(passphrase) = &options.passphrase {
-                if let Some(ref map_path) = mapping_path {
-                    let mappings: Vec<_> = mapping.values().cloned().collect();
+            if let Some(ref map_path) = mapping_path {
+                let mappings: Vec<_> = mapping.values().cloned().collect();
+                if let Some(passphrase) = &options.passphrase {
                     crypto::save_encrypted_mapping(map_path, &mappings, passphrase)
+                        .map_err(|e| format!("Failed to save mapping: {}", e))?;
+                } else {
+                    crypto::save_plain_mapping(map_path, &mappings)
                         .map_err(|e| format!("Failed to save mapping: {}", e))?;
                 }
             }
@@ -134,7 +176,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to parse PowerPoint: {}", e)
                 })?;
 
-            let masked_content = masking_engine::mask_value(&content, &active_rules, &mut mapping, &mut counter);
+            let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
 
             // Output as .txt file instead of .pptx for simplicity
             let txt_output = options.output_path.replace(".pptx", ".txt").replace(".ppt", ".txt");
@@ -145,10 +187,13 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to write PowerPoint: {}", e)
                 })?;
 
-            if let Some(passphrase) = &options.passphrase {
-                if let Some(ref map_path) = mapping_path {
-                    let mappings: Vec<_> = mapping.values().cloned().collect();
+            if let Some(ref map_path) = mapping_path {
+                let mappings: Vec<_> = mapping.values().cloned().collect();
+                if let Some(passphrase) = &options.passphrase {
                     crypto::save_encrypted_mapping(map_path, &mappings, passphrase)
+                        .map_err(|e| format!("Failed to save mapping: {}", e))?;
+                } else {
+                    crypto::save_plain_mapping(map_path, &mappings)
                         .map_err(|e| format!("Failed to save mapping: {}", e))?;
                 }
             }
@@ -161,7 +206,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to read file: {}", e)
                 })?;
 
-            let masked_content = masking_engine::mask_value(&content, &active_rules, &mut mapping, &mut counter);
+            let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
 
             println!("Writing Markdown/Text output...");
             file_parser::write_markdown(&options.output_path, &masked_content)
@@ -170,10 +215,13 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to write file: {}", e)
                 })?;
 
-            if let Some(passphrase) = &options.passphrase {
-                if let Some(ref map_path) = mapping_path {
-                    let mappings: Vec<_> = mapping.values().cloned().collect();
+            if let Some(ref map_path) = mapping_path {
+                let mappings: Vec<_> = mapping.values().cloned().collect();
+                if let Some(passphrase) = &options.passphrase {
                     crypto::save_encrypted_mapping(map_path, &mappings, passphrase)
+                        .map_err(|e| format!("Failed to save mapping: {}", e))?;
+                } else {
+                    crypto::save_plain_mapping(map_path, &mappings)
                         .map_err(|e| format!("Failed to save mapping: {}", e))?;
                 }
             }
@@ -200,12 +248,29 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     let format = file_parser::detect_format(&options.file_path);
     let max_rows = options.max_rows.unwrap_or(10);
     
-    // Get rules by IDs
-    let all_rules = masking_engine::get_builtin_rules();
-    let active_rules: Vec<_> = all_rules
+    // 合并 builtin + custom 规则，并强制 enabled=true
+    let builtin = masking_engine::get_builtin_rules();
+    let mut custom_masking_rules: Vec<masking_engine::MaskingRule> = options.custom_rules
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|cr| masking_engine::MaskingRule {
+            id: cr.id.clone(),
+            name: cr.name.clone(),
+            pattern: cr.pattern.clone(),
+            replacement_template: cr.replacement_template.clone(),
+            use_counter: cr.use_counter.unwrap_or(true),
+            enabled: true,
+            builtin: false,
+        })
+        .collect();
+    let mut all_combined: Vec<masking_engine::MaskingRule> = builtin.to_vec();
+    all_combined.append(&mut custom_masking_rules);
+
+    let active_rules: Vec<_> = all_combined
         .iter()
         .filter(|r| options.rule_ids.contains(&r.id))
-        .cloned()
+        .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
         .collect();
     
     // Create NER detector
@@ -224,7 +289,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .iter()
                 .map(|row| {
                     row.iter()
-                        .map(|cell| masking_engine::mask_value(cell, &active_rules, &mut mapping, &mut counter))
+                        .map(|cell| masking_engine::mask_value_with_ner(cell, &active_rules, &ner_detector, &mut mapping, &mut counter))
                         .collect()
                 })
                 .collect();
@@ -251,7 +316,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .iter()
                 .map(|row| {
                     row.iter()
-                        .map(|cell| masking_engine::mask_value(cell, &active_rules, &mut mapping, &mut counter))
+                        .map(|cell| masking_engine::mask_value_with_ner(cell, &active_rules, &ner_detector, &mut mapping, &mut counter))
                         .collect()
                 })
                 .collect();
@@ -282,7 +347,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
                 .iter()
-                .map(|line| masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter))
+                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
                 .collect();
             
             // 将文本行转换为表格格式（单列）
@@ -320,7 +385,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
                 .iter()
-                .map(|line| masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter))
+                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
                 .collect();
             
             // 将文本行转换为表格格式（单列）
@@ -358,7 +423,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
                 .iter()
-                .map(|line| masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter))
+                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
                 .collect();
             
             // 将文本行转换为表格格式（单列）
@@ -396,7 +461,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
                 .iter()
-                .map(|line| masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter))
+                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
                 .collect();
             
             // 将文本行转换为表格格式（单列）
@@ -421,3 +486,4 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
         _ => Err("预览功能目前支持 CSV、Excel、Word、PowerPoint、PDF、Markdown 和 TXT 文件".to_string()),
     }
 }
+

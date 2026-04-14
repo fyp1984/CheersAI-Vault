@@ -198,4 +198,17 @@ export const tauriCommands = {
 
   navigateMainWindowWithButton: (url: string, returnUrl: string) =>
     invoke<void>("navigate_main_window_with_button", { url, returnUrl }),
+
+  // OCR
+  checkOcrInstalled: () =>
+    invoke<boolean>("check_ocr_installed"),
+
+  getOcrInstallPath: () =>
+    invoke<string>("get_ocr_install_path"),
+
+  downloadOcrPackage: () =>
+    invoke<string>("download_ocr_package"),
+
+  uninstallOcrPackage: () =>
+    invoke<void>("uninstall_ocr_package"),
 };

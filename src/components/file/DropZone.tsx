@@ -1,14 +1,28 @@
-import { useCallback } from "react";
-import { useDropzone } from "react-dropzone";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface DropZoneProps {
   onFilesDropped: (paths: string[]) => void;
 }
 
 export function DropZone({ onFilesDropped }: DropZoneProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  const isInsideDropZone = useCallback((position: { x: number; y: number }) => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+
+    const scale = window.devicePixelRatio || 1;
+    const x = position.x / scale;
+    const y = position.y / scale;
+
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }, []);
+
   const handleFileSelect = async () => {
     try {
       const selected = await open({
@@ -31,60 +45,57 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
     }
   };
 
-  const onDrop = useCallback(
-    (accepted: File[]) => {
-      console.log("Files dropped:", accepted);
-      
-      const paths = accepted.map((f) => {
-        // 在 Tauri 中，文件对象应该有完整的路径信息
-        console.log("File object keys:", Object.keys(f));
-        console.log("File object:", f);
-        
-        // 尝试多种方式获取文件路径
-        const possiblePaths = [
-          (f as any).path,
-          (f as any).webkitRelativePath,
-          (f as any).mozFullPath,
-          f.name
-        ];
-        
-        console.log("Possible paths:", possiblePaths);
-        
-        // 选择第一个非空的路径
-        const filePath = possiblePaths.find(p => p && p.length > 0) || f.name;
-        console.log("Selected path:", filePath);
-        
-        return filePath;
-      });
-      
-      console.log("Final paths to process:", paths);
-      onFilesDropped(paths);
-    },
-    [onFilesDropped]
-  );
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      "text/csv": [".csv"],
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-      "application/vnd.ms-excel": [".xls"],
-      "application/json": [".json"],
-      "text/plain": [".txt"],
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-      "application/msword": [".doc"],
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
-      "application/vnd.ms-powerpoint": [".ppt"],
-      "application/pdf": [".pdf"],
-      "text/markdown": [".md", ".markdown"],
-    },
-    multiple: true,
-    noClick: true, // 禁用点击，我们使用自定义的点击处理
-  });
+    const setupDragDropListener = async () => {
+      try {
+        console.log("Setting up Tauri drag-drop listener...");
+        unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+          if (disposed) return;
+
+          console.log("Tauri drag-drop event:", event.payload.type, event.payload);
+
+          if (event.payload.type === "leave") {
+            setIsDragActive(false);
+            return;
+          }
+
+          if (event.payload.type === "enter" || event.payload.type === "over") {
+            const inside = isInsideDropZone(event.payload.position);
+            setIsDragActive(inside);
+            return;
+          }
+
+          if (event.payload.type === "drop") {
+            const inside = isInsideDropZone(event.payload.position);
+            setIsDragActive(false);
+
+            if (inside && event.payload.paths.length > 0) {
+              console.log("Files dropped via Tauri:", event.payload.paths);
+              onFilesDropped(event.payload.paths);
+            }
+          }
+        });
+        console.log("Tauri drag-drop listener set up successfully");
+      } catch (error) {
+        console.error("Failed to listen for Tauri drag-drop events:", error);
+      }
+    };
+
+    setupDragDropListener();
+
+    return () => {
+      disposed = true;
+      setIsDragActive(false);
+      unlisten?.();
+    };
+  }, [isInsideDropZone, onFilesDropped]);
 
   return (
     <div
-      {...getRootProps()}
+      ref={rootRef}
       className={cn(
         "flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-colors",
         isDragActive
@@ -93,7 +104,6 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
       )}
       onClick={handleFileSelect}
     >
-      <input {...getInputProps()} />
       <UploadCloud
         className={cn(
           "w-10 h-10 mb-3 transition-colors",
