@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getGiteaStatus, updateGiteaConfig, createGiteaRepo, testGiteaConnection } from '../../services/gitea';
 import type { GiteaStatusResponse } from '../../types/gitea';
+import { tauriCommands } from '@/lib/tauri';
 
 export function GiteaSettings() {
   const [status, setStatus] = useState<GiteaStatusResponse | null>(null);
@@ -8,6 +9,8 @@ export function GiteaSettings() {
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [autoLoading, setAutoLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   
   const [config, setConfig] = useState({
     url: 'https://uat-filebay.cheersai.cloud',
@@ -129,6 +132,47 @@ export function GiteaSettings() {
       setCreating(false);
     }
   };
+  
+  // 一键读取配置文件
+  const handleAutoLoadConfig = async () => {
+    try {
+      setAutoLoading(true);
+      setMessage(null);
+      const configStatus = await tauriCommands.readFilebayConfig();
+      
+      if (!configStatus.exists || !configStatus.config) {
+        setMessage({ 
+          type: 'error', 
+          text: '未检测到配置文件。请先从 Desktop 在线工作区下载配置文件到 downloads 文件夹' 
+        });
+        return;
+      }
+      
+      const { config: fileConfig } = configStatus;
+      
+      // 自动填充表单
+      setConfig({
+        url: fileConfig.url || 'https://uat-filebay.cheersai.cloud',
+        token: fileConfig.token || '',
+        owner: fileConfig.username || '',
+        repo: fileConfig.repoName || '',
+        enabled: config.enabled, // 保持当前启用状态
+      });
+      
+      setMessage({ 
+        type: 'success', 
+        text: `配置已自动读取：服务器 ${fileConfig.url}，用户 ${fileConfig.username}，仓库 ${fileConfig.repoName}。请点击"保存配置"以应用更改` 
+      });
+    } catch (error) {
+      console.error('Failed to auto-load config:', error);
+      setMessage({ 
+        type: 'error', 
+        text: `读取配置失败: ${error}` 
+      });
+    } finally {
+      setAutoLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -184,6 +228,52 @@ export function GiteaSettings() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 消息提示 */}
+      {message && (
+        <div className={`mb-6 p-4 rounded-lg border ${
+          message.type === 'success' ? 'bg-green-50 border-green-200' :
+          message.type === 'error' ? 'bg-red-50 border-red-200' :
+          'bg-blue-50 border-blue-200'
+        }`}>
+          <div className="flex items-start space-x-3">
+            <div className="flex-shrink-0">
+              {message.type === 'success' && (
+                <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              )}
+              {message.type === 'error' && (
+                <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              {message.type === 'info' && (
+                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className={`text-sm ${
+                message.type === 'success' ? 'text-green-800' :
+                message.type === 'error' ? 'text-red-800' :
+                'text-blue-800'
+              }`}>
+                {message.text}
+              </p>
+            </div>
+            <button
+              onClick={() => setMessage(null)}
+              className="flex-shrink-0 text-gray-400 hover:text-gray-600"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
@@ -281,7 +371,18 @@ export function GiteaSettings() {
       </div>
 
       {/* 操作按钮 */}
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+        <button
+          onClick={handleAutoLoadConfig}
+          disabled={autoLoading}
+          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <span>{autoLoading ? '读取中...' : '一键读取配置'}</span>
+        </button>
+        
         <button
           onClick={handleSave}
           disabled={saving}
@@ -339,10 +440,10 @@ export function GiteaSettings() {
         </div>
 
         <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-          <h3 className="font-medium text-green-900 mb-2">✅ 配置步骤</h3>
+          <h3 className="font-medium text-green-900 mb-2">✅ 快速配置步骤</h3>
           <ol className="text-sm text-green-800 space-y-1 list-decimal list-inside">
-            <li>登录你的 FileBay 服务器</li>
-            <li>进入 设置 → 应用 → 管理访问令牌</li>
+            <li><strong>方式一（推荐）</strong>：切换到 Desktop 在线工作区，下载配置文件后，点击"一键读取配置"按钮自动填充</li>
+            <li><strong>方式二</strong>：手动配置 - 登录 FileBay 服务器，进入 设置 → 应用 → 管理访问令牌</li>
             <li>点击"生成新令牌"，选择 repo 权限</li>
             <li>复制生成的 Token 并填写到上方表单</li>
             <li>填写完整信息后点击"保存配置"</li>

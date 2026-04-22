@@ -28,6 +28,7 @@ import {
   AlertTriangle,
   XCircle
 } from "lucide-react";
+import { FileBayConfigManager } from "@/components/filebay/FileBayConfigManager";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
@@ -356,6 +357,9 @@ export default function SandboxManager() {
               )}
             </CardContent>
           </Card>
+
+          {/* FileBay 配置管理 */}
+          {!locked && <FileBayConfigManager />}
 
           {/* 安全设置 */}
           <Card>

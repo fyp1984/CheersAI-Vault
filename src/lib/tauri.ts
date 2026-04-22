@@ -10,6 +10,8 @@ import type {
   MaskRule,
   BatchJobOptions,
   BatchStatus,
+  FileBayConfig,
+  FileBayConfigStatus,
 } from "@/types/commands";
 import type { LogEntry, ProcessingHistory, UserSetting, DatabaseStatistics } from "@/types/log";
 
@@ -211,4 +213,20 @@ export const tauriCommands = {
 
   uninstallOcrPackage: () =>
     invoke<void>("uninstall_ocr_package"),
+
+  // FileBay Config
+  readFilebayConfig: () =>
+    invoke<FileBayConfigStatus>("read_filebay_config"),
+
+  checkFilebayConfigExists: () =>
+    invoke<boolean>("check_filebay_config_exists"),
+
+  deleteFilebayConfig: () =>
+    invoke<string>("delete_filebay_config"),
+
+  validateFilebayConfigFile: (filePath: string) =>
+    invoke<FileBayConfig>("validate_filebay_config_file", { filePath }),
+
+  importFilebayConfig: (sourcePath: string) =>
+    invoke<string>("import_filebay_config", { sourcePath }),
 };

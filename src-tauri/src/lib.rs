@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -117,6 +117,11 @@ pub fn run() {
             ocr::get_ocr_install_path,
             ocr::download_ocr_package,
             ocr::uninstall_ocr_package,
+            filebay_config::read_filebay_config,
+            filebay_config::check_filebay_config_exists,
+            filebay_config::delete_filebay_config,
+            filebay_config::validate_filebay_config_file,
+            filebay_config::import_filebay_config,
         ])
         .setup(|_app| {
             println!("=== Tauri Setup Complete ===");

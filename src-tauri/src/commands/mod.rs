@@ -10,3 +10,4 @@ pub mod gitea;
 pub mod file_manager;
 pub mod unmask;
 pub mod ocr;
+pub mod filebay_config;

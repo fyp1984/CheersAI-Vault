@@ -115,3 +115,20 @@ export interface OcrDownloadProgress {
   percentage: number;
   status: string;
 }
+// FileBay Config types
+export interface FileBayConfig {
+  url: string;
+  username: string;
+  repoName: string;
+  email: string;
+  token: string;
+  downloadedAt: string;
+  version: string;
+}
+
+export interface FileBayConfigStatus {
+  exists: boolean;
+  config?: FileBayConfig;
+  filePath?: string;
+  lastModified?: string;
+}

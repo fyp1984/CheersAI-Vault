@@ -1,5 +1,5 @@
 import { Outlet, useLocation } from "react-router-dom";
-import { Wifi, WifiOff } from "lucide-react";
+import { Wifi } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -55,12 +55,12 @@ export function MainLayout() {
         panel: "border-emerald-100 bg-emerald-50/80",
       }
     : {
-        label: "离线",
+        label: "在线",
         detail: "当前操作 Vault 本地工作区",
-        tone: "text-slate-600",
-        Icon: WifiOff,
-        dot: "bg-slate-400 shadow-[0_0_0_4px_rgba(148,163,184,0.14)]",
-        panel: "border-slate-200 bg-slate-50",
+        tone: "text-emerald-600",
+        Icon: Wifi,
+        dot: "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]",
+        panel: "border-emerald-100 bg-emerald-50/80",
       };
 
   return (

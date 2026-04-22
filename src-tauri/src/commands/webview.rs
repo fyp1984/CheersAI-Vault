@@ -292,6 +292,7 @@ pub async fn open_webview_window(
     println!("Opening webview window: {} -> {}", window_label, options.url);
 
     // 创建新的 WebView 窗口，配置为全屏无边框模式
+    let app_clone = app.clone();
     let webview_window = WebviewWindowBuilder::new(
         &app,
         &window_label,
@@ -306,6 +307,49 @@ pub async fn open_webview_window(
     .maximized(true)    // 启动时最大化
     .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     .accept_first_mouse(true)
+    .on_download(move |_window, download| {
+        // 获取应用数据目录下的 downloads 文件夹
+        match app_clone.path().app_data_dir() {
+            Ok(app_data_dir) => {
+                let downloads_dir = app_data_dir.join("downloads");
+                
+                // 确保 downloads 目录存在
+                if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
+                    eprintln!("Failed to create downloads directory: {}", e);
+                    return false;
+                }
+                
+                // 处理下载事件
+                match download {
+                    tauri::webview::DownloadEvent::Requested { url, destination, .. } => {
+                        // 从 URL 提取文件名
+                        let file_name = url.path_segments()
+                            .and_then(|segments| segments.last())
+                            .and_then(|name| if name.is_empty() { None } else { Some(name) })
+                            .unwrap_or("download");
+                        
+                        let file_path = downloads_dir.join(file_name);
+                        *destination = file_path.clone();
+                        println!("Download requested: {} -> {:?}", url, file_path);
+                        true
+                    }
+                    tauri::webview::DownloadEvent::Finished { url, path, success } => {
+                        if success {
+                            println!("Download finished: {} -> {:?}", url, path);
+                        } else {
+                            eprintln!("Download failed: {}", url);
+                        }
+                        true
+                    }
+                    _ => true,
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to get app data directory: {}", e);
+                false
+            }
+        }
+    })
     .build()
     .map_err(|e| format!("Failed to create webview window: {}", e))?;
 
@@ -585,6 +629,7 @@ pub async fn open_desktop_window_with_button(
         let _ = existing.set_focus();
         existing
     } else {
+        let app_clone = app.clone();
         WebviewWindowBuilder::new(
             &app,
             DESKTOP_WINDOW_LABEL,
@@ -597,6 +642,50 @@ pub async fn open_desktop_window_with_button(
         .fullscreen(false)
         .accept_first_mouse(true)
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .on_download(move |_window, download| {
+            // 获取应用数据目录下的 downloads 文件夹
+            match app_clone.path().app_data_dir() {
+                Ok(app_data_dir) => {
+                    let downloads_dir = app_data_dir.join("downloads");
+                    
+                    // 确保 downloads 目录存在
+                    if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
+                        eprintln!("Failed to create downloads directory: {}", e);
+                        return false;
+                    }
+                    
+                    // 使用默认文件名或从 URL 提取
+                    let filename = match download {
+                        tauri::webview::DownloadEvent::Requested { url, destination, .. } => {
+                            // 从 URL 提取文件名
+                            let file_name = url.path_segments()
+                                .and_then(|segments| segments.last())
+                                .and_then(|name| if name.is_empty() { None } else { Some(name) })
+                                .unwrap_or("download");
+                            
+                            let file_path = downloads_dir.join(file_name);
+                            *destination = file_path.clone();
+                            println!("Download requested: {} -> {:?}", url, file_path);
+                            true
+                        }
+                        tauri::webview::DownloadEvent::Finished { url, path, success } => {
+                            if success {
+                                println!("Download finished: {} -> {:?}", url, path);
+                            } else {
+                                eprintln!("Download failed: {}", url);
+                            }
+                            true
+                        }
+                        _ => true,
+                    };
+                    filename
+                }
+                Err(e) => {
+                    eprintln!("Failed to get app data directory: {}", e);
+                    false
+                }
+            }
+        })
         .build()
         .map_err(|e| format!("Failed to create desktop window: {}", e))?
     };
