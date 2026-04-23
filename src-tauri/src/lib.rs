@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -122,11 +122,14 @@ pub fn run() {
             filebay_config::delete_filebay_config,
             filebay_config::validate_filebay_config_file,
             filebay_config::import_filebay_config,
+            ai_model::check_ollama_installed,
+            ai_model::start_ollama_service,
+            ai_model::check_ai_model_installed,
+            ai_model::install_ai_model,
+            ai_model::uninstall_ai_model,
+            ai_model::call_ai_model,
+            ai_model::get_ai_model_info,
         ])
-        .setup(|_app| {
-            println!("=== Tauri Setup Complete ===");
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

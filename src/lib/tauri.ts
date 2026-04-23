@@ -229,4 +229,35 @@ export const tauriCommands = {
 
   importFilebayConfig: (sourcePath: string) =>
     invoke<string>("import_filebay_config", { sourcePath }),
+
+  // AI Model
+  downloadOllama: () =>
+    invoke<string>("download_ollama"),
+
+  checkOllamaInstalled: () =>
+    invoke<boolean>("check_ollama_installed"),
+
+  startOllamaService: () =>
+    invoke<string>("start_ollama_service"),
+
+  checkAiModelInstalled: () =>
+    invoke<boolean>("check_ai_model_installed"),
+
+  installAiModel: () =>
+    invoke<string>("install_ai_model"),
+
+  uninstallAiModel: () =>
+    invoke<string>("uninstall_ai_model"),
+
+  callAiModel: (prompt: string) =>
+    invoke<string>("call_ai_model", { prompt }),
+
+  getAiModelInfo: () =>
+    invoke<{
+      model_name: string;
+      model_size: string;
+      model_dir: string;
+      ollama_installed: boolean;
+      model_installed: boolean;
+    }>("get_ai_model_info"),
 };

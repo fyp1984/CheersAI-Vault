@@ -12,6 +12,7 @@ import CheersAICloudBrowser from "@/pages/CheersAICloudBrowser";
 import TestPage from "@/pages/TestPage";
 import { FileManager } from "@/components/file/FileManager";
 import { GiteaSettings } from "@/components/settings/GiteaSettings";
+import { EnhancedServices } from "@/pages/EnhancedServices";
 import { useLogStore } from "@/store/logStore";
 import { tauriCommands } from "@/lib/tauri";
 
@@ -96,6 +97,7 @@ function AppRoutes() {
         <Route path="/sandbox" element={<SandboxManager />} />
         <Route path="/log" element={<OperationLog />} />
         <Route path="/cloud" element={<CheersAICloudBrowser />} />
+        <Route path="/enhanced" element={<EnhancedServices />} />
       </Route>
     </Routes>
   );
@@ -110,6 +112,8 @@ function HomeRedirect() {
 }
 
 function App() {
+  console.log("App component loaded");
+  
   return (
     <HashRouter>
       <AppRoutes />

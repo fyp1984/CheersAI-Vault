@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Upload,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/appStore";
@@ -21,6 +22,7 @@ const navItems = [
   { to: "/unmask", icon: RotateCcw, label: "文件反脱敏", description: "还原已脱敏的文件" },
   { to: "/files", icon: FolderOpen, label: "文件管理", description: "管理脱敏后的文件" },
   { to: "/gitea", icon: Upload, label: "FileBay 设置", description: "配置 FileBay 上传" },
+  { to: "/enhanced", icon: Sparkles, label: "增强服务", description: "安装 OCR 等增强功能" },
   { to: "/rules", icon: Settings2, label: "规则配置" },
   { to: "/sandbox", icon: Lock, label: "沙箱管理" },
   { to: "/log", icon: ClipboardList, label: "操作日志" },
