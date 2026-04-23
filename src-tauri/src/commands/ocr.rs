@@ -14,13 +14,63 @@ pub struct OcrDownloadProgress {
 /// 检查 OCR 是否已安装
 #[tauri::command]
 pub async fn check_ocr_installed(app: AppHandle) -> Result<bool, String> {
+    // 1. 检查内置的 OCR 包
     let exe_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     
     let ocr_python = exe_dir.join("ocr-package").join("python").join("python.exe");
     let ocr_script = exe_dir.join("ocr-package").join("pdf_ocr.py");
     
-    Ok(ocr_python.exists() && ocr_script.exists())
+    if ocr_python.exists() && ocr_script.exists() {
+        return Ok(true);
+    }
+    
+    // 2. 检查系统 Python 是否安装了 paddleocr
+    #[cfg(target_os = "windows")]
+    {
+        // 尝试运行 python -c "import paddleocr"
+        let python_commands = vec!["python", "python3", "py"];
+        
+        for cmd in python_commands {
+            if let Ok(output) = std::process::Command::new(cmd)
+                .arg("-c")
+                .arg("import paddleocr; print('OK')")
+                .output()
+            {
+                if output.status.success() {
+                    let output_str = String::from_utf8_lossy(&output.stdout);
+                    if output_str.contains("OK") {
+                        println!("Found system Python with paddleocr: {}", cmd);
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        // macOS 和 Linux
+        let python_commands = vec!["python3", "python"];
+        
+        for cmd in python_commands {
+            if let Ok(output) = std::process::Command::new(cmd)
+                .arg("-c")
+                .arg("import paddleocr; print('OK')")
+                .output()
+            {
+                if output.status.success() {
+                    let output_str = String::from_utf8_lossy(&output.stdout);
+                    if output_str.contains("OK") {
+                        println!("Found system Python with paddleocr: {}", cmd);
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(false)
 }
 
 /// 获取 OCR 安装路径

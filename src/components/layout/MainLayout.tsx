@@ -24,6 +24,10 @@ const pageMeta: Record<string, { title: string; description: string }> = {
     title: "FileBay 设置",
     description: "连接与配置 FileBay",
   },
+  "/enhanced": {
+    title: "增强服务",
+    description: "安装和管理 OCR 等增强功能",
+  },
   "/rules": {
     title: "规则配置",
     description: "管理脱敏规则与策略",

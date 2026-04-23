@@ -20,6 +20,8 @@ import { getDisplayPath, validatePath, getDefaultDocumentsPath } from "@/lib/pat
 import type { BatchStatus, PreviewResult } from "@/types/commands";
 
 export default function FileProcess() {
+  console.log("FileProcess page loaded");
+  
   const { 
     files, 
     passphrase, 

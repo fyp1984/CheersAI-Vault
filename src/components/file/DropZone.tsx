@@ -1,27 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 
 interface DropZoneProps {
   onFilesDropped: (paths: string[]) => void;
 }
 
 export function DropZone({ onFilesDropped }: DropZoneProps) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
-
-  const isInsideDropZone = useCallback((position: { x: number; y: number }) => {
-    const rect = rootRef.current?.getBoundingClientRect();
-    if (!rect) return false;
-
-    const scale = window.devicePixelRatio || 1;
-    const x = position.x / scale;
-    const y = position.y / scale;
-
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-  }, []);
 
   const handleFileSelect = async () => {
     try {
@@ -45,57 +33,76 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
     }
   };
 
+  // 使用全局 listen API 监听文件拖放事件
   useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    const setupDragDropListener = async () => {
-      try {
-        console.log("Setting up Tauri drag-drop listener...");
-        unlisten = await getCurrentWindow().onDragDropEvent((event) => {
-          if (disposed) return;
-
-          console.log("Tauri drag-drop event:", event.payload.type, event.payload);
-
-          if (event.payload.type === "leave") {
-            setIsDragActive(false);
-            return;
-          }
-
-          if (event.payload.type === "enter" || event.payload.type === "over") {
-            const inside = isInsideDropZone(event.payload.position);
-            setIsDragActive(inside);
-            return;
-          }
-
-          if (event.payload.type === "drop") {
-            const inside = isInsideDropZone(event.payload.position);
-            setIsDragActive(false);
-
-            if (inside && event.payload.paths.length > 0) {
-              console.log("Files dropped via Tauri:", event.payload.paths);
-              onFilesDropped(event.payload.paths);
-            }
-          }
-        });
-        console.log("Tauri drag-drop listener set up successfully");
-      } catch (error) {
-        console.error("Failed to listen for Tauri drag-drop events:", error);
-      }
-    };
-
-    setupDragDropListener();
-
-    return () => {
-      disposed = true;
+    console.log("DropZone: Setting up global Tauri file drop listeners...");
+    
+    let unlistenEnter: (() => void) | null = null;
+    let unlistenOver: (() => void) | null = null;
+    let unlistenDrop: (() => void) | null = null;
+    let unlistenLeave: (() => void) | null = null;
+    
+    // 监听文件进入窗口
+    listen<string[]>('tauri://drag-enter', (event) => {
+      console.log("=== DRAG ENTER ===", event);
+      setIsDragActive(true);
+    }).then(fn => { 
+      unlistenEnter = fn;
+      console.log("Registered: tauri://drag-enter");
+    }).catch(err => {
+      console.error("Failed to register tauri://drag-enter:", err);
+    });
+    
+    // 监听文件在窗口上方移动
+    listen<string[]>('tauri://drag-over', (event) => {
+      console.log("=== DRAG OVER ===", event);
+      setIsDragActive(true);
+    }).then(fn => { 
+      unlistenOver = fn;
+      console.log("Registered: tauri://drag-over");
+    }).catch(err => {
+      console.error("Failed to register tauri://drag-over:", err);
+    });
+    
+    // 监听文件拖放
+    listen<string[]>('tauri://drag-drop', (event) => {
+      console.log("=== DRAG DROP ===", event);
       setIsDragActive(false);
-      unlisten?.();
+      if (event.payload && event.payload.length > 0) {
+        console.log("Files dropped:", event.payload);
+        onFilesDropped(event.payload);
+      }
+    }).then(fn => { 
+      unlistenDrop = fn;
+      console.log("Registered: tauri://drag-drop");
+    }).catch(err => {
+      console.error("Failed to register tauri://drag-drop:", err);
+    });
+    
+    // 监听拖放离开
+    listen('tauri://drag-leave', (event) => {
+      console.log("=== DRAG LEAVE ===", event);
+      setIsDragActive(false);
+    }).then(fn => { 
+      unlistenLeave = fn;
+      console.log("Registered: tauri://drag-leave");
+    }).catch(err => {
+      console.error("Failed to register tauri://drag-leave:", err);
+    });
+    
+    console.log("DropZone: All file drop listeners registered");
+    
+    return () => {
+      console.log("DropZone: Cleaning up file drop listeners");
+      if (unlistenEnter) unlistenEnter();
+      if (unlistenOver) unlistenOver();
+      if (unlistenDrop) unlistenDrop();
+      if (unlistenLeave) unlistenLeave();
     };
-  }, [isInsideDropZone, onFilesDropped]);
+  }, [onFilesDropped]);
 
   return (
     <div
-      ref={rootRef}
       className={cn(
         "flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-colors",
         isDragActive
@@ -118,6 +125,9 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
       </p>
       <p className="mt-0.5 text-xs text-gray-400">
         注：Word/PPT/PDF 将输出为 TXT 格式
+      </p>
+      <p className="mt-2 text-xs font-mono text-blue-600">
+        调试: 拖拽状态 = {isDragActive ? "激活" : "未激活"}
       </p>
     </div>
   );
