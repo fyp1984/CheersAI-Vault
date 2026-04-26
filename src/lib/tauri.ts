@@ -208,8 +208,8 @@ export const tauriCommands = {
   getOcrInstallPath: () =>
     invoke<string>("get_ocr_install_path"),
 
-  downloadOcrPackage: () =>
-    invoke<string>("download_ocr_package"),
+  downloadOcrPackage: (customPath?: string) =>
+    invoke<string>("download_ocr_package", { customPath }),
 
   uninstallOcrPackage: () =>
     invoke<void>("uninstall_ocr_package"),
@@ -231,8 +231,8 @@ export const tauriCommands = {
     invoke<string>("import_filebay_config", { sourcePath }),
 
   // AI Model
-  downloadOllama: () =>
-    invoke<string>("download_ollama"),
+  downloadOllama: (customPath?: string) =>
+    invoke<string>("download_ollama", { customPath }),
 
   checkOllamaInstalled: () =>
     invoke<boolean>("check_ollama_installed"),
@@ -260,4 +260,7 @@ export const tauriCommands = {
       ollama_installed: boolean;
       model_installed: boolean;
     }>("get_ai_model_info"),
+
+  checkAiDetectionAvailable: () =>
+    invoke<boolean>("check_ai_detection_available"),
 };

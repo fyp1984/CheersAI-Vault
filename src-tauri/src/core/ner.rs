@@ -1,6 +1,7 @@
 use regex::Regex;
 use serde::{Serialize, Deserialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityMatch {
@@ -8,6 +9,8 @@ pub struct EntityMatch {
     pub entity_type: String,
     pub start: usize,
     pub end: usize,
+    pub confidence: f32,
+    pub source: String, // 检测来源：ai, ner, regex, search
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,10 +23,15 @@ pub struct NERDetector {
     patterns: Vec<(String, Regex)>,
     common_surnames: HashSet<String>,
     name_context_keywords: Vec<String>,
+    use_ai_detection: bool, // 是否使用 AI 检测
 }
 
 impl NERDetector {
     pub fn new() -> Self {
+        Self::new_with_ai_detection(false)
+    }
+    
+    pub fn new_with_ai_detection(use_ai: bool) -> Self {
         let mut patterns = Vec::new();
         
         // 优先级从高到低排列，更具体的模式放在前面
@@ -64,10 +72,16 @@ impl NERDetector {
             Regex::new(r"\b[EGP]\d{8}\b").unwrap()
         ));
         
-        // 日期格式（优先于中文姓名检测）
+        // 日期格式（多种格式）
         patterns.push((
             "日期".to_string(),
-            Regex::new(r"\b\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?\b").unwrap()
+            Regex::new(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?").unwrap()
+        ));
+        
+        // 中国省份和直辖市
+        patterns.push((
+            "地名".to_string(),
+            Regex::new(r"(北京|上海|天津|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|广西|西藏|宁夏|新疆|香港|澳门)(省|市|自治区|特别行政区)?").unwrap()
         ));
         
         // 金额（带货币符号）
@@ -112,13 +126,57 @@ impl NERDetector {
             patterns,
             common_surnames,
             name_context_keywords,
+            use_ai_detection: use_ai,
         }
     }
     
+    /// 主检测函数：使用四种方法检测实体，姓名取交集，其他取并集
     pub fn detect_entities(&self, text: &str) -> Vec<EntityMatch> {
+        if self.use_ai_detection {
+            // AI 模式：使用四种方法
+            println!("=== Starting multi-method entity detection (AI mode) ===");
+            
+            // 1. 正则表达式检测
+            let regex_entities = self.detect_with_regex(text);
+            println!("Regex detected {} entities", regex_entities.len());
+            
+            // 2. NER 智能检测
+            let ner_entities = self.detect_with_ner(text);
+            println!("NER detected {} entities", ner_entities.len());
+            
+            // 3. AI 模型检测
+            let ai_entities = self.detect_with_ai(text);
+            println!("AI detected {} entities", ai_entities.len());
+            
+            // 4. 字符串搜索匹配
+            let search_entities = self.detect_with_search(text);
+            println!("Search detected {} entities", search_entities.len());
+            
+            // 合并结果：姓名取交集，其他取并集
+            let merged = self.merge_detections(
+                regex_entities,
+                ner_entities,
+                ai_entities,
+                search_entities,
+            );
+            
+            println!("Final merged: {} entities", merged.len());
+            merged
+        } else {
+            // 传统模式：只使用正则表达式检测
+            println!("=== Using regex-only detection (traditional mode) ===");
+            
+            let regex_entities = self.detect_with_regex(text);
+            println!("Regex detected {} entities", regex_entities.len());
+            
+            regex_entities
+        }
+    }
+    
+    /// 方法1：正则表达式检测
+    fn detect_with_regex(&self, text: &str) -> Vec<EntityMatch> {
         let mut entities = Vec::new();
         
-        // 先检测其他类型的实体
         for (entity_type, pattern) in &self.patterns {
             for mat in pattern.find_iter(text) {
                 entities.push(EntityMatch {
@@ -126,50 +184,387 @@ impl NERDetector {
                     entity_type: entity_type.clone(),
                     start: mat.start(),
                     end: mat.end(),
+                    confidence: 1.0,
+                    source: "regex".to_string(),
                 });
             }
         }
         
-        // 智能检测姓名（基于姓氏和上下文）
-        let name_entities = self.detect_names_smart(text);
-        entities.extend(name_entities);
+        entities
+    }
+    
+    /// 方法2：NER 智能检测（基于姓氏和上下文）
+    fn detect_with_ner(&self, text: &str) -> Vec<EntityMatch> {
+        self.detect_names_smart(text)
+    }
+    
+    /// 方法3：AI 模型检测
+    fn detect_with_ai(&self, text: &str) -> Vec<EntityMatch> {
+        let mut entities = Vec::new();
+        
+        // 使用 AI 模型提取所有敏感信息 - 更明确的提示词
+        let prompt = format!(
+            "从以下文本中提取所有敏感信息，每行一个，格式：类型|内容\n\
+            需要提取的类型：\n\
+            - 姓名（中文人名）\n\
+            - 手机号（11位数字）\n\
+            - 邮箱\n\
+            - 身份证号\n\
+            - 银行卡号\n\
+            - IP地址\n\
+            - 日期（如2005年9月13日）\n\
+            - 地址（如北京市朝阳区、河南省）\n\
+            - 地名（如北京城、河南）\n\
+            - 组织机构（如某某大学、某某公司）\n\n\
+            示例输出：\n\
+            姓名|张三\n\
+            日期|2005年9月13日\n\
+            地址|北京市朝阳区\n\n\
+            文本：{}\n\n\
+            提取结果（每行一个，必须在原文中出现）：",
+            text
+        );
+        
+        println!("Calling AI model for comprehensive entity detection...");
+        
+        match Self::call_ollama_with_timeout(&prompt, 15) {
+            Ok(response) => {
+                println!("AI full response:\n{}", response.trim());
+                
+                // 解析 AI 响应 - 支持两种格式
+                for line in response.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line == "无" || line.contains("没有") || line.contains("无法") || line.contains("提取结果") {
+                        continue;
+                    }
+                    
+                    // 格式1：类型|内容
+                    if let Some((type_part, value)) = line.split_once('|') {
+                        let entity_type = type_part.trim();
+                        let value = value.trim();
+                        
+                        if !value.is_empty() && value.len() <= 100 {
+                            // 在原文中查找位置（必须精确匹配）
+                            if let Some(start) = text.find(value) {
+                                // 标准化实体类型
+                                let normalized_type = Self::normalize_entity_type(entity_type);
+                                
+                                println!("AI found: {} = '{}' at position {} (normalized: {})", entity_type, value, start, normalized_type);
+                                entities.push(EntityMatch {
+                                    text: value.to_string(),
+                                    entity_type: normalized_type,
+                                    start,
+                                    end: start + value.len(),
+                                    confidence: 0.80,
+                                    source: "ai".to_string(),
+                                });
+                            } else {
+                                println!("AI found '{}' (type: {}) but not in original text", value, entity_type);
+                            }
+                        }
+                    }
+                    // 格式2：类型：值1,值2
+                    else if let Some((type_part, values_part)) = line.split_once('：').or_else(|| line.split_once(':')) {
+                        let entity_type = type_part.trim();
+                        let values: Vec<&str> = values_part.split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty() && s.len() <= 100)
+                            .collect();
+                        
+                        for value in values {
+                            if let Some(start) = text.find(value) {
+                                let normalized_type = Self::normalize_entity_type(entity_type);
+                                
+                                println!("AI found: {} = '{}' at position {} (normalized: {})", entity_type, value, start, normalized_type);
+                                entities.push(EntityMatch {
+                                    text: value.to_string(),
+                                    entity_type: normalized_type,
+                                    start,
+                                    end: start + value.len(),
+                                    confidence: 0.80,
+                                    source: "ai".to_string(),
+                                });
+                            } else {
+                                println!("AI found '{}' (type: {}) but not in original text", value, entity_type);
+                            }
+                        }
+                    }
+                }
+                
+                println!("AI detection extracted {} entities", entities.len());
+            },
+            Err(e) => {
+                println!("AI detection failed or timed out: {}", e);
+            }
+        }
+        
+        entities
+    }
+    
+    /// 标准化实体类型名称，统一映射到已知类型
+    fn normalize_entity_type(raw_type: &str) -> String {
+        match raw_type {
+            "姓名" | "人名" | "中文姓名" | "名字" => "姓名".to_string(),
+            "手机号" | "电话" | "手机" | "电话号码" => "手机号".to_string(),
+            "邮箱" | "电子邮箱" | "email" | "Email" => "邮箱".to_string(),
+            "身份证号" | "身份证" | "ID" => "身份证号".to_string(),
+            "银行卡号" | "银行卡" | "卡号" => "银行卡号".to_string(),
+            "IP地址" | "IP" | "ip" => "IP地址".to_string(),
+            "日期" | "时间" | "日期时间" => "日期".to_string(),
+            "地址" | "详细地址" | "住址" => "地址".to_string(),
+            "地名" | "地点" | "位置" => "地名".to_string(),
+            "组织" | "组织机构" | "机构" | "公司" | "单位" | "学校" | "大学" => "组织".to_string(),
+            _ => raw_type.to_string(), // 保留原始类型
+        }
+    }
+    
+    /// 调用 Ollama 模型（带超时）
+    fn call_ollama_with_timeout(prompt: &str, timeout_secs: u64) -> Result<String, String> {
+        use std::time::Duration;
+        use std::sync::mpsc;
+        use std::thread;
+        
+        let ollama_path = Self::find_ollama_executable()?;
+        let prompt = prompt.to_string();
+        
+        let (tx, rx) = mpsc::channel();
+        
+        // 在新线程中执行 ollama 命令
+        thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                
+                let result = Command::new(&ollama_path)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .arg("run")
+                    .arg("qwen2.5:1.5b")
+                    .arg(&prompt)
+                    .output();
+                
+                let _ = tx.send(result);
+            }
+            
+            #[cfg(not(target_os = "windows"))]
+            {
+                let result = Command::new(&ollama_path)
+                    .arg("run")
+                    .arg("qwen2.5:1.5b")
+                    .arg(&prompt)
+                    .output();
+                
+                let _ = tx.send(result);
+            }
+        });
+        
+        // 等待结果或超时
+        match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+            Ok(Ok(output)) => {
+                if output.status.success() {
+                    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+                } else {
+                    Err(format!("Ollama failed: {}", String::from_utf8_lossy(&output.stderr)))
+                }
+            },
+            Ok(Err(e)) => Err(format!("Failed to execute ollama: {}", e)),
+            Err(_) => Err(format!("Ollama timed out after {} seconds", timeout_secs)),
+        }
+    }
+    
+    /// 方法4：字符串搜索匹配
+    fn detect_with_search(&self, text: &str) -> Vec<EntityMatch> {
+        let mut entities = Vec::new();
+        
+        // 搜索常见的敏感信息模式
+        // 例如：查找类似手机号的数字串、邮箱格式等
+        
+        // 简单实现：查找11位数字（可能是手机号）
+        let chars: Vec<char> = text.chars().collect();
+        for i in 0..chars.len() {
+            if i + 11 <= chars.len() {
+                let candidate: String = chars[i..i+11].iter().collect();
+                if candidate.chars().all(|c| c.is_numeric()) && candidate.starts_with('1') {
+                    let start_bytes: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
+                    let end_bytes = start_bytes + candidate.len();
+                    
+                    entities.push(EntityMatch {
+                        text: candidate,
+                        entity_type: "手机号".to_string(),
+                        start: start_bytes,
+                        end: end_bytes,
+                        confidence: 0.7,
+                        source: "search".to_string(),
+                    });
+                }
+            }
+        }
+        
+        entities
+    }
+    
+    /// 合并四种检测方法的结果
+    fn merge_detections(
+        &self,
+        regex: Vec<EntityMatch>,
+        ner: Vec<EntityMatch>,
+        ai: Vec<EntityMatch>,
+        search: Vec<EntityMatch>,
+    ) -> Vec<EntityMatch> {
+        // 按实体文本和位置分组
+        let mut entity_groups: HashMap<String, Vec<EntityMatch>> = HashMap::new();
+        
+        for entity in regex.into_iter().chain(ner).chain(ai).chain(search) {
+            let key = format!("{}:{}:{}", entity.text, entity.start, entity.end);
+            entity_groups.entry(key).or_insert_with(Vec::new).push(entity);
+        }
+        
+        let mut result = Vec::new();
+        
+        for (_key, group) in entity_groups {
+            if group.is_empty() {
+                continue;
+            }
+            
+            let entity_type = &group[0].entity_type;
+            
+            // 判断是否为姓名类型（支持多种表述）
+            let is_name = entity_type == "姓名" || 
+                         entity_type == "中文姓名" || 
+                         entity_type == "人名" ||
+                         entity_type.contains("姓名");
+            
+            if is_name {
+                // 姓名：需要多个检测器确认（至少2个）
+                let sources: HashSet<String> = group.iter().map(|e| e.source.clone()).collect();
+                
+                // 如果启用了 AI，需要至少 2 个检测器确认
+                // 如果未启用 AI，只要 NER 检测到就可以（因为 NER 本身已经很严格了）
+                let confirmed = if self.use_ai_detection {
+                    // AI 模式：需要至少 2 个检测器确认
+                    sources.len() >= 2
+                } else {
+                    // 非 AI 模式：NER 检测到即可
+                    sources.contains("ner")
+                };
+                
+                if confirmed {
+                    println!("Name '{}' confirmed by {} detectors: {:?}", group[0].text, sources.len(), sources);
+                    result.push(EntityMatch {
+                        text: group[0].text.clone(),
+                        entity_type: "姓名".to_string(), // 统一为"姓名"
+                        start: group[0].start,
+                        end: group[0].end,
+                        confidence: if sources.len() >= 3 { 0.95 } else { 0.85 },
+                        source: format!("confirmed_by_{}", sources.len()),
+                    });
+                } else {
+                    println!("Name '{}' not confirmed (only {} detectors: {:?}), skipping", group[0].text, sources.len(), sources);
+                }
+            } else {
+                // 其他类型：任一检测器识别即可（并集）
+                // 选择置信度最高的
+                let best = group.iter().max_by(|a, b| {
+                    a.confidence.partial_cmp(&b.confidence).unwrap()
+                }).unwrap();
+                
+                println!("Entity '{}' (type: {}) detected by {} methods", best.text, best.entity_type, group.len());
+                
+                result.push(EntityMatch {
+                    text: best.text.clone(),
+                    entity_type: best.entity_type.clone(),
+                    start: best.start,
+                    end: best.end,
+                    confidence: best.confidence,
+                    source: format!("union({})", group.iter().map(|e| e.source.as_str()).collect::<Vec<_>>().join(",")),
+                });
+            }
+        }
         
         // 按位置排序
-        entities.sort_by_key(|e| (e.start, e.end));
-        
-        // 去重：如果两个实体有重叠，保留更具体的（非"姓名"类型优先）
-        let mut filtered = Vec::new();
-        for entity in entities {
-            let overlaps = filtered.iter().any(|e: &EntityMatch| {
-                // 检查是否有重叠
-                (entity.start >= e.start && entity.start < e.end) ||
-                (entity.end > e.start && entity.end <= e.end) ||
-                (entity.start <= e.start && entity.end >= e.end)
-            });
+        result.sort_by_key(|e| e.start);
+        result
+    }
+    
+    /// 查找 Ollama 可执行文件
+    fn find_ollama_executable() -> Result<String, String> {
+        #[cfg(target_os = "windows")]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             
-            if !overlaps {
-                filtered.push(entity);
-            } else if entity.entity_type != "姓名" {
-                // 如果是更具体的类型，替换掉姓名类型
-                filtered.retain(|e| {
-                    !(e.entity_type == "姓名" && 
-                      ((entity.start >= e.start && entity.start < e.end) ||
-                       (entity.end > e.start && entity.end <= e.end) ||
-                       (entity.start <= e.start && entity.end >= e.end)))
-                });
-                filtered.push(entity);
+            // 先检查常见路径（最快，不弹窗）
+            let possible_paths = vec![
+                format!("{}\\AppData\\Local\\Programs\\Ollama\\ollama.exe", std::env::var("USERPROFILE").unwrap_or_default()),
+                "C:\\Program Files\\Ollama\\ollama.exe".to_string(),
+                "C:\\Ollama\\ollama.exe".to_string(),
+            ];
+            
+            for path in possible_paths {
+                if std::path::Path::new(&path).exists() {
+                    return Ok(path);
+                }
+            }
+            
+            // 尝试使用 where 命令查找（隐藏窗口）
+            use std::os::windows::process::CommandExt;
+            if let Ok(output) = Command::new("where")
+                .creation_flags(CREATE_NO_WINDOW)
+                .arg("ollama")
+                .output()
+            {
+                if output.status.success() {
+                    let path_str = String::from_utf8_lossy(&output.stdout);
+                    let first_path = path_str.lines().next().unwrap_or("").trim();
+                    if !first_path.is_empty() {
+                        return Ok(first_path.to_string());
+                    }
+                }
             }
         }
         
-        // 最终排序
-        filtered.sort_by_key(|e| e.start);
-        filtered
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Unix-like 系统
+            if let Ok(output) = Command::new("which")
+                .arg("ollama")
+                .output()
+            {
+                if output.status.success() {
+                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !path_str.is_empty() {
+                        return Ok(path_str);
+                    }
+                }
+            }
+            
+            // 检查常见路径
+            let possible_paths = vec![
+                "/usr/local/bin/ollama",
+                "/usr/bin/ollama",
+                "/opt/homebrew/bin/ollama",
+            ];
+            
+            for path in possible_paths {
+                if std::path::Path::new(path).exists() {
+                    return Ok(path.to_string());
+                }
+            }
+        }
+        
+        Err("Ollama executable not found".to_string())
     }
     
     // 智能姓名检测：基于常见姓氏和上下文关键词
     fn detect_names_smart(&self, text: &str) -> Vec<EntityMatch> {
         let mut names = Vec::new();
         let chars: Vec<char> = text.chars().collect();
+        
+        // 常见的非姓名词汇（黑名单）
+        let blacklist = vec![
+            "方式", "方法", "方面", "方向", "公司", "项目", "系统", "平台",
+            "服务", "产品", "技术", "管理", "开发", "设计", "运营", "市场",
+            "销售", "客户", "用户", "数据", "信息", "内容", "文件", "文档",
+        ];
         
         for i in 0..chars.len() {
             // 检查2-4个汉字的组合
@@ -185,6 +580,11 @@ impl NERDetector {
                     continue;
                 }
                 
+                // 检查黑名单
+                if blacklist.contains(&candidate.as_str()) {
+                    continue;
+                }
+                
                 // 获取第一个字（姓氏）
                 let first_char = chars[i].to_string();
                 
@@ -194,8 +594,16 @@ impl NERDetector {
                 // 条件2：检查上下文是否包含姓名相关关键词
                 let has_context = self.has_name_context(text, i);
                 
-                // 如果满足姓氏条件或上下文条件，则认为是姓名
-                if has_common_surname || has_context {
+                // 判断逻辑：
+                // - 如果有上下文关键词，姓氏即可
+                // - 如果没有上下文，必须是常见姓氏且长度为2-3（典型中文姓名）
+                let is_likely_name = if has_context {
+                    has_common_surname
+                } else {
+                    has_common_surname && (len == 2 || len == 3)
+                };
+                
+                if is_likely_name {
                     // 计算在原始文本中的字节位置
                     let start_bytes: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
                     let end_bytes: usize = start_bytes + candidate.len();
@@ -205,6 +613,8 @@ impl NERDetector {
                         entity_type: "姓名".to_string(),
                         start: start_bytes,
                         end: end_bytes,
+                        confidence: if has_context { 0.85 } else { 0.70 },
+                        source: "ner".to_string(),
                     });
                 }
             }

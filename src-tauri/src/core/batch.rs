@@ -162,6 +162,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             rule_ids: options.rule_ids.clone(),
             passphrase: options.passphrase.clone(),
             custom_rules: options.custom_rules.clone(),
+            use_ai_validation: options.use_ai_validation,
         };
 
         println!("Starting to process file: {}", file_path);

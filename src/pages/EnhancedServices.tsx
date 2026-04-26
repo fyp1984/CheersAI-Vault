@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen } from 'lucide-react';
 import { tauriCommands } from '@/lib/tauri';
+import { open } from '@tauri-apps/plugin-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface ServiceStatus {
   ocr: boolean;
@@ -28,6 +33,11 @@ export function EnhancedServices() {
     aiModel: 0,
   });
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [showPathDialog, setShowPathDialog] = useState<'ocr' | 'aiModel' | null>(null);
+  const [customPaths, setCustomPaths] = useState({
+    ocr: '',
+    aiModel: '',
+  });
 
   useEffect(() => {
     checkServicesStatus();
@@ -168,14 +178,21 @@ export function EnhancedServices() {
   };
 
   const handleInstallOcr = async () => {
+    // 显示路径选择对话框
+    setShowPathDialog('ocr');
+  };
+
+  const handleConfirmInstallOcr = async () => {
     try {
+      setShowPathDialog(null);
       setInstalling({ ...installing, ocr: true });
       setMessage(null);
       setDownloadProgress({ ...downloadProgress, ocr: 0 });
 
       setMessage({ type: 'info', text: '正在下载 OCR 包，请稍候...' });
 
-      await tauriCommands.downloadOcrPackage();
+      // 传递自定义路径（如果有）
+      await tauriCommands.downloadOcrPackage(customPaths.ocr || undefined);
 
       setMessage({ type: 'success', text: 'OCR 服务安装成功！现在可以处理扫描版 PDF 文件了' });
       await checkServicesStatus();
@@ -210,7 +227,13 @@ export function EnhancedServices() {
   };
 
   const handleInstallAiModel = async () => {
+    // 显示路径选择对话框
+    setShowPathDialog('aiModel');
+  };
+
+  const handleConfirmInstallAiModel = async () => {
     try {
+      setShowPathDialog(null);
       setInstalling({ ...installing, aiModel: true });
       setMessage(null);
       setDownloadProgress({ ...downloadProgress, aiModel: 0 });
@@ -224,7 +247,8 @@ export function EnhancedServices() {
         });
         
         try {
-          await tauriCommands.downloadOllama();
+          // 传递自定义路径（如果有）
+          await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
           setMessage({ 
             type: 'success', 
             text: 'Ollama 安装成功！现在开始下载 AI 模型...' 
@@ -271,6 +295,25 @@ export function EnhancedServices() {
       setMessage({ type: 'error', text: `卸载失败: ${error}` });
     } finally {
       setUninstalling({ ...uninstalling, aiModel: false });
+    }
+  };
+
+  const handleSelectPath = async (service: 'ocr' | 'aiModel') => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: `选择 ${service === 'ocr' ? 'OCR' : 'AI 模型'} 安装目录（建议选择英文路径）`,
+      });
+
+      if (selected && typeof selected === 'string') {
+        setCustomPaths({
+          ...customPaths,
+          [service]: selected,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to select directory:', error);
     }
   };
 
@@ -639,6 +682,88 @@ export function EnhancedServices() {
           </ul>
         </div>
       </div>
+
+      {/* 路径选择对话框 */}
+      <Dialog open={showPathDialog !== null} onOpenChange={(open) => !open && setShowPathDialog(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>
+              选择安装路径 - {showPathDialog === 'ocr' ? 'OCR 服务' : 'AI 模型'}
+            </DialogTitle>
+            <DialogDescription>
+              请选择 {showPathDialog === 'ocr' ? 'OCR 服务' : 'AI 模型'} 的安装目录，建议选择英文路径以避免兼容性问题
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="install-path">安装路径</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="install-path"
+                  value={showPathDialog ? customPaths[showPathDialog] : ''}
+                  placeholder={`默认路径：C:\\Users\\...\\${showPathDialog === 'ocr' ? 'ocr-package' : 'ollama'}`}
+                  readOnly
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => showPathDialog && handleSelectPath(showPathDialog)}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {showPathDialog && customPaths[showPathDialog] 
+                  ? '已选择自定义路径' 
+                  : '默认安装到应用数据目录'}
+              </p>
+            </div>
+
+            <div className="flex items-start gap-2 text-sm text-muted-foreground bg-blue-50 p-3 rounded-md">
+              <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-600" />
+              <div>
+                <p className="font-medium text-blue-900 mb-1">安装说明：</p>
+                <ul className="list-disc list-inside space-y-1 text-xs text-blue-800">
+                  {showPathDialog === 'ocr' ? (
+                    <>
+                      <li>将下载 Python 运行时和 PyMuPDF（约 30MB）</li>
+                      <li>建议选择英文路径，如 C:\OCR</li>
+                      <li>仅支持 PDF 文本提取</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>将下载 Ollama 和 AI 模型（约 1GB）</li>
+                      <li>建议选择英文路径，如 C:\Ollama</li>
+                      <li>提供智能敏感信息识别</li>
+                    </>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPathDialog(null)}>
+              取消
+            </Button>
+            <Button 
+              onClick={() => {
+                if (showPathDialog === 'ocr') {
+                  handleConfirmInstallOcr();
+                } else {
+                  handleConfirmInstallAiModel();
+                }
+              }}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              开始安装
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

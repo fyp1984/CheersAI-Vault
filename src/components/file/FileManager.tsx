@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useNavigate } from 'react-router-dom';
 import { uploadToGitea, getGiteaStatus } from '../../services/gitea';
 import { useFileStore } from '../../store/fileStore';
 import Toast from '../common/Toast';
@@ -26,6 +27,7 @@ interface ToastMessage {
 }
 
 export function FileManager() {
+  const navigate = useNavigate();
   const { outputDir } = useFileStore();
   const [files, setFiles] = useState<SandboxFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,9 +233,12 @@ export function FileManager() {
           <div className="text-5xl mb-4">📁</div>
           <h3 className="text-lg font-semibold text-gray-700 mb-2">尚未配置输出目录</h3>
           <p className="text-sm text-gray-500 mb-6">请先前往「文件脱敏」页面，点击「选择输出目录」完成配置</p>
-          <a href="/process" className="px-4 py-2 bg-indigo-500 text-white text-sm rounded-md hover:bg-indigo-600 transition-colors">
+          <button 
+            onClick={() => navigate('/process')}
+            className="px-4 py-2 bg-indigo-500 text-white text-sm rounded-md hover:bg-indigo-600 transition-colors"
+          >
             前往文件脱敏
-          </a>
+          </button>
         </div>
       </div>
     );

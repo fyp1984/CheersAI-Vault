@@ -122,8 +122,12 @@ pub fn save_plain_mapping(
     #[cfg(target_os = "windows")]
     {
         use std::path::Path;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         let win_path = Path::new(path).to_string_lossy().replace("/", "\\");
         let _ = std::process::Command::new("attrib")
+            .creation_flags(CREATE_NO_WINDOW)
             .args(["-h", "-s", &win_path])
             .output();
     }
@@ -150,8 +154,12 @@ pub fn save_encrypted_mapping(
     #[cfg(target_os = "windows")]
     {
         use std::path::Path;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         let win_path = Path::new(path).to_string_lossy().replace("/", "\\");
         let result = std::process::Command::new("attrib")
+            .creation_flags(CREATE_NO_WINDOW)
             .args(["-h", "-s", &win_path])
             .output();
         if let Err(e) = result {
