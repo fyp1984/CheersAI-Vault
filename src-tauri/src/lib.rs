@@ -123,12 +123,14 @@ pub fn run() {
             filebay_config::validate_filebay_config_file,
             filebay_config::import_filebay_config,
             ai_model::check_ollama_installed,
+            ai_model::download_ollama,
             ai_model::start_ollama_service,
             ai_model::check_ai_model_installed,
             ai_model::install_ai_model,
             ai_model::uninstall_ai_model,
             ai_model::call_ai_model,
             ai_model::get_ai_model_info,
+            ai_model::check_ai_detection_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

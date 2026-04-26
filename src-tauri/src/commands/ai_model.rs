@@ -23,8 +23,10 @@ impl Default for AiModelConfig {
 }
 
 /// 获取 AI 模型安装目录
-/// 路径: AppData/com.cheersai.vault/ai-models/
+/// 优先使用用户自定义目录，否则使用默认 AppData 目录
 fn get_ai_model_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    // TODO: 从配置文件读取用户自定义目录
+    // 暂时使用默认目录
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     
@@ -33,8 +35,10 @@ fn get_ai_model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// 获取内置 Ollama 可执行文件路径
-/// 路径: AppData/com.cheersai.vault/ollama/ollama.exe
+/// 优先使用用户自定义目录，否则使用默认 AppData 目录
 fn get_bundled_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
+    // TODO: 从配置文件读取用户自定义目录
+    // 暂时使用默认目录
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     
@@ -49,6 +53,16 @@ fn get_bundled_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(ollama_exe)
 }
 
+/// 让用户选择 Ollama 安装目录
+#[tauri::command]
+pub async fn select_ollama_install_dir() -> Result<String, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    
+    // 使用 Tauri 的文件对话框让用户选择目录
+    // 注意：这需要在前端调用，因为需要窗口上下文
+    Err("请在前端使用 dialog.open() 选择目录".to_string())
+}
+
 /// 获取 Ollama 可执行文件路径（优先使用内置版本）
 fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
     // 1. 优先使用内置的 Ollama
@@ -60,8 +74,22 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
     // 2. 检查系统中是否安装了 Ollama
     #[cfg(target_os = "windows")]
     {
-        // 2.1 使用 PowerShell Get-Command 查找（最可靠）
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        // 2.1 尝试从 PATH 环境变量中查找（最快，不弹窗）
+        if let Ok(path_var) = std::env::var("PATH") {
+            for path_dir in path_var.split(';') {
+                let ollama_exe = PathBuf::from(path_dir).join("ollama.exe");
+                if ollama_exe.exists() {
+                    println!("Found Ollama in PATH: {:?}", ollama_exe);
+                    return Ok(ollama_exe);
+                }
+            }
+        }
+        
+        // 2.2 使用 PowerShell Get-Command 查找（隐藏窗口）
         if let Ok(output) = std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("-NoProfile")
             .arg("-Command")
             .arg("Get-Command ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source")
@@ -79,19 +107,9 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
         
-        // 2.2 尝试从 PATH 环境变量中查找
-        if let Ok(path_var) = std::env::var("PATH") {
-            for path_dir in path_var.split(';') {
-                let ollama_exe = PathBuf::from(path_dir).join("ollama.exe");
-                if ollama_exe.exists() {
-                    println!("Found Ollama in PATH: {:?}", ollama_exe);
-                    return Ok(ollama_exe);
-                }
-            }
-        }
-        
-        // 2.3 尝试使用 where 命令查找
+        // 2.3 尝试使用 where 命令查找（隐藏窗口）
         if let Ok(output) = std::process::Command::new("where")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("ollama")
             .output()
         {
@@ -233,61 +251,31 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// 下载 Ollama
+/// 下载并安装 Ollama（支持自定义路径）
+/// 注意：由于路径编码问题，建议用户手动安装 Ollama
 #[tauri::command]
-pub async fn download_ollama(app: AppHandle) -> Result<String, String> {
-    let app_data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
-    let ollama_dir = app_data_dir.join("ollama");
-    std::fs::create_dir_all(&ollama_dir)
-        .map_err(|e| format!("Failed to create ollama directory: {}", e))?;
-    
-    #[cfg(target_os = "windows")]
-    {
-        let ollama_url = "https://github.com/ollama/ollama/releases/download/v0.1.26/ollama-windows-amd64.zip";
-        let zip_path = ollama_dir.join("ollama.zip");
-        let ollama_exe = ollama_dir.join("ollama.exe");
-        
-        println!("Downloading Ollama from: {}", ollama_url);
-        
-        // 使用 reqwest 下载文件
-        let client = reqwest::Client::new();
-        let response = client.get(ollama_url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download Ollama: {}", e))?;
-        
-        let bytes = response.bytes()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-        
-        std::fs::write(&zip_path, &bytes)
-            .map_err(|e| format!("Failed to write zip file: {}", e))?;
-        
-        // 解压文件
-        let file = std::fs::File::open(&zip_path)
-            .map_err(|e| format!("Failed to open zip file: {}", e))?;
-        
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("Failed to read zip archive: {}", e))?;
-        
-        archive.extract(&ollama_dir)
-            .map_err(|e| format!("Failed to extract zip: {}", e))?;
-        
-        // 删除 zip 文件
-        let _ = std::fs::remove_file(&zip_path);
-        
-        if !ollama_exe.exists() {
-            return Err("Ollama 可执行文件未找到".to_string());
-        }
-        
-        Ok(format!("Ollama 已安装到: {:?}", ollama_exe))
+pub async fn download_ollama(app: AppHandle, custom_path: Option<String>) -> Result<String, String> {
+    println!("=== Starting Ollama download ===");
+    if let Some(ref path) = custom_path {
+        println!("Custom installation path: {}", path);
     }
     
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("当前平台暂不支持自动安装 Ollama，请手动安装: https://ollama.com/download".to_string())
+    // 检查系统是否已安装 Ollama
+    if let Ok(_) = get_ollama_path(&app) {
+        return Ok("Ollama 已安装，无需重复安装".to_string());
     }
+    
+    // 由于用户环境千差万别，路径可能包含中文等特殊字符
+    // 建议用户手动安装以避免路径问题
+    Err(format!(
+        "为避免路径编码问题，建议手动安装 Ollama：\n\n\
+        1. 访问 https://ollama.com/download\n\
+        2. 下载 Windows 版本\n\
+        3. 安装到英文路径（如 C:\\Ollama{}）\n\
+        4. 安装完成后重启本应用\n\n\
+        手动安装更稳定可靠！",
+        custom_path.map(|p| format!(" 或 {}", p)).unwrap_or_default()
+    ))
 }
 
 /// 检查 Ollama 是否已安装
@@ -357,11 +345,13 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
     let config = AiModelConfig::default();
     
     println!("=== Checking AI model installation ===");
+    println!("  Model name: {}", config.model_name);
     
     // 检查 Ollama 是否安装
     let ollama_path = match get_ollama_path(&app) {
         Ok(path) => {
-            println!("✓ Ollama found, checking for model: {}", config.model_name);
+            println!("✓ Ollama found at: {:?}", path);
+            println!("  Checking for model: {}", config.model_name);
             path
         },
         Err(e) => {
@@ -371,6 +361,25 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
     };
     
     // 使用 ollama list 命令检查模型是否存在
+    #[cfg(target_os = "windows")]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        match Command::new(&ollama_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg("list")
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                println!("✗ Failed to execute ollama list: {}", e);
+                return Ok(false);
+            }
+        }
+    };
+    
+    #[cfg(not(target_os = "windows"))]
     let output = match Command::new(&ollama_path)
         .arg("list")
         .output()
@@ -421,9 +430,31 @@ pub async fn install_ai_model(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Failed to create model directory: {}", e))?;
     
     println!("Installing AI model: {}", config.model_name);
-    println!("Model directory: {:?}", model_dir);
+    println!("  Ollama path: {:?}", ollama_path);
+    println!("  Model directory: {:?}", model_dir);
+    
+    // 验证 Ollama 可执行文件存在
+    if !ollama_path.exists() {
+        return Err(format!("Ollama executable not found: {:?}", ollama_path));
+    }
     
     // 设置 OLLAMA_MODELS 环境变量，指定模型存储位置
+    // 注意：PathBuf 会自动处理中文路径
+    #[cfg(target_os = "windows")]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        Command::new(ollama_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg("pull")
+            .arg(&config.model_name)
+            .env("OLLAMA_MODELS", &model_dir)
+            .output()
+            .map_err(|e| format!("Failed to pull model: {} (path may contain unsupported characters)", e))?
+    };
+    
+    #[cfg(not(target_os = "windows"))]
     let output = Command::new(ollama_path)
         .arg("pull")
         .arg(&config.model_name)
@@ -433,9 +464,11 @@ pub async fn install_ai_model(app: AppHandle) -> Result<String, String> {
     
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to install model: {}", error_msg));
+        let stdout_msg = String::from_utf8_lossy(&output.stdout);
+        return Err(format!("Failed to install model:\nSTDERR: {}\nSTDOUT: {}", error_msg, stdout_msg));
     }
     
+    println!("✓ AI model {} installed successfully", config.model_name);
     Ok(format!("AI 模型 {} 安装成功", config.model_name))
 }
 
@@ -450,6 +483,20 @@ pub async fn uninstall_ai_model(app: AppHandle) -> Result<String, String> {
     println!("Uninstalling AI model: {}", config.model_name);
     
     // 使用 ollama rm 命令删除模型
+    #[cfg(target_os = "windows")]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        Command::new(ollama_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg("rm")
+            .arg(&config.model_name)
+            .output()
+            .map_err(|e| format!("Failed to remove model: {}", e))?
+    };
+    
+    #[cfg(not(target_os = "windows"))]
     let output = Command::new(ollama_path)
         .arg("rm")
         .arg(&config.model_name)
@@ -475,6 +522,21 @@ pub async fn call_ai_model(app: AppHandle, prompt: String) -> Result<String, Str
     println!("Calling AI model with prompt: {}", prompt);
     
     // 使用 ollama run 命令调用模型
+    #[cfg(target_os = "windows")]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        Command::new(ollama_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg("run")
+            .arg(&config.model_name)
+            .arg(&prompt)
+            .output()
+            .map_err(|e| format!("Failed to run model: {}", e))?
+    };
+    
+    #[cfg(not(target_os = "windows"))]
     let output = Command::new(ollama_path)
         .arg("run")
         .arg(&config.model_name)
@@ -519,4 +581,41 @@ pub async fn get_ai_model_info(app: AppHandle) -> Result<serde_json::Value, Stri
             None
         },
     }))
+}
+
+/// 检查 AI 检测是否可用（Ollama 已安装且模型已安装）
+#[tauri::command]
+pub async fn check_ai_detection_available(app: AppHandle) -> Result<bool, String> {
+    println!("=== Checking AI detection availability ===");
+    
+    // 检查 Ollama 是否安装
+    let ollama_installed = match check_ollama_installed(app.clone()).await {
+        Ok(installed) => installed,
+        Err(e) => {
+            println!("✗ Failed to check Ollama: {}", e);
+            return Ok(false);
+        }
+    };
+    
+    if !ollama_installed {
+        println!("✗ Ollama not installed");
+        return Ok(false);
+    }
+    
+    // 检查模型是否安装
+    let model_installed = match check_ai_model_installed(app.clone()).await {
+        Ok(installed) => installed,
+        Err(e) => {
+            println!("✗ Failed to check AI model: {}", e);
+            return Ok(false);
+        }
+    };
+    
+    if !model_installed {
+        println!("✗ AI model not installed");
+        return Ok(false);
+    }
+    
+    println!("✓ AI detection is available");
+    Ok(true)
 }

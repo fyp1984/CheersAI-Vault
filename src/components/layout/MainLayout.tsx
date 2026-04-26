@@ -45,26 +45,29 @@ const pageMeta: Record<string, { title: string; description: string }> = {
 export function MainLayout() {
   const location = useLocation();
   const isDesktopWorkspace = location.pathname.startsWith("/cloud");
+  const isGiteaSettings = location.pathname.startsWith("/gitea");
   const meta = pageMeta[location.pathname] ?? {
     title: "CheersAI Desktop",
     description: "把敏感数据留在本地，让AI能力触手可及。",
   };
-  const networkStatus = isDesktopWorkspace
+  
+  // 根据页面类型确定网络状态
+  const networkStatus = (isDesktopWorkspace || isGiteaSettings)
     ? {
         label: "在线",
-        detail: "当前操作 Desktop 在线工作区",
+        detail: isDesktopWorkspace ? "当前操作 Desktop 在线工作区" : "当前操作 FileBay 在线服务",
         tone: "text-emerald-600",
         Icon: Wifi,
         dot: "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]",
         panel: "border-emerald-100 bg-emerald-50/80",
       }
     : {
-        label: "在线",
+        label: "离线",
         detail: "当前操作 Vault 本地工作区",
-        tone: "text-emerald-600",
+        tone: "text-slate-600",
         Icon: Wifi,
-        dot: "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]",
-        panel: "border-emerald-100 bg-emerald-50/80",
+        dot: "bg-slate-400 shadow-[0_0_0_4px_rgba(148,163,184,0.12)]",
+        panel: "border-slate-100 bg-slate-50/80",
       };
 
   return (

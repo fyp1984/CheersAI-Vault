@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -118,16 +118,13 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
         )}
       />
       <p className="text-sm font-medium text-gray-600">
-        {isDragActive ? "释放文件以添加" : "拖放文件到此处，或点击选择"}
+        点击选择文件
       </p>
       <p className="mt-1 text-xs text-gray-400">
         支持 CSV、Excel、JSON、TXT、Word、PowerPoint、PDF、Markdown
       </p>
       <p className="mt-0.5 text-xs text-gray-400">
         注：Word/PPT/PDF 将输出为 TXT 格式
-      </p>
-      <p className="mt-2 text-xs font-mono text-blue-600">
-        调试: 拖拽状态 = {isDragActive ? "激活" : "未激活"}
       </p>
     </div>
   );

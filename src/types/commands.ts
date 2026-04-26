@@ -27,6 +27,7 @@ export interface PreviewOptions {
   rule_ids: string[];
   max_rows?: number;
   custom_rules?: CustomRule[];
+  use_ai_validation?: boolean;
 }
 
 export interface EntityMatch {
@@ -96,6 +97,7 @@ export interface BatchJobOptions {
   rule_ids: string[];
   passphrase?: string;
   custom_rules?: CustomRule[];
+  use_ai_validation?: boolean;
 }
 
 export interface BatchStatus {

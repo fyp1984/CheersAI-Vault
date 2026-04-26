@@ -18,6 +18,7 @@ pub struct MaskFileOptions {
     pub rule_ids: Vec<String>,
     pub passphrase: Option<String>,
     pub custom_rules: Option<Vec<CustomRule>>,
+    pub use_ai_validation: Option<bool>, // 是否使用 AI 验证姓名
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +34,7 @@ pub struct PreviewOptions {
     pub rule_ids: Vec<String>,
     pub max_rows: Option<usize>,
     pub custom_rules: Option<Vec<CustomRule>>,
+    pub use_ai_validation: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,8 +94,14 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
     }
     println!("========================");
     
-    // 创建 NER 检测器
-    let ner_detector = ner::NERDetector::new();
+    // 创建 NER 检测器（根据选项决定是否启用 AI 检测）
+    let use_ai = options.use_ai_validation.unwrap_or(false);
+    let ner_detector = if use_ai {
+        println!("AI detection enabled for multi-method entity detection");
+        ner::NERDetector::new_with_ai_detection(true)
+    } else {
+        ner::NERDetector::new()
+    };
 
     match format {
         file_parser::FileFormat::Csv => {
@@ -273,8 +281,14 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
         .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
         .collect();
     
-    // Create NER detector
-    let ner_detector = ner::NERDetector::new();
+    // Create NER detector (with AI detection if enabled)
+    let use_ai = options.use_ai_validation.unwrap_or(false);
+    let ner_detector = if use_ai {
+        println!("AI detection enabled for multi-method entity detection (preview)");
+        ner::NERDetector::new_with_ai_detection(true)
+    } else {
+        ner::NERDetector::new()
+    };
 
     match format {
         file_parser::FileFormat::Csv => {

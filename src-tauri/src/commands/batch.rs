@@ -9,6 +9,7 @@ pub struct BatchJobOptions {
     pub rule_ids: Vec<String>,
     pub passphrase: Option<String>,
     pub custom_rules: Option<Vec<CustomRule>>,
+    pub use_ai_validation: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

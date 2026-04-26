@@ -48,6 +48,34 @@ export default function FileProcess() {
   const [showPreview, setShowPreview] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [showOcrDownload, setShowOcrDownload] = useState(false);
+  const [useAiValidation, setUseAiValidation] = useState(false); // AI 验证开关
+  const [aiDetectionAvailable, setAiDetectionAvailable] = useState(false); // AI 是否可用
+  const [isCheckingAi, setIsCheckingAi] = useState(true); // 是否正在检查 AI
+
+  // 检查 AI 检测是否可用
+  useEffect(() => {
+    const checkAiAvailability = async () => {
+      try {
+        console.log("Checking AI detection availability...");
+        const available = await tauriCommands.checkAiDetectionAvailable();
+        console.log("AI detection available:", available);
+        setAiDetectionAvailable(available);
+        
+        // 如果 AI 可用，默认打开开关
+        if (available) {
+          setUseAiValidation(true);
+          console.log("AI detection enabled by default");
+        }
+      } catch (error) {
+        console.error("Failed to check AI availability:", error);
+        setAiDetectionAvailable(false);
+      } finally {
+        setIsCheckingAi(false);
+      }
+    };
+
+    checkAiAvailability();
+  }, []);
 
   // 检测是否是 OCR 相关错误
   const isOcrError = (error: unknown): boolean => {
@@ -192,6 +220,7 @@ export default function FileProcess() {
             file_path: file.path,
             rule_ids: selectedRules,
             custom_rules: customRules.length > 0 ? customRules : undefined,
+            use_ai_validation: useAiValidation,
           });
           return {
             fileName: file.name,
@@ -258,6 +287,7 @@ export default function FileProcess() {
         rule_ids: allRuleIds,
         passphrase: passphrase || undefined,
         custom_rules: allCustomRules.length > 0 ? allCustomRules : undefined,
+        use_ai_validation: useAiValidation,
       });
 
       setActiveJob(jobId);
@@ -413,6 +443,52 @@ export default function FileProcess() {
               selectedRules={selectedRules}
               onRulesChange={setSelectedRules}
             />
+            
+            {/* AI 检测开关 */}
+            <div className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 rounded-xl">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-purple-900 mb-1">
+                    🤖 AI 多方法检测
+                  </h3>
+                  {isCheckingAi ? (
+                    <p className="text-xs text-purple-600 mb-2">
+                      正在检查 AI 配置...
+                    </p>
+                  ) : !aiDetectionAvailable ? (
+                    <p className="text-xs text-orange-600 mb-2">
+                      ⚠️ 未配置 Ollama 或模型，请先安装
+                    </p>
+                  ) : (
+                    <p className="text-xs text-purple-700 mb-2">
+                      使用 AI+NER+正则+搜索 四种方法检测敏感信息
+                    </p>
+                  )}
+                  <p className="text-xs text-purple-600 mb-1">
+                    • 姓名：四种方法<strong>交集</strong>（全部确认才脱敏）
+                  </p>
+                  <p className="text-xs text-purple-600">
+                    • 其他：四种方法<strong>并集</strong>（任一识别即脱敏）
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer ml-3">
+                  <input
+                    type="checkbox"
+                    checked={useAiValidation}
+                    onChange={(e) => setUseAiValidation(e.target.checked)}
+                    disabled={!aiDetectionAvailable || isCheckingAi}
+                    className="sr-only peer"
+                  />
+                  <div className={`w-11 h-6 ${
+                    !aiDetectionAvailable || isCheckingAi 
+                      ? 'bg-gray-300 cursor-not-allowed' 
+                      : 'bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300'
+                  } rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${
+                    aiDetectionAvailable && !isCheckingAi ? 'peer-checked:bg-purple-600' : ''
+                  }`}></div>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 

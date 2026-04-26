@@ -114,6 +114,11 @@ pub fn mask_value_with_ner(
     if !entities.is_empty() {
         println!("NER detected {} entities in original text", entities.len());
         
+        // 创建规则 ID 集合，用于快速查找
+        let enabled_rule_ids: std::collections::HashSet<&str> = rules.iter()
+            .map(|r| r.id.as_str())
+            .collect();
+        
         // 3. 对于 NER 检测到的实体，如果还没有被脱敏，则进行脱敏
         // 需要在当前结果中查找这些实体
         for entity in entities {
@@ -133,41 +138,109 @@ pub fn mask_value_with_ner(
                 continue;
             }
             
-            // 根据实体类型生成脱敏值
-            let (masked, rule_id) = match entity.entity_type.as_str() {
+            // 根据实体类型检查对应的规则是否启用
+            let (masked, rule_id, should_mask) = match entity.entity_type.as_str() {
                 "身份证号" => {
-                    *counter += 1;
-                    (format!("***IDCARD{}***", counter), "id_card_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("id_card");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***IDCARD{}***", counter), "id_card_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 身份证号 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "手机号" => {
-                    *counter += 1;
-                    (format!("***PHONE{}***", counter), "phone_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("phone");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***PHONE{}***", counter), "phone_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 手机号 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "邮箱" => {
-                    *counter += 1;
-                    (format!("***EMAIL{}***", counter), "email_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("email");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***EMAIL{}***", counter), "email_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 邮箱 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "银行卡号" => {
-                    *counter += 1;
-                    (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("bank_card");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 银行卡号 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "IP地址" => {
-                    *counter += 1;
-                    (format!("***IP{}***", counter), "ipv4_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("ipv4");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***IP{}***", counter), "ipv4_ner".to_string(), true)
+                    } else {
+                        println!("NER detected IP地址 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "护照号" => {
-                    *counter += 1;
-                    (format!("***PASSPORT{}***", counter), "passport_ner".to_string())
+                    let enabled = enabled_rule_ids.contains("passport");
+                    if enabled {
+                        *counter += 1;
+                        (format!("***PASSPORT{}***", counter), "passport_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 护照号 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
                 },
                 "姓名" | "中文姓名" => {
+                    let enabled = enabled_rule_ids.contains("chinese_name");
+                    if enabled {
+                        *counter += 1;
+                        (format!("姓名{}", counter), "chinese_name_ner".to_string(), true)
+                    } else {
+                        println!("NER detected 姓名 '{}' but rule is disabled, skipping", original);
+                        (String::new(), String::new(), false)
+                    }
+                },
+                "日期" => {
+                    // 日期没有对应的规则开关，默认脱敏
                     *counter += 1;
-                    (format!("姓名{}", counter), "chinese_name_ner".to_string())
+                    (format!("***DATE{}***", counter), "date_ner".to_string(), true)
+                },
+                "地址" => {
+                    // 地址没有对应的规则开关，默认脱敏
+                    *counter += 1;
+                    (format!("***ADDRESS{}***", counter), "address_ner".to_string(), true)
+                },
+                "地名" => {
+                    // 地名没有对应的规则开关，默认脱敏
+                    *counter += 1;
+                    (format!("***LOCATION{}***", counter), "location_ner".to_string(), true)
+                },
+                "组织" => {
+                    // 组织没有对应的规则开关，默认脱敏
+                    *counter += 1;
+                    (format!("***ORG{}***", counter), "organization_ner".to_string(), true)
                 },
                 _ => {
-                    println!("NER detected unknown entity type: {} ({})", entity.entity_type, original);
-                    continue; // 跳过未知类型
+                    println!("NER detected unknown entity type: {} ({}), using generic masking", entity.entity_type, original);
+                    *counter += 1;
+                    (format!("***SENSITIVE{}***", counter), "unknown_ner".to_string(), true)
                 }
             };
+            
+            // 只有当规则启用时才进行脱敏
+            if !should_mask {
+                continue;
+            }
             
             println!("NER masking entity: {} -> {} (type: {})", original, masked, entity.entity_type);
             

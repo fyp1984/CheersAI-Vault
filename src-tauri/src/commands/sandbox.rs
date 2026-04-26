@@ -244,7 +244,11 @@ pub async fn open_sandbox_dir() -> Result<String, String> {
     
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         std::process::Command::new("explorer")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg(&output_dir)
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
@@ -306,11 +310,15 @@ pub async fn lock_sandbox_files(directory: String) -> Result<String, String> {
     let mut count = 0;
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         if let Ok(entries) = std::fs::read_dir(dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
                     let _ = std::process::Command::new("attrib")
+                        .creation_flags(CREATE_NO_WINDOW)
                         .args(["+h", "+s", &path.to_string_lossy()])
                         .output();
                     count += 1;
@@ -333,11 +341,15 @@ pub async fn unlock_sandbox_files(directory: String) -> Result<String, String> {
     let mut count = 0;
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         if let Ok(entries) = std::fs::read_dir(dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
                     let _ = std::process::Command::new("attrib")
+                        .creation_flags(CREATE_NO_WINDOW)
                         .args(["-h", "-s", &path.to_string_lossy()])
                         .output();
                     count += 1;
