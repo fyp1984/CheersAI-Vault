@@ -14,67 +14,21 @@ pub struct OcrDownloadProgress {
 /// 检查 OCR 是否已安装
 #[tauri::command]
 pub async fn check_ocr_installed(app: AppHandle) -> Result<bool, String> {
-    // 1. 检查内置的 OCR 包
+    // 只检查内置的 OCR 包，不检查系统 Python
     let exe_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     
     let ocr_python = exe_dir.join("ocr-package").join("python").join("python.exe");
     let ocr_script = exe_dir.join("ocr-package").join("pdf_ocr.py");
     
-    if ocr_python.exists() && ocr_script.exists() {
-        return Ok(true);
-    }
+    println!("Checking OCR installation:");
+    println!("  Python: {} (exists: {})", ocr_python.display(), ocr_python.exists());
+    println!("  Script: {} (exists: {})", ocr_script.display(), ocr_script.exists());
     
-    // 2. 检查系统 Python 是否安装了 paddleocr
-    #[cfg(target_os = "windows")]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        use std::os::windows::process::CommandExt;
-        
-        // 尝试运行 python -c "import paddleocr"
-        let python_commands = vec!["python", "python3", "py"];
-        
-        for cmd in python_commands {
-            if let Ok(output) = std::process::Command::new(cmd)
-                .creation_flags(CREATE_NO_WINDOW)
-                .arg("-c")
-                .arg("import paddleocr; print('OK')")
-                .output()
-            {
-                if output.status.success() {
-                    let output_str = String::from_utf8_lossy(&output.stdout);
-                    if output_str.contains("OK") {
-                        println!("Found system Python with paddleocr: {}", cmd);
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-    }
+    let is_installed = ocr_python.exists() && ocr_script.exists();
+    println!("  Result: {}", if is_installed { "Installed" } else { "Not installed" });
     
-    #[cfg(not(target_os = "windows"))]
-    {
-        // macOS 和 Linux
-        let python_commands = vec!["python3", "python"];
-        
-        for cmd in python_commands {
-            if let Ok(output) = std::process::Command::new(cmd)
-                .arg("-c")
-                .arg("import paddleocr; print('OK')")
-                .output()
-            {
-                if output.status.success() {
-                    let output_str = String::from_utf8_lossy(&output.stdout);
-                    if output_str.contains("OK") {
-                        println!("Found system Python with paddleocr: {}", cmd);
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(false)
+    Ok(is_installed)
 }
 
 /// 获取 OCR 安装路径
@@ -388,11 +342,10 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     println!("Installing OCR dependencies...");
     println!("  Python: {:?}", python_exe);
     
-    // 使用更轻量的 OCR 方案：PyMuPDF (fitz) 用于 PDF 文本提取
-    // easyocr 太大且依赖复杂，改为可选安装
+    // 安装 OCR 依赖：PyMuPDF 用于 PDF 文本提取，easyocr 用于图片 OCR
     let packages = vec![
-        "PyMuPDF",  // PDF 文本提取，约 20MB
-        // "easyocr" 暂时不自动安装，太大（约 500MB+）
+        "PyMuPDF",   // PDF 文本提取，约 20MB
+        "easyocr",   // 图片 OCR，约 500MB+（包含模型）
     ];
     
     for package in packages {
@@ -444,29 +397,83 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     }
     
     println!("✓ All OCR dependencies installed successfully");
-    println!("ℹ️  Note: easyocr not installed (too large). Using PyMuPDF for text extraction.");
     
     // 验证安装
     println!("Verifying installation...");
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        let verify_output = Command::new(&python_exe)
+        
+        // 验证 PyMuPDF
+        let verify_pymupdf = Command::new(&python_exe)
             .creation_flags(CREATE_NO_WINDOW)
-            .args(&["-c", "import fitz; print('OK')"])
+            .args(&["-c", "import fitz; print('PyMuPDF OK')"])
             .current_dir(python_dir)
             .output();
         
-        match verify_output {
+        match verify_pymupdf {
             Ok(output) if output.status.success() => {
-                println!("✓ Verification successful");
+                println!("✓ PyMuPDF verified");
             },
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("⚠ Verification warning: {}", stderr);
+                println!("⚠ PyMuPDF verification warning: {}", stderr);
             },
             Err(e) => {
-                println!("⚠ Verification failed: {}", e);
+                println!("⚠ PyMuPDF verification failed: {}", e);
+            }
+        }
+        
+        // 验证 easyocr
+        let verify_easyocr = Command::new(&python_exe)
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(&["-c", "import easyocr; print('easyocr OK')"])
+            .current_dir(python_dir)
+            .output();
+        
+        match verify_easyocr {
+            Ok(output) if output.status.success() => {
+                println!("✓ easyocr verified");
+            },
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("⚠ easyocr verification warning: {}", stderr);
+            },
+            Err(e) => {
+                println!("⚠ easyocr verification failed: {}", e);
+            }
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 验证 PyMuPDF
+        let verify_pymupdf = Command::new(&python_exe)
+            .args(&["-c", "import fitz; print('PyMuPDF OK')"])
+            .current_dir(python_dir)
+            .output();
+        
+        match verify_pymupdf {
+            Ok(output) if output.status.success() => {
+                println!("✓ PyMuPDF verified");
+            },
+            _ => {
+                println!("⚠ PyMuPDF verification failed");
+            }
+        }
+        
+        // 验证 easyocr
+        let verify_easyocr = Command::new(&python_exe)
+            .args(&["-c", "import easyocr; print('easyocr OK')"])
+            .current_dir(python_dir)
+            .output();
+        
+        match verify_easyocr {
+            Ok(output) if output.status.success() => {
+                println!("✓ easyocr verified");
+            },
+            _ => {
+                println!("⚠ easyocr verification failed");
             }
         }
     }
@@ -549,9 +556,29 @@ pub async fn uninstall_ocr_package(app: AppHandle) -> Result<(), String> {
     
     let ocr_dir = app_data_dir.join("ocr-package");
     
+    println!("Uninstalling OCR package from: {:?}", ocr_dir);
+    
     if ocr_dir.exists() {
+        println!("OCR directory exists, removing...");
+        
+        // 列出要删除的内容
+        if let Ok(entries) = fs::read_dir(&ocr_dir) {
+            for entry in entries.flatten() {
+                println!("  - Removing: {:?}", entry.path());
+            }
+        }
+        
         fs::remove_dir_all(&ocr_dir)
             .map_err(|e| format!("Failed to remove OCR package: {}", e))?;
+        
+        // 验证删除
+        if ocr_dir.exists() {
+            return Err("OCR directory still exists after removal".to_string());
+        }
+        
+        println!("✓ OCR package uninstalled successfully");
+    } else {
+        println!("OCR directory does not exist, nothing to uninstall");
     }
     
     Ok(())

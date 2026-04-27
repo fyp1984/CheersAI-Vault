@@ -134,3 +134,35 @@ export interface FileBayConfigStatus {
   filePath?: string;
   lastModified?: string;
 }
+
+// Sensitive Terms types
+export interface SensitiveTerm {
+  id: string;
+  term: string;
+  category: string;
+  description?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AddSensitiveTermRequest {
+  term: string;
+  category: string;
+  description?: string;
+}
+
+export interface UpdateSensitiveTermRequest {
+  id: string;
+  term?: string;
+  category?: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface SensitiveTermsStats {
+  total: number;
+  enabled: number;
+  disabled: number;
+  categories: number;
+}

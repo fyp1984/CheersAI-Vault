@@ -5,7 +5,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import FileProcess from "@/pages/FileProcess";
 import FileUnmask from "@/pages/FileUnmask";
-import RuleConfig from "@/pages/RuleConfig";
+import SensitiveTerms from "@/pages/SensitiveTerms";
 import SandboxManager from "@/pages/SandboxManager";
 import OperationLog from "@/pages/OperationLog";
 import CheersAICloudBrowser from "@/pages/CheersAICloudBrowser";
@@ -93,7 +93,8 @@ function AppRoutes() {
         <Route path="/unmask" element={<FileUnmask />} />
         <Route path="/files" element={<FileManager />} />
         <Route path="/gitea" element={<GiteaSettings />} />
-        <Route path="/rules" element={<RuleConfig />} />
+        <Route path="/rules" element={<Navigate to="/sensitive-terms" replace />} />
+        <Route path="/sensitive-terms" element={<SensitiveTerms />} />
         <Route path="/sandbox" element={<SandboxManager />} />
         <Route path="/log" element={<OperationLog />} />
         <Route path="/cloud" element={<CheersAICloudBrowser />} />

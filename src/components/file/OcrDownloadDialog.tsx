@@ -36,6 +36,53 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
   });
   const [error, setError] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
+
+  // 当对话框打开时，检查 OCR 是否已安装
+  useEffect(() => {
+    if (open) {
+      const checkInstallation = async () => {
+        setIsChecking(true);
+        try {
+          const installed = await invoke<boolean>('check_ocr_installed');
+          console.log('OCR installation check:', installed);
+          if (installed) {
+            // 如果已安装，直接关闭对话框，不显示任何内容
+            console.log('OCR already installed, closing dialog');
+            onOpenChange(false);
+            return;
+          } else {
+            // 未安装，显示下载界面
+            setIsComplete(false);
+            setProgress({
+              downloaded: 0,
+              total: 0,
+              percentage: 0,
+              status: '准备下载...',
+            });
+          }
+        } catch (err) {
+          console.error('Failed to check OCR installation:', err);
+        } finally {
+          setIsChecking(false);
+        }
+      };
+      
+      checkInstallation();
+    } else {
+      // 对话框关闭时重置状态
+      setIsChecking(true);
+      setIsDownloading(false);
+      setError(null);
+      setIsComplete(false);
+      setProgress({
+        downloaded: 0,
+        total: 0,
+        percentage: 0,
+        status: '准备下载...',
+      });
+    }
+  }, [open, onOpenChange]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -118,6 +165,13 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {isChecking && (
+            <div className="flex items-center justify-center gap-2 py-4">
+              <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-muted-foreground">检查 OCR 状态...</span>
+            </div>
+          )}
+
           {!isDownloading && !isComplete && !error && (
             <div className="space-y-3">
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -125,10 +179,10 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
                 <div>
                   <p className="font-medium mb-1">下载说明：</p>
                   <ul className="list-disc list-inside space-y-1 text-xs">
-                    <li>将下载 Python 运行时和 PyMuPDF（PDF 文本提取）</li>
-                    <li>总大小约 30MB，下载需要 1-2 分钟</li>
-                    <li>仅支持 PDF 文本提取，不支持图片 OCR</li>
-                    <li>如需图片 OCR，请手动安装系统 Python + easyocr</li>
+                    <li>将下载 Python 运行时、PyMuPDF 和 easyocr</li>
+                    <li>总大小约 500-600MB，下载需要 5-10 分钟</li>
+                    <li>支持 PDF 文本提取和图片 OCR 识别</li>
+                    <li>首次使用时会自动下载 OCR 模型（约 100MB）</li>
                   </ul>
                 </div>
               </div>
@@ -157,7 +211,7 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
               <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0" />
               <div className="text-sm text-green-700">
                 <p className="font-medium">OCR 功能已就绪</p>
-                <p className="text-xs mt-1">可以处理 PDF 文本提取（不支持图片 OCR）</p>
+                <p className="text-xs mt-1">支持 PDF 文本提取和图片 OCR 识别</p>
               </div>
             </div>
           )}
@@ -174,7 +228,16 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
         </div>
 
         <DialogFooter>
-          {!isDownloading && !isComplete && (
+          {isChecking && (
+            <Button disabled>
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                检查中...
+              </div>
+            </Button>
+          )}
+
+          {!isChecking && !isDownloading && !isComplete && (
             <>
               <Button variant="outline" onClick={handleClose}>
                 取消

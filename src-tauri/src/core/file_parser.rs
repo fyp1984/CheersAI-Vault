@@ -429,119 +429,117 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     println!("Starting OCR processing for PDF: {}", path);
     println!("Note: OCR processing may take 30-60 seconds");
     
-    // 获取应用目录和应用数据目录
+    // 获取应用目录
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     
-    // 尝试从应用数据目录获取 OCR 包（用户下载的）
-    let app_data_dir = dirs_next::data_dir()
-        .map(|d| d.join("com.cheersai.vault"))
-        .unwrap_or_else(|| exe_dir.clone());
+    // 统一使用 Tauri 的标准路径
+    // Tauri 的 app_data_dir() 在 Windows 上返回 %APPDATA% (Roaming)
+    let app_data_dir = if cfg!(target_os = "windows") {
+        // Windows: C:\Users\{username}\AppData\Roaming\com.cheersai.vault
+        // 使用 APPDATA 而不是 LOCALAPPDATA，与 Tauri 的 app_data_dir() 一致
+        std::env::var("APPDATA")
+            .ok()
+            .map(|p| std::path::PathBuf::from(p).join("com.cheersai.vault"))
+            .unwrap_or_else(|| exe_dir.clone())
+    } else if cfg!(target_os = "macos") {
+        // macOS: ~/Library/Application Support/com.cheersai.vault
+        dirs_next::home_dir()
+            .map(|h| h.join("Library").join("Application Support").join("com.cheersai.vault"))
+            .unwrap_or_else(|| exe_dir.clone())
+    } else {
+        // Linux: ~/.local/share/com.cheersai.vault
+        dirs_next::data_local_dir()
+            .map(|d| d.join("com.cheersai.vault"))
+            .unwrap_or_else(|| exe_dir.clone())
+    };
+    
+    println!("App data directory: {}", app_data_dir.display());
     
     // 方案 1: 使用应用数据目录中下载的 Python 环境（推荐）
     let downloaded_python = app_data_dir.join("ocr-package").join("python").join("python.exe");
     let downloaded_script = app_data_dir.join("ocr-package").join("pdf_ocr.py");
     
+    println!("Checking downloaded OCR:");
+    println!("  Python: {}", downloaded_python.display());
+    println!("  Script: {}", downloaded_script.display());
+    
     if downloaded_python.exists() && downloaded_script.exists() {
-        println!("Using downloaded Python OCR: {}", downloaded_python.display());
+        println!("✓ Using downloaded Python OCR");
         return run_ocr_command(
             &downloaded_python.to_string_lossy(), 
             &[&downloaded_script.to_string_lossy(), path], 
             300  // 5 分钟超时
         );
+    } else {
+        println!("✗ Downloaded OCR not found");
+        if !downloaded_python.exists() {
+            println!("  Missing: {}", downloaded_python.display());
+        }
+        if !downloaded_script.exists() {
+            println!("  Missing: {}", downloaded_script.display());
+        }
     }
     
     // 方案 2: 使用打包的 Python 环境
     let bundled_python = exe_dir.join("ocr-package").join("python").join("python.exe");
     let bundled_script = exe_dir.join("ocr-package").join("pdf_ocr.py");
     
+    println!("Checking bundled OCR:");
+    println!("  Python: {}", bundled_python.display());
+    println!("  Script: {}", bundled_script.display());
+    
     if bundled_python.exists() && bundled_script.exists() {
-        println!("Using bundled Python OCR: {}", bundled_python.display());
+        println!("✓ Using bundled Python OCR");
         return run_ocr_command(
             &bundled_python.to_string_lossy(), 
             &[&bundled_script.to_string_lossy(), path], 
             300  // 5 分钟超时
         );
+    } else {
+        println!("✗ Bundled OCR not found");
     }
     
     // 方案 3: 使用打包的 exe（PyInstaller）
     let bundled_exe = exe_dir.join("pdf_ocr.exe");
+    println!("Checking bundled exe: {}", bundled_exe.display());
+    
     if bundled_exe.exists() {
-        println!("Using bundled OCR executable: {}", bundled_exe.display());
+        println!("✓ Using bundled OCR executable");
         return run_ocr_command(&bundled_exe.to_string_lossy(), &[path], 300);  // 5 分钟超时
-    }
-    
-    // 方案 4: 开发环境，使用项目中的脚本
-    let dev_script = if cfg!(debug_assertions) {
-        std::path::PathBuf::from("scripts/pdf_ocr.py")
     } else {
-        exe_dir.join("scripts").join("pdf_ocr.py")
-    };
-    
-    if dev_script.exists() {
-        println!("Using development OCR script: {}", dev_script.display());
-        
-        // 尝试系统 Python
-        let python_commands = vec!["python", "python3", "py"];
-        let mut last_error = String::new();
-        
-        for python_cmd in &python_commands {
-            println!("Trying Python command: {}", python_cmd);
-            
-            match run_ocr_command(python_cmd, &[&dev_script.to_string_lossy(), path], 300) {  // 5 分钟超时
-                Ok(text) => return Ok(text),
-                Err(e) => {
-                    last_error = e.to_string();
-                    println!("Failed with {}: {}", python_cmd, last_error);
-                }
-            }
-        }
-        
-        // 系统 Python 失败 - 提示下载 OCR 包
-        return Err(anyhow::anyhow!(
-            "⚠️ 检测到扫描版 PDF，需要 OCR 功能\n\n\
-            OCR 依赖未安装。请选择以下方式之一：\n\n\
-            方法 1：自动下载 OCR 包（推荐）\n\
-            • 点击下载 OCR 依赖按钮\n\
-            • 大小约 100MB，首次下载需要 2-5 分钟\n\
-            • 下载后自动安装，无需重启\n\n\
-            方法 2：手动安装 Python 环境\n\
-            1. 安装 Python 3.7+ (https://www.python.org/)\n\
-            2. 运行命令: pip install easyocr PyMuPDF\n\
-            3. 重新处理文件\n\n\
-            方法 3：使用在线 OCR 工具\n\
-            • https://www.onlineocr.net/\n\
-            • https://ocr.space/\n\
-            • 百度 OCR、腾讯 OCR"
-        ));
+        println!("✗ Bundled exe not found");
     }
     
-    // 所有方案都不可用 - 提示下载
+    // 方案 4: 不使用系统 Python（已禁用，确保只使用下载的OCR包）
+    println!("System Python is disabled - only downloaded OCR package will be used");
+    
+    // All methods failed - prompt to download
     Err(anyhow::anyhow!(
-        "⚠️ OCR 功能未安装\n\n\
-        检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
-        解决方案：\n\n\
-        方法 1：自动下载 OCR 包（推荐）\n\
-        • 应用会提示下载 OCR 依赖包\n\
-        • 大小约 100MB\n\
-        • 下载后自动配置，无需重启\n\n\
-        方法 2：手动安装 Python OCR 环境\n\
-        1. 安装 Python 3.7+ (https://www.python.org/)\n\
-        2. 运行命令: pip install easyocr PyMuPDF\n\
-        3. 重新尝试处理文件\n\n\
-        方法 3：使用在线 OCR 工具\n\
-        • https://www.onlineocr.net/\n\
-        • https://ocr.space/\n\
-        • 百度 OCR、腾讯 OCR"
+        "OCR feature not installed\n\n\
+        Detected scanned PDF, OCR dependencies required.\n\n\
+        Solutions:\n\n\
+        Method 1: Auto-download OCR package (Recommended)\n\
+        - App will prompt to download OCR dependencies\n\
+        - Size: ~100MB\n\
+        - Auto-configured after download, no restart needed\n\n\
+        Method 2: Manual Python OCR setup\n\
+        1. Install Python 3.7+ (https://www.python.org/)\n\
+        2. Run: pip install easyocr PyMuPDF\n\
+        3. Retry processing\n\n\
+        Method 3: Use online OCR tools\n\
+        - https://www.onlineocr.net/\n\
+        - https://ocr.space/\n\
+        - Baidu OCR, Tencent OCR"
     ))
 }
 
-// 运行 OCR 命令，支持实时输出和超时控制
+// Run OCR command with real-time output and timeout control
 fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<String> {
     use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use std::thread;
     use std::sync::mpsc;
     use std::io::{BufRead, BufReader};
@@ -550,7 +548,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
     let command_clone = command.to_string();
     let args_clone: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     
-    // 在新线程中执行命令
+    // Execute command in a new thread
     thread::spawn(move || {
         let mut child = match Command::new(&command_clone)
             .args(&args_clone)
@@ -565,7 +563,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             }
         };
         
-        // 读取 stderr（进度信息）
+        // Read stderr for progress information
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             thread::spawn(move || {
@@ -577,7 +575,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             });
         }
         
-        // 等待进程完成
+        // Wait for process to complete
         match child.wait_with_output() {
             Ok(output) => {
                 if output.status.success() {
@@ -585,7 +583,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
                     if text.trim().is_empty() {
                         let _ = tx.send(Err(anyhow::anyhow!("OCR returned empty result")));
                     } else {
-                        println!("OCR completed: {} characters extracted", text.len());
+                        println!("OCR completed: {} chars extracted", text.len());
                         let _ = tx.send(Ok(text));
                     }
                 } else {
@@ -599,9 +597,9 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
         }
     });
     
-    // 等待结果，带超时
+    // Wait for result with timeout
     match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
         Ok(result) => result,
-        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} seconds", timeout_secs)),
+        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} secs", timeout_secs)),
     }
 }
