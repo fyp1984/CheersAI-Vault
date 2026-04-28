@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen } from 'lucide-react';
 import { tauriCommands } from '@/lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import type { InstallerProgress } from '@/types/commands';
 
 interface ServiceStatus {
   ocr: boolean;
@@ -32,6 +34,10 @@ export function EnhancedServices() {
     ocr: 0,
     aiModel: 0,
   });
+  const [progressStatus, setProgressStatus] = useState({
+    ocr: '',
+    aiModel: '',
+  });
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showPathDialog, setShowPathDialog] = useState<'ocr' | 'aiModel' | null>(null);
   const [customPaths, setCustomPaths] = useState({
@@ -41,7 +47,34 @@ export function EnhancedServices() {
 
   useEffect(() => {
     checkServicesStatus();
+    setupProgressListeners();
   }, []);
+
+  const setupProgressListeners = () => {
+    // 监听 OCR 安装进度
+    listen<InstallerProgress>('ocr-install-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+    });
+
+    // 监听 OCR 卸载进度
+    listen<InstallerProgress>('ocr-uninstall-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+    });
+
+    // 监听 Ollama 安装进度
+    listen<InstallerProgress>('ollama-install-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+    });
+
+    // 监听 Ollama 卸载进度
+    listen<InstallerProgress>('ollama-uninstall-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+    });
+  };
 
   const checkServicesStatus = async () => {
     try {
@@ -206,17 +239,18 @@ export function EnhancedServices() {
   };
 
   const handleUninstallOcr = async () => {
-    if (!confirm('确定要卸载 OCR 服务吗？卸载后将无法处理扫描版 PDF 文件。')) {
+    if (!confirm('确定要完全卸载 OCR 服务吗？这将删除所有 OCR 相关文件。卸载后将无法处理扫描版 PDF 文件。')) {
       return;
     }
 
     try {
       setUninstalling({ ...uninstalling, ocr: true });
-      setMessage(null);
+      setMessage({ type: 'info', text: '正在卸载 OCR 服务...' });
 
-      await tauriCommands.uninstallOcrPackage();
+      // 使用脚本完全卸载
+      await tauriCommands.uninstallOcrWithScript();
 
-      setMessage({ type: 'success', text: 'OCR 服务已卸载' });
+      setMessage({ type: 'success', text: 'OCR 服务已完全卸载' });
       await checkServicesStatus();
     } catch (error) {
       console.error('Failed to uninstall OCR:', error);
@@ -237,61 +271,61 @@ export function EnhancedServices() {
       setInstalling({ ...installing, aiModel: true });
       setMessage(null);
       setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setProgressStatus({ ...progressStatus, aiModel: '' });
 
-      // 先检查 Ollama 是否安装（包括系统安装和内置版本）
-      const ollamaInstalled = await tauriCommands.checkOllamaInstalled();
-      if (!ollamaInstalled) {
-        setMessage({ 
-          type: 'info', 
-          text: '检测到系统未安装 Ollama，正在下载内置版本...' 
-        });
-        
-        try {
-          // 传递自定义路径（如果有）
-          await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
-          setMessage({ 
-            type: 'success', 
-            text: 'Ollama 安装成功！现在开始下载 AI 模型...' 
-          });
-        } catch (error) {
-          setMessage({ 
-            type: 'error', 
-            text: `Ollama 安装失败: ${error}。请手动从 https://ollama.com/download 下载安装` 
-          });
-          return;
-        }
-      } else {
-        setMessage({ type: 'info', text: '检测到 Ollama 已安装，正在下载 AI 脱敏模型（qwen2.5:0.5b）...' });
-      }
+      // 使用脚本自动安装 Ollama + AI 模型
+      setMessage({ 
+        type: 'info', 
+        text: '正在安装 Ollama 和 AI 脱敏模型（qwen2.5:1.5b）...\n' +
+              '首次安装需要下载约 1.6GB 文件，请耐心等待。'
+      });
 
-      const result = await tauriCommands.installAiModel();
+      await tauriCommands.installOllamaWithScript();
 
-      setMessage({ type: 'success', text: result });
+      setMessage({ type: 'success', text: 'Ollama 和 AI 模型安装成功！' });
       await checkServicesStatus();
     } catch (error) {
       console.error('Failed to install AI model:', error);
-      setMessage({ type: 'error', text: `安装失败: ${error}` });
+      
+      // 如果安装失败，提供手动安装指引
+      const errorMsg = String(error);
+      let helpText = `安装失败: ${errorMsg}\n\n`;
+      
+      if (errorMsg.includes('Python') || errorMsg.includes('python')) {
+        helpText += '提示：此功能需要 Python 3.7+ 才能使用自动安装。\n\n';
+      }
+      
+      helpText += '您也可以手动安装 Ollama：\n' +
+                  '1. 访问 https://ollama.com/download（国外官网）\n' +
+                  '2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n' +
+                  '3. 下载 Windows 版本并安装\n' +
+                  '4. 安装完成后，在命令行运行：ollama pull qwen2.5:1.5b\n' +
+                  '5. 重启本应用即可使用';
+      
+      setMessage({ type: 'error', text: helpText });
     } finally {
       setInstalling({ ...installing, aiModel: false });
       setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setProgressStatus({ ...progressStatus, aiModel: '' });
     }
   };
 
   const handleUninstallAiModel = async () => {
-    if (!confirm('确定要卸载 AI 脱敏模型吗？卸载后将无法使用智能脱敏功能。')) {
+    if (!confirm('确定要完全卸载 Ollama 和 AI 模型吗？这将删除 Ollama 程序、所有模型和用户数据。卸载后将无法使用智能脱敏功能。')) {
       return;
     }
 
     try {
       setUninstalling({ ...uninstalling, aiModel: true });
-      setMessage(null);
+      setMessage({ type: 'info', text: '正在完全卸载 Ollama 和 AI 模型...' });
 
-      const result = await tauriCommands.uninstallAiModel();
+      // 使用脚本完全卸载 Ollama
+      await tauriCommands.uninstallOllamaWithScript();
 
-      setMessage({ type: 'success', text: result });
+      setMessage({ type: 'success', text: 'Ollama 和 AI 模型已完全卸载' });
       await checkServicesStatus();
     } catch (error) {
-      console.error('Failed to uninstall AI model:', error);
+      console.error('Failed to uninstall Ollama:', error);
       setMessage({ type: 'error', text: `卸载失败: ${error}` });
     } finally {
       setUninstalling({ ...uninstalling, aiModel: false });
@@ -452,7 +486,7 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~500MB</span>
+                    <span className="text-xs text-gray-500">大小: ~530MB</span>
                   </div>
                 </div>
               </div>
@@ -511,7 +545,7 @@ export function EnhancedServices() {
                   ) : (
                     <>
                       <Trash2 className="w-4 h-4 mr-2" />
-                      卸载服务
+                      完全卸载
                     </>
                   )}
                 </button>
@@ -522,8 +556,8 @@ export function EnhancedServices() {
             {installing.ocr && downloadProgress.ocr > 0 && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-                  <span>下载进度</span>
-                  <span>{downloadProgress.ocr}%</span>
+                  <span className="truncate mr-2">{progressStatus.ocr || '下载进度'}</span>
+                  <span className="font-medium">{downloadProgress.ocr.toFixed(1)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
@@ -567,7 +601,7 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~1GB</span>
+                    <span className="text-xs text-gray-500">大小: ~1.6GB（需先安装 Ollama 服务）</span>
                   </div>
                 </div>
               </div>
@@ -626,13 +660,13 @@ export function EnhancedServices() {
                   ) : (
                     <>
                       <Trash2 className="w-4 h-4 mr-2" />
-                      卸载模型
+                      完全卸载
                     </>
                   )}
                 </button>
               )}
               <a
-                href="https://ollama.com/library/qwen2.5:0.5b"
+                href="https://ollama.com/library/qwen2.5:1.5b"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
@@ -646,8 +680,8 @@ export function EnhancedServices() {
             {installing.aiModel && downloadProgress.aiModel > 0 && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-                  <span>下载进度</span>
-                  <span>{downloadProgress.aiModel}%</span>
+                  <span className="truncate mr-2">{progressStatus.aiModel || '下载进度'}</span>
+                  <span className="font-medium">{downloadProgress.aiModel.toFixed(1)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
