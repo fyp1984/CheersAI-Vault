@@ -60,7 +60,9 @@ export function FileManager() {
     try {
       setLoading(true);
       const result = await invoke<SandboxFile[]>('list_files_in_directory', { directory: outputDir });
-      setFiles(result);
+      // 过滤掉 .cmap 对照文件
+      const filteredFiles = result.filter(file => !file.name.endsWith('.cmap'));
+      setFiles(filteredFiles);
     } catch (error) {
       console.error('Failed to load files:', error);
       setFiles([]);
@@ -196,6 +198,43 @@ export function FileManager() {
     });
   };
 
+  const handleSyncToFileBay = async () => {
+    if (!giteaEnabled) {
+      setToast({ message: '请先在 FileBay 设置中完成配置', type: 'info' });
+      return;
+    }
+
+    if (files.length === 0) {
+      setToast({ message: '没有可同步的文件', type: 'info' });
+      return;
+    }
+
+    setUploading(true);
+    
+    try {
+      let successCount = 0;
+      for (const file of files) {
+        try {
+          const remotePath = `masked/${file.name}`;
+          await uploadToGitea(file.path, remotePath, `Update: ${file.name}`);
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to upload ${file.name}:`, error);
+        }
+      }
+      
+      setToast({ 
+        message: `成功同步 ${successCount}/${files.length} 个文件到 FileBay`, 
+        type: successCount === files.length ? 'success' : 'info' 
+      });
+    } catch (error) {
+      console.error('Sync to FileBay failed:', error);
+      setToast({ message: '同步失败: ' + error, type: 'error' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const toggleFileSelection = (path: string) => {
     const newSelection = new Set(selectedFiles);
     if (newSelection.has(path)) {
@@ -311,6 +350,30 @@ export function FileManager() {
         </div>
 
         <div className="flex items-center gap-2">
+          {files.length > 0 && (
+            <button
+              onClick={handleSyncToFileBay}
+              disabled={uploading}
+              className="px-3 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+            >
+              {uploading ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  同步中...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  一键同步
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={loadFiles}
             className="px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50"

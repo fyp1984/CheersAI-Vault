@@ -1,6 +1,6 @@
 [package]
 name = "cheersai-vault"
-version = "0.1.6"
+version = "0.1.15"
 description = "CheersAI Vault - Secure Data Masking Desktop Application"
 authors = ["CheersAI Team"]
 edition = "2021"

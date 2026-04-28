@@ -4,6 +4,7 @@ import type {
   MaskResult,
   PreviewOptions,
   PreviewResult,
+  SavePreviewOptions,
   EncryptOptions,
   DecryptOptions,
   SandboxFile,
@@ -12,6 +13,10 @@ import type {
   BatchStatus,
   FileBayConfig,
   FileBayConfigStatus,
+  SensitiveTerm,
+  AddSensitiveTermRequest,
+  UpdateSensitiveTermRequest,
+  SensitiveTermsStats,
 } from "@/types/commands";
 import type { LogEntry, ProcessingHistory, UserSetting, DatabaseStatistics } from "@/types/log";
 
@@ -22,6 +27,9 @@ export const tauriCommands = {
 
   previewMasking: (options: PreviewOptions) =>
     invoke<PreviewResult>("preview_masking", { options }),
+
+  savePreviewResult: (options: SavePreviewOptions) =>
+    invoke<MaskResult>("save_preview_result", { options }),
 
   // Crypto
   generatePassphrase: () =>
@@ -263,4 +271,54 @@ export const tauriCommands = {
 
   checkAiDetectionAvailable: () =>
     invoke<boolean>("check_ai_detection_available"),
+
+  // Sensitive Terms
+  addSensitiveTerm: (request: AddSensitiveTermRequest) =>
+    invoke<SensitiveTerm>("add_sensitive_term", { request }),
+
+  addSensitiveTermsBatch: (requests: AddSensitiveTermRequest[]) =>
+    invoke<SensitiveTerm[]>("add_sensitive_terms_batch", { requests }),
+
+  updateSensitiveTerm: (request: UpdateSensitiveTermRequest) =>
+    invoke<SensitiveTerm>("update_sensitive_term", { request }),
+
+  deleteSensitiveTerm: (id: string) =>
+    invoke<void>("delete_sensitive_term", { id }),
+
+  deleteSensitiveTermsBatch: (ids: string[]) =>
+    invoke<void>("delete_sensitive_terms_batch", { ids }),
+
+  getSensitiveTerms: (category?: string, enabledOnly?: boolean) =>
+    invoke<SensitiveTerm[]>("get_sensitive_terms", { category, enabledOnly }),
+
+  getSensitiveTermCategories: () =>
+    invoke<string[]>("get_sensitive_term_categories"),
+
+  searchSensitiveTerms: (query: string) =>
+    invoke<SensitiveTerm[]>("search_sensitive_terms", { query }),
+
+  getSensitiveTermsStats: () =>
+    invoke<SensitiveTermsStats>("get_sensitive_terms_stats"),
+
+  exportSensitiveTermsCsv: (outputPath: string) =>
+    invoke<string>("export_sensitive_terms_csv", { outputPath }),
+
+  importSensitiveTermsCsv: (filePath: string) =>
+    invoke<number>("import_sensitive_terms_csv", { filePath }),
+
+  // Installer (using Python scripts)
+  checkPythonAvailable: () =>
+    invoke<boolean>("check_python_available"),
+
+  installOcrWithScript: () =>
+    invoke<string>("install_ocr_with_script"),
+
+  uninstallOcrWithScript: () =>
+    invoke<string>("uninstall_ocr_with_script"),
+
+  installOllamaWithScript: () =>
+    invoke<string>("install_ollama_with_script"),
+
+  uninstallOllamaWithScript: () =>
+    invoke<string>("uninstall_ollama_with_script"),
 };

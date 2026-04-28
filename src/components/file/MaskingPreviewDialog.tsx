@@ -272,8 +272,8 @@ export function MaskingPreviewDialog({
           >
             <Save className="w-4 h-4" />
             {manualReplacements.length > 0
-              ? `执行脱敏并保存（含 ${manualReplacements.length} 条手动替换）`
-              : "执行脱敏并保存"}
+              ? `保存脱敏结果（含 ${manualReplacements.length} 条手动替换）`
+              : "保存脱敏结果"}
           </Button>
         </DialogFooter>
       </DialogContent>
