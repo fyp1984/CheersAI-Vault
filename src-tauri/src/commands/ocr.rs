@@ -78,8 +78,10 @@ pub async fn download_ocr_package(
         status: "正在下载 Python...".to_string(),
     });
     
-    // 1. 下载 Python 嵌入式版本
-    let python_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
+    // 1. 下载 Python 嵌入式版本（使用华为云镜像加速）
+    // 国内镜像: https://repo.huaweicloud.com/python/3.11.9/python-3.11.9-embed-amd64.zip
+    // 官方源: https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+    let python_url = "https://repo.huaweicloud.com/python/3.11.9/python-3.11.9-embed-amd64.zip";
     let python_zip = temp_dir.join("python.zip");
     
     download_file(&window, python_url, &python_zip, "Python 运行时").await?;
@@ -95,7 +97,7 @@ pub async fn download_ocr_package(
     extract_zip(&python_zip, &python_dir)?;
     let _ = fs::remove_file(&python_zip);
     
-    // 2. 下载并安装 pip
+    // 2. 下载并安装 pip（使用官方源，清华镜像 SSL 连接问题）
     let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
         downloaded: 0,
         total: 0,
@@ -103,6 +105,7 @@ pub async fn download_ocr_package(
         status: "正在下载 pip...".to_string(),
     });
     
+    // 官方源（稳定可靠）
     let get_pip_url = "https://bootstrap.pypa.io/get-pip.py";
     let get_pip_path = temp_dir.join("get-pip.py");
     
@@ -343,56 +346,112 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     println!("  Python: {:?}", python_exe);
     
     // 安装 OCR 依赖：PyMuPDF 用于 PDF 文本提取，easyocr 用于图片 OCR
+    // 使用阿里云 PyPI 镜像加速下载（清华镜像 SSL 连接问题）
     let packages = vec![
         "PyMuPDF",   // PDF 文本提取，约 20MB
         "easyocr",   // 图片 OCR，约 500MB+（包含模型）
     ];
     
+    // 阿里云镜像源（稳定可用）
+    let pypi_mirror = "https://mirrors.aliyun.com/pypi/simple/";
+    
     for package in packages {
-        println!("  Installing {}...", package);
+        println!("  Installing {} from {}...", package, pypi_mirror);
         
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            
-            // 添加超时机制
-            let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(300); // 5分钟超时
-            
-            let output = Command::new(&python_exe)
-                .creation_flags(CREATE_NO_WINDOW)
-                .args(&["-m", "pip", "install", "--no-warn-script-location", package])
-                .current_dir(python_dir)
-                .output()
-                .map_err(|e| format!("Failed to install {}: {} (path may contain unsupported characters)", package, e))?;
-            
-            let elapsed = start.elapsed();
-            println!("  Installation took: {:?}", elapsed);
-            
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(format!("安装 {} 失败:\nSTDERR: {}\nSTDOUT: {}", package, stderr, stdout));
+        // 对于大包（easyocr）进行多次重试
+        let max_retries = if package == "easyocr" { 3 } else { 1 };
+        let mut last_error = String::new();
+        
+        for attempt in 1..=max_retries {
+            if attempt > 1 {
+                println!("  Retry attempt {}/{} for {}...", attempt, max_retries, package);
             }
             
-            println!("  ✓ {} installed", package);
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        {
-            let output = Command::new(&python_exe)
-                .args(&["-m", "pip", "install", "--no-warn-script-location", package])
-                .current_dir(python_dir)
-                .output()
-                .map_err(|e| format!("Failed to install {}: {}", package, e))?;
-            
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(format!("安装 {} 失败:\nSTDERR: {}\nSTDOUT: {}", package, stderr, stdout));
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                
+                let start = std::time::Instant::now();
+                
+                let output = Command::new(&python_exe)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .args(&[
+                        "-m", "pip", "install", 
+                        "--no-warn-script-location",
+                        "-i", pypi_mirror,  // 使用阿里云镜像
+                        "--trusted-host", "mirrors.aliyun.com",  // 信任镜像站
+                        "--retries", "5",  // pip 内部重试 5 次
+                        "--timeout", "300",  // 超时 5 分钟
+                        package
+                    ])
+                    .current_dir(python_dir)
+                    .output()
+                    .map_err(|e| format!("Failed to install {}: {} (path may contain unsupported characters)", package, e))?;
+                
+                let elapsed = start.elapsed();
+                println!("  Installation attempt took: {:?}", elapsed);
+                
+                if output.status.success() {
+                    println!("  ✓ {} installed successfully", package);
+                    break;
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    last_error = format!("STDERR: {}\nSTDOUT: {}", stderr, stdout);
+                    
+                    // 检查是否是网络错误
+                    if stderr.contains("IncompleteRead") || stderr.contains("Connection") || stderr.contains("timeout") {
+                        println!("  ✗ Network error detected, will retry...");
+                        if attempt < max_retries {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            continue;
+                        }
+                    }
+                    
+                    // 如果不是网络错误或已达到最大重试次数，返回错误
+                    if attempt == max_retries {
+                        return Err(format!("安装 {} 失败（尝试 {} 次后）:\n{}", package, max_retries, last_error));
+                    }
+                }
             }
             
-            println!("  ✓ {} installed", package);
+            #[cfg(not(target_os = "windows"))]
+            {
+                let output = Command::new(&python_exe)
+                    .args(&[
+                        "-m", "pip", "install", 
+                        "--no-warn-script-location",
+                        "-i", pypi_mirror,
+                        "--trusted-host", "mirrors.aliyun.com",
+                        "--retries", "5",
+                        "--timeout", "300",
+                        package
+                    ])
+                    .current_dir(python_dir)
+                    .output()
+                    .map_err(|e| format!("Failed to install {}: {}", package, e))?;
+                
+                if output.status.success() {
+                    println!("  ✓ {} installed successfully", package);
+                    break;
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    last_error = format!("STDERR: {}\nSTDOUT: {}", stderr, stdout);
+                    
+                    if stderr.contains("IncompleteRead") || stderr.contains("Connection") || stderr.contains("timeout") {
+                        println!("  ✗ Network error detected, will retry...");
+                        if attempt < max_retries {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            continue;
+                        }
+                    }
+                    
+                    if attempt == max_retries {
+                        return Err(format!("安装 {} 失败（尝试 {} 次后）:\n{}", package, max_retries, last_error));
+                    }
+                }
+            }
         }
     }
     

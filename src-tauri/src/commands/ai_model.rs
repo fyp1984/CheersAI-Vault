@@ -269,10 +269,12 @@ pub async fn download_ollama(app: AppHandle, custom_path: Option<String>) -> Res
     // 建议用户手动安装以避免路径问题
     Err(format!(
         "为避免路径编码问题，建议手动安装 Ollama：\n\n\
-        1. 访问 https://ollama.com/download\n\
-        2. 下载 Windows 版本\n\
-        3. 安装到英文路径（如 C:\\Ollama{}）\n\
-        4. 安装完成后重启本应用\n\n\
+        国内用户推荐：\n\
+        1. 访问 https://ollama.com/download（国外官网）\n\
+        2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n\
+        3. 下载 Windows 版本\n\
+        4. 安装到英文路径（如 C:\\Ollama{}）\n\
+        5. 安装完成后重启本应用\n\n\
         手动安装更稳定可靠！",
         custom_path.map(|p| format!(" 或 {}", p)).unwrap_or_default()
     ))

@@ -241,28 +241,23 @@ export function EnhancedServices() {
       // 先检查 Ollama 是否安装（包括系统安装和内置版本）
       const ollamaInstalled = await tauriCommands.checkOllamaInstalled();
       if (!ollamaInstalled) {
+        // Ollama 未安装，提示用户手动安装
+        setInstalling({ ...installing, aiModel: false });
         setMessage({ 
-          type: 'info', 
-          text: '检测到系统未安装 Ollama，正在下载内置版本...' 
+          type: 'error', 
+          text: '请先安装 Ollama 服务！\n\n' +
+                '国内用户推荐：\n' +
+                '1. 访问 https://ollama.com/download（国外官网）\n' +
+                '2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n' +
+                '3. 下载 Windows 版本并安装\n' +
+                '4. 安装完成后重启本应用\n' +
+                '5. 再次点击"安装 AI 模型"按钮\n\n' +
+                '注意：Ollama 是 AI 模型运行的必需服务'
         });
-        
-        try {
-          // 传递自定义路径（如果有）
-          await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
-          setMessage({ 
-            type: 'success', 
-            text: 'Ollama 安装成功！现在开始下载 AI 模型...' 
-          });
-        } catch (error) {
-          setMessage({ 
-            type: 'error', 
-            text: `Ollama 安装失败: ${error}。请手动从 https://ollama.com/download 下载安装` 
-          });
-          return;
-        }
-      } else {
-        setMessage({ type: 'info', text: '检测到 Ollama 已安装，正在下载 AI 脱敏模型（qwen2.5:0.5b）...' });
+        return;
       }
+      
+      setMessage({ type: 'info', text: '检测到 Ollama 已安装，正在下载 AI 脱敏模型（qwen2.5:1.5b，约 1GB）...' });
 
       const result = await tauriCommands.installAiModel();
 
@@ -452,7 +447,7 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~500MB</span>
+                    <span className="text-xs text-gray-500">大小: ~530MB</span>
                   </div>
                 </div>
               </div>
@@ -567,7 +562,7 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~1GB</span>
+                    <span className="text-xs text-gray-500">大小: ~1.6GB（需先安装 Ollama 服务）</span>
                   </div>
                 </div>
               </div>
@@ -632,7 +627,7 @@ export function EnhancedServices() {
                 </button>
               )}
               <a
-                href="https://ollama.com/library/qwen2.5:0.5b"
+                href="https://ollama.com/library/qwen2.5:1.5b"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"

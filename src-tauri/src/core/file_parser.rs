@@ -526,8 +526,8 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
         - Size: ~100MB\n\
         - Auto-configured after download, no restart needed\n\n\
         Method 2: Manual Python OCR setup\n\
-        1. Install Python 3.7+ (https://www.python.org/)\n\
-        2. Run: pip install easyocr PyMuPDF\n\
+        1. Install Python 3.7+ (https://www.python.org/ 或 https://repo.huaweicloud.com/python/)\n\
+        2. Run: pip install -i https://mirrors.aliyun.com/pypi/simple/ easyocr PyMuPDF\n\
         3. Retry processing\n\n\
         Method 3: Use online OCR tools\n\
         - https://www.onlineocr.net/\n\
@@ -550,6 +550,27 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
     
     // Execute command in a new thread
     thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        let mut child = {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            
+            match Command::new(&command_clone)
+                .args(&args_clone)
+                .creation_flags(CREATE_NO_WINDOW)  // 隐藏 CMD 窗口
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("Failed to spawn process: {}", e)));
+                    return;
+                }
+            }
+        };
+        
+        #[cfg(not(target_os = "windows"))]
         let mut child = match Command::new(&command_clone)
             .args(&args_clone)
             .stdout(Stdio::piped())
