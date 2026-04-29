@@ -19,6 +19,7 @@ pub struct RowEntities {
     pub entities: Vec<EntityMatch>,
 }
 
+#[derive(Clone)]
 pub struct NERDetector {
     patterns: Vec<(String, Regex)>,
     common_surnames: HashSet<String>,

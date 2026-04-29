@@ -776,9 +776,29 @@ pub async fn uninstall_ocr_package(app: AppHandle) -> Result<(), String> {
     
     let ocr_dir = app_data_dir.join("ocr-package");
     
+    println!("Uninstalling OCR package from: {:?}", ocr_dir);
+    
     if ocr_dir.exists() {
+        println!("OCR directory exists, removing...");
+        
+        // 列出要删除的内容
+        if let Ok(entries) = fs::read_dir(&ocr_dir) {
+            for entry in entries.flatten() {
+                println!("  - Removing: {:?}", entry.path());
+            }
+        }
+        
         fs::remove_dir_all(&ocr_dir)
             .map_err(|e| format!("Failed to remove OCR package: {}", e))?;
+        
+        // 验证删除
+        if ocr_dir.exists() {
+            return Err("OCR directory still exists after removal".to_string());
+        }
+        
+        println!("✓ OCR package uninstalled successfully");
+    } else {
+        println!("OCR directory does not exist, nothing to uninstall");
     }
     
     Ok(())

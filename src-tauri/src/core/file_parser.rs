@@ -423,7 +423,7 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     println!("Starting OCR processing for PDF: {}", path);
     println!("Note: OCR processing may take 30-60 seconds");
     
-    // 获取应用目录和应用数据目录
+    // 获取应用目录
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -436,6 +436,14 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
             &[&script_path.to_string_lossy(), path],
             300  // 5 分钟超时
         );
+    } else {
+        println!("✗ Downloaded OCR not found");
+        if !downloaded_python.exists() {
+            println!("  Missing: {}", downloaded_python.display());
+        }
+        if !downloaded_script.exists() {
+            println!("  Missing: {}", downloaded_script.display());
+        }
     }
 
     // 方案 2: 使用打包的 exe（仅 Windows）
@@ -489,7 +497,10 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
         ));
     }
     
-    // 所有方案都不可用 - 提示下载
+    // 方案 4: 不使用系统 Python（已禁用，确保只使用下载的OCR包）
+    println!("System Python is disabled - only downloaded OCR package will be used");
+    
+    // All methods failed - prompt to download
     Err(anyhow::anyhow!(
         "⚠️ OCR 功能未安装\n\n\
         检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
@@ -506,7 +517,7 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     ))
 }
 
-// 运行 OCR 命令，支持实时输出和超时控制
+// Run OCR command with real-time output and timeout control
 fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<String> {
     use std::process::{Command, Stdio};
     use std::time::Duration;
@@ -518,8 +529,29 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
     let command_clone = command.to_string();
     let args_clone: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     
-    // 在新线程中执行命令
+    // Execute command in a new thread
     thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        let mut child = {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            
+            match Command::new(&command_clone)
+                .args(&args_clone)
+                .creation_flags(CREATE_NO_WINDOW)  // 隐藏 CMD 窗口
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("Failed to spawn process: {}", e)));
+                    return;
+                }
+            }
+        };
+        
+        #[cfg(not(target_os = "windows"))]
         let mut child = match Command::new(&command_clone)
             .args(&args_clone)
             .stdout(Stdio::piped())
@@ -533,7 +565,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             }
         };
         
-        // 读取 stderr（进度信息）
+        // Read stderr for progress information
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             thread::spawn(move || {
@@ -545,7 +577,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             });
         }
         
-        // 等待进程完成
+        // Wait for process to complete
         match child.wait_with_output() {
             Ok(output) => {
                 if output.status.success() {
@@ -553,7 +585,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
                     if text.trim().is_empty() {
                         let _ = tx.send(Err(anyhow::anyhow!("OCR returned empty result")));
                     } else {
-                        println!("OCR completed: {} characters extracted", text.len());
+                        println!("OCR completed: {} chars extracted", text.len());
                         let _ = tx.send(Ok(text));
                     }
                 } else {
@@ -567,9 +599,9 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
         }
     });
     
-    // 等待结果，带超时
+    // Wait for result with timeout
     match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
         Ok(result) => result,
-        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} seconds", timeout_secs)),
+        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} secs", timeout_secs)),
     }
 }
