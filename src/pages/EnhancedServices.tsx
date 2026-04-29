@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen } from 'lucide-react';
 import { tauriCommands } from '@/lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { PlatformContext } from '@/types/commands';
+import type { InstallerProgress } from '@/types/commands';
 
 interface ServiceStatus {
   ocr: boolean;
@@ -36,6 +38,10 @@ export function EnhancedServices() {
   const [downloadProgress, setDownloadProgress] = useState({
     ocr: 0,
     aiModel: 0,
+  });
+  const [progressStatus, setProgressStatus] = useState({
+    ocr: '',
+    aiModel: '',
   });
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showPathDialog, setShowPathDialog] = useState<'ocr' | 'aiModel' | null>(null);
@@ -75,6 +81,34 @@ export function EnhancedServices() {
       : service === 'ocr'
         ? '选择 OCR 运行时目录'
         : '选择 Ollama 目录';
+    setupProgressListeners();
+  }, []);
+
+  const setupProgressListeners = () => {
+    // 监听 OCR 安装进度
+    listen<InstallerProgress>('ocr-install-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+    });
+
+    // 监听 OCR 卸载进度
+    listen<InstallerProgress>('ocr-uninstall-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+    });
+
+    // 监听 Ollama 安装进度
+    listen<InstallerProgress>('ollama-install-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+    });
+
+    // 监听 Ollama 卸载进度
+    listen<InstallerProgress>('ollama-uninstall-progress', (event) => {
+      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+    });
+  };
 
   const checkServicesStatus = async () => {
     try {
@@ -341,17 +375,43 @@ export function EnhancedServices() {
 
         setMessage({ type: 'info', text: '检测到 Ollama 服务已运行，正在安装 AI 脱敏模型（qwen2.5:1.5b）...' });
       }
+      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setProgressStatus({ ...progressStatus, aiModel: '' });
 
-      const result = await tauriCommands.installAiModel();
+      // 使用脚本自动安装 Ollama + AI 模型
+      setMessage({ 
+        type: 'info', 
+        text: '正在安装 Ollama 和 AI 脱敏模型（qwen2.5:1.5b）...\n' +
+              '首次安装需要下载约 1.6GB 文件，请耐心等待。'
+      });
 
-      setMessage({ type: 'success', text: result });
+      await tauriCommands.installOllamaWithScript();
+
+      setMessage({ type: 'success', text: 'Ollama 和 AI 模型安装成功！' });
       await checkServicesStatus();
     } catch (error) {
       console.error('Failed to install AI model:', error);
-      setMessage({ type: 'error', text: `安装失败: ${error}` });
+      
+      // 如果安装失败，提供手动安装指引
+      const errorMsg = String(error);
+      let helpText = `安装失败: ${errorMsg}\n\n`;
+      
+      if (errorMsg.includes('Python') || errorMsg.includes('python')) {
+        helpText += '提示：此功能需要 Python 3.7+ 才能使用自动安装。\n\n';
+      }
+      
+      helpText += '您也可以手动安装 Ollama：\n' +
+                  '1. 访问 https://ollama.com/download（国外官网）\n' +
+                  '2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n' +
+                  '3. 下载 Windows 版本并安装\n' +
+                  '4. 安装完成后，在命令行运行：ollama pull qwen2.5:1.5b\n' +
+                  '5. 重启本应用即可使用';
+      
+      setMessage({ type: 'error', text: helpText });
     } finally {
-      setInstalling((prev) => ({ ...prev, aiModel: false }));
-      setDownloadProgress((prev) => ({ ...prev, aiModel: 0 }));
+      setInstalling({ ...installing, aiModel: false });
+      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setProgressStatus({ ...progressStatus, aiModel: '' });
     }
   };
 
@@ -596,7 +656,7 @@ export function EnhancedServices() {
                   ) : (
                     <>
                       <Trash2 className="w-4 h-4 mr-2" />
-                      卸载服务
+                      完全卸载
                     </>
                   )}
                 </button>
@@ -607,8 +667,8 @@ export function EnhancedServices() {
             {installing.ocr && downloadProgress.ocr > 0 && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-                  <span>下载进度</span>
-                  <span>{downloadProgress.ocr}%</span>
+                  <span className="truncate mr-2">{progressStatus.ocr || '下载进度'}</span>
+                  <span className="font-medium">{downloadProgress.ocr.toFixed(1)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
@@ -716,7 +776,7 @@ export function EnhancedServices() {
                   ) : (
                     <>
                       <Trash2 className="w-4 h-4 mr-2" />
-                      卸载模型
+                      完全卸载
                     </>
                   )}
                 </button>
@@ -736,8 +796,8 @@ export function EnhancedServices() {
             {installing.aiModel && downloadProgress.aiModel > 0 && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-                  <span>下载进度</span>
-                  <span>{downloadProgress.aiModel}%</span>
+                  <span className="truncate mr-2">{progressStatus.aiModel || '下载进度'}</span>
+                  <span className="font-medium">{downloadProgress.aiModel.toFixed(1)}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div

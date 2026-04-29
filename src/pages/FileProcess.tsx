@@ -51,6 +51,7 @@ export default function FileProcess() {
   const [useAiValidation, setUseAiValidation] = useState(false); // AI 验证开关
   const [aiDetectionAvailable, setAiDetectionAvailable] = useState(false); // AI 是否可用
   const [isCheckingAi, setIsCheckingAi] = useState(true); // 是否正在检查 AI
+  const [isProcessing, setIsProcessing] = useState(false); // 是否正在处理（包括预览和脱敏）
 
   // 检查 AI 检测是否可用
   useEffect(() => {
@@ -114,20 +115,44 @@ export default function FileProcess() {
           }
         });
 
-        // 如果任务完成，停止轮询
-        if (status.status === "Completed" || status.status === "Failed" || status.status === "Cancelled") {
+        // 如果任务完成，停止轮询并显示通知
+        if (status.status === "Completed") {
           setActiveJob(null);
+          setIsProcessing(false); // 完成时重置状态
+          
+          // 记录完成日志
+          const completedCount = status.completed;
+          const failedCount = status.failed;
+          
+          if (failedCount === 0) {
+            await addLog("success", "批处理完成", `成功: ${completedCount}, 失败: ${failedCount}`, undefined, "batch_complete");
+          } else {
+            await addLog("warning", "批处理完成（部分失败）", `成功: ${completedCount}, 失败: ${failedCount}`, undefined, "batch_partial");
+          }
+          
+          setTimeout(() => setBatchStatus(null), 3000);
+        } else if (status.status === "Failed") {
+          setActiveJob(null);
+          setIsProcessing(false); // 失败时重置状态
+          await addLog("error", "批处理失败", status.error || "未知错误", undefined, "batch_failed");
+          setTimeout(() => setBatchStatus(null), 3000);
+        } else if (status.status === "Cancelled") {
+          setActiveJob(null);
+          setIsProcessing(false); // 取消时重置状态
+          alert("⏹️ 脱敏已取消");
+          await addLog("info", "批处理已取消", undefined, undefined, "batch_cancelled");
           setTimeout(() => setBatchStatus(null), 3000);
         }
       } catch (error) {
         console.error("Failed to get batch status:", error);
         setActiveJob(null);
+        setIsProcessing(false); // 错误时重置状态
         setBatchStatus(null);
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeJobId, files, updateFile, setActiveJob]);
+  }, [activeJobId, files, updateFile, setActiveJob, outputDir, addLog]);
 
   const handleDrop = async (paths: string[]) => {
     const queued = await Promise.all(
@@ -205,6 +230,7 @@ export default function FileProcess() {
     if (pendingFiles.length === 0) return;
 
     setIsLoadingPreview(true);
+    setIsProcessing(true); // 开始处理流程
     try {
       const customRules = rules
         .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
@@ -231,6 +257,7 @@ export default function FileProcess() {
         })
       );
       setPreviewData(previews);
+      setIsProcessing(false); // 预览加载完成，关闭动画
       setShowPreview(true);
     } catch (error) {
       console.error("Failed to load preview:", error);
@@ -241,95 +268,169 @@ export default function FileProcess() {
       } else {
         alert(`加载预览失败: ${error}`);
       }
+      setIsProcessing(false); // 失败时重置状态
     } finally {
       setIsLoadingPreview(false);
     }
   };
 
-  const executeActualMasking = async (manualReplacements: ManualReplacement[] = []) => {
-    // 检查是否选择了规则
-    if (selectedRules.length === 0 && manualReplacements.length === 0) {
-      alert("请至少选择一个脱敏规则或添加手动替换规则");
-      return;
-    }
-
-    await addLog("info", `开始批处理 ${pendingCount} 个文件`, `输出目录: ${outputDir}`, undefined, "batch_start");
-
-    try {
-      const customRulesForBatch = rules
-        .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
-        .map((r) => ({
-          id: r.id,
-          name: r.name,
-          pattern: r.pattern,
-          replacement_template: r.replacement_template,
-          use_counter: r.use_counter,
-        }));
-
-      // 将手动查找替换条目转成精确匹配自定义规则（固定文本、不追加序号）
-      const manualRules = manualReplacements
-        .filter(mr => mr.find.trim())
-        .map((mr, i) => ({
-          id: `manual_replace_${i}`,
-          name: `手动替换: ${mr.find}`,
-          pattern: mr.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), // 转义为字面量
-          replacement_template: mr.replace,
-          use_counter: false,
-        }));
-
-      const allCustomRules = [...customRulesForBatch, ...manualRules];
-      const allRuleIds = [
-        ...selectedRules,
-        ...manualRules.map(r => r.id),
-      ];
-
-      const jobId = await tauriCommands.startBatchJob({
-        file_paths: files.filter(f => f.status === "pending").map(f => f.path),
-        output_dir: outputDir,
-        rule_ids: allRuleIds,
-        passphrase: passphrase || undefined,
-        custom_rules: allCustomRules.length > 0 ? allCustomRules : undefined,
-        use_ai_validation: useAiValidation,
-      });
-
-      setActiveJob(jobId);
-      
-      // 将所有待处理文件状态设为处理中
-      files.forEach(file => {
-        if (file.status === "pending") {
-          updateFile(file.id, { status: "processing" });
-        }
-      });
-    } catch (error) {
-      console.error("Failed to start batch job:", error);
-      await addLog("error", "启动批处理失败", `错误: ${error}`, undefined, "batch_error");
-      
-      // 检查是否是 OCR 错误
-      if (isOcrError(error)) {
-        setShowOcrDownload(true);
-      } else {
-        alert(`启动批处理失败: ${error}`);
-      }
-    }
-  };
-
   const pendingCount = files.filter((f) => f.status === "pending").length;
 
-  const handlePreviewConfirm = async (manualReplacements: ManualReplacement[]) => {
+  const handlePreviewConfirm = async (_manualReplacements: ManualReplacement[]) => {
     setShowPreview(false);
-    setPreviewData([]);
-    await executeActualMasking(manualReplacements);
+    setIsProcessing(true); // 显示保存进度
+    
+    try {
+      // 直接保存预览结果，不重新处理
+      const pendingFiles = files.filter(f => f.status === "pending");
+      
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const file = pendingFiles[i];
+        const filePreview = previewData[i];
+        
+        if (!filePreview) continue;
+        
+        try {
+          updateFile(file.id, { status: "processing" });
+          
+          const result = await tauriCommands.savePreviewResult({
+            file_path: file.path,
+            output_dir: outputDir,
+            masked_rows: filePreview.preview.masked_rows,
+            headers: filePreview.preview.headers,
+            passphrase: passphrase || undefined,
+          });
+          
+          updateFile(file.id, { status: "completed" });
+          await addLog("success", "文件脱敏完成", `输出: ${result.output_path}`, file.path, "mask_file");
+        } catch (error) {
+          console.error(`Failed to save ${file.name}:`, error);
+          updateFile(file.id, { status: "failed", error: String(error) });
+          await addLog("error", "文件脱敏失败", String(error), file.path, "mask_file");
+        }
+      }
+      
+      setIsProcessing(false);
+      setPreviewData([]);
+    } catch (error) {
+      console.error("Failed to save preview results:", error);
+      setIsProcessing(false);
+      await addLog("error", "保存预览结果失败", String(error), undefined, "batch_error");
+    }
   };
 
   const handlePreviewCancel = () => {
     setShowPreview(false);
     setPreviewData([]);
+    setIsProcessing(false); // 取消时重置状态
     // 可以选择清除已完成的文件
     clearCompleted();
   };
 
   return (
     <div className="flex flex-col h-full">
+      {/* 处理中的全局遮罩层 - 包括预览加载和实际处理 */}
+      {(isLoadingPreview || isProcessing) && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="text-center">
+              {/* CheersAI Logo 动画 */}
+              <div className="inline-flex items-center justify-center w-20 h-20 mb-4">
+                <img 
+                  src="/safer.png" 
+                  alt="CheersAI" 
+                  className={`w-full h-full object-contain ${
+                    isLoadingPreview ? 'animate-spin' : 'animate-pulse'
+                  }`}
+                  style={isLoadingPreview ? { animationDuration: '2s' } : undefined}
+                />
+              </div>
+              
+              {isLoadingPreview ? (
+                <>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">正在分析文件</h3>
+                  <p className="text-gray-600 mb-4">
+                    正在检测敏感信息，请稍候...
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    这可能需要几秒到几分钟，取决于文件大小
+                  </p>
+                </>
+              ) : batchStatus ? (
+                <>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">正在处理文件</h3>
+                  <p className="text-gray-600 mb-4 truncate max-w-full">
+                    {batchStatus.current_file || "准备中..."}
+                  </p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>进度</span>
+                      <span>{batchStatus.completed} / {batchStatus.total}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                      <div 
+                        className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                        style={{ width: `${(batchStatus.completed / batchStatus.total) * 100}%` }}
+                      ></div>
+                    </div>
+                    {batchStatus.failed > 0 && (
+                      <p className="text-sm text-orange-600 mt-2">
+                        失败: {batchStatus.failed} 个
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-4">
+                    ⚠️ 请勿关闭窗口或切换页面
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">准备处理</h3>
+                  <p className="text-gray-600 mb-4">
+                    正在启动脱敏任务...
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    请稍候，任务即将开始
+                  </p>
+                </>
+              )}
+              
+              {/* 品牌标语 */}
+              <div className="mt-6 pt-4 border-t border-gray-100">
+                <p className="text-sm font-medium text-indigo-600">
+                  CheersAI
+                </p>
+                <p className="text-xs text-gray-500 mt-1 relative overflow-hidden">
+                  <span className="relative inline-block">
+                    让数据留在本地，让 AI 能力走在前沿
+                    {/* 光影扫过效果 */}
+                    <span 
+                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-40"
+                      style={{
+                        animation: 'shimmer 3s infinite',
+                        backgroundSize: '200% 100%',
+                      }}
+                    />
+                  </span>
+                </p>
+              </div>
+              
+              {/* 添加光影动画的 CSS */}
+              <style>{`
+                @keyframes shimmer {
+                  0% {
+                    transform: translateX(-100%);
+                  }
+                  100% {
+                    transform: translateX(100%);
+                  }
+                }
+              `}</style>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <PageHeader
         title="文件处理"
         description="拖放文件进行数据脱敏"

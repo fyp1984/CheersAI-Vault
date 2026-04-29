@@ -13,6 +13,7 @@ import TestPage from "@/pages/TestPage";
 import { FileManager } from "@/components/file/FileManager";
 import { GiteaSettings } from "@/components/settings/GiteaSettings";
 import { EnhancedServices } from "@/pages/EnhancedServices";
+import { InstallerTest } from "@/pages/InstallerTest";
 import { useLogStore } from "@/store/logStore";
 import { tauriCommands } from "@/lib/tauri";
 import { setPlatformContext } from "@/lib/path";
@@ -112,6 +113,7 @@ function AppRoutes() {
         <Route path="/log" element={<OperationLog />} />
         <Route path="/cloud" element={<CheersAICloudBrowser />} />
         <Route path="/enhanced" element={<EnhancedServices />} />
+        <Route path="/installer-test" element={<InstallerTest />} />
       </Route>
     </Routes>
   );
