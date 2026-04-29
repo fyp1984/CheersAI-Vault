@@ -77,15 +77,25 @@ cargo check
 cd ..
 ```
 
-### 4. 生成 DMG
+### 4. 生成可分发 DMG
 
 ```bash
-pnpm tauri build --bundles dmg
+pnpm build:dmg:portable
 ```
+
+说明：
+
+- 该脚本会先调用 `pnpm tauri build --bundles dmg` 生成原始 DMG
+- 然后重新挂载原始 DMG，复制其中的 `.app`
+- 清理扩展属性并执行 `codesign --force --deep --sign -`
+- 最后重新封装为 `*_portable.dmg`
+- 这样可以修复 Tauri 默认产物在部分设备上出现的 “已损坏，无法打开” 问题
 
 ## 产物位置
 
-- DMG：
+- 可分发 DMG：
+  - `dist/CheersAI Desktop_0.1.0_aarch64_portable.dmg`
+- 原始 DMG：
   - `src-tauri/target/release/bundle/dmg/CheersAI Desktop_0.1.0_aarch64.dmg`
 - 中间产物：
   - `src-tauri/target/release/bundle/macos/`
@@ -152,6 +162,12 @@ pnpm tauri build --bundles dmg
 - 先检查 `pnpm build`
 - 再检查 `cargo check`
 - 再检查 `xcode-select -p` 与 `xcodebuild -version`
+
+### 4. 其他设备提示“已损坏，移到废纸篓”
+
+- 优先检查原始 `.app` 是否通过 `codesign --verify --deep --strict`
+- 若原始 Tauri DMG 内的 `.app` 为无效 ad-hoc 签名，必须改走 `pnpm build:dmg:portable`
+- 没有 Apple Developer 证书时，`*_portable.dmg` 仍属于 unsigned 包，但通常会从“已损坏”收敛为可安装或提示“无法验证开发者”
 
 ## 输出要求
 

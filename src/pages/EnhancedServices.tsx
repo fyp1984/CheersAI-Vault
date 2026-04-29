@@ -6,16 +6,21 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import type { PlatformContext } from '@/types/commands';
 
 interface ServiceStatus {
   ocr: boolean;
   aiModel: boolean;
+  ollamaInstalled: boolean;
+  ollamaRunning: boolean;
 }
 
 export function EnhancedServices() {
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>({
     ocr: false,
     aiModel: false,
+    ollamaInstalled: false,
+    ollamaRunning: false,
   });
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -34,6 +39,18 @@ export function EnhancedServices() {
   });
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showPathDialog, setShowPathDialog] = useState<'ocr' | 'aiModel' | null>(null);
+  const [platformContext, setPlatformContext] = useState<PlatformContext | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => Promise<void>;
+  }>({
+    open: false,
+    title: '',
+    description: '',
+    onConfirm: async () => {},
+  });
   const [customPaths, setCustomPaths] = useState({
     ocr: '',
     aiModel: '',
@@ -41,7 +58,23 @@ export function EnhancedServices() {
 
   useEffect(() => {
     checkServicesStatus();
+    tauriCommands.getPlatformContext()
+      .then(setPlatformContext)
+      .catch((error) => console.error('Failed to load platform context:', error));
   }, []);
+
+  const isMac = platformContext?.os === 'macos';
+  const platformLabel = platformContext?.os === 'macos' ? 'macOS' : platformContext?.os === 'windows' ? 'Windows' : 'Linux';
+  const joinPlatformPath = (base: string, child: string) => {
+    const separator = platformContext?.pathSeparator || '/';
+    return `${base.replace(/[\\/]+$/, '')}${separator}${child}`;
+  };
+  const defaultInstallPlaceholder = (service: 'ocr' | 'aiModel') =>
+    platformContext?.appDataDir
+      ? joinPlatformPath(platformContext.appDataDir, service === 'ocr' ? 'ocr-package' : 'ollama')
+      : service === 'ocr'
+        ? '选择 OCR 运行时目录'
+        : '选择 Ollama 目录';
 
   const checkServicesStatus = async () => {
     try {
@@ -49,6 +82,8 @@ export function EnhancedServices() {
       
       let ocrInstalled = false;
       let aiModelInstalled = false;
+      let ollamaInstalled = false;
+      let ollamaRunning = false;
       
       try {
         ocrInstalled = await tauriCommands.checkOcrInstalled();
@@ -56,6 +91,18 @@ export function EnhancedServices() {
         console.error('Failed to check OCR:', error);
       }
       
+      try {
+        ollamaInstalled = await tauriCommands.checkOllamaBinaryInstalled();
+      } catch (error) {
+        console.error('Failed to check Ollama binary:', error);
+      }
+      
+      try {
+        ollamaRunning = await tauriCommands.checkOllamaServiceRunning();
+      } catch (error) {
+        console.error('Failed to check Ollama service:', error);
+      }
+
       try {
         aiModelInstalled = await tauriCommands.checkAiModelInstalled();
       } catch (error) {
@@ -65,6 +112,8 @@ export function EnhancedServices() {
       setServiceStatus({
         ocr: ocrInstalled,
         aiModel: aiModelInstalled,
+        ollamaInstalled,
+        ollamaRunning,
       });
     } finally {
       setLoading(false);
@@ -80,6 +129,7 @@ export function EnhancedServices() {
       let ocrInstalled = false;
       let aiModelInstalled = false;
       let ollamaInstalled = false;
+      let ollamaRunning = false;
       
       try {
         ocrInstalled = await tauriCommands.checkOcrInstalled();
@@ -89,10 +139,17 @@ export function EnhancedServices() {
       }
       
       try {
-        ollamaInstalled = await tauriCommands.checkOllamaInstalled();
+        ollamaInstalled = await tauriCommands.checkOllamaBinaryInstalled();
         console.log('Ollama installed:', ollamaInstalled);
       } catch (error) {
         console.error('Failed to check Ollama:', error);
+      }
+
+      try {
+        ollamaRunning = await tauriCommands.checkOllamaServiceRunning();
+        console.log('Ollama service running:', ollamaRunning);
+      } catch (error) {
+        console.error('Failed to check Ollama service:', error);
       }
       
       try {
@@ -105,6 +162,8 @@ export function EnhancedServices() {
       setServiceStatus({
         ocr: ocrInstalled,
         aiModel: aiModelInstalled,
+        ollamaInstalled,
+        ollamaRunning,
       });
       
       // 构建详细的扫描结果消息
@@ -117,6 +176,8 @@ export function EnhancedServices() {
       
       if (aiModelInstalled) {
         installedServices.push('AI 模型 (qwen2.5:1.5b)');
+      } else if (ollamaInstalled && !ollamaRunning) {
+        warnings.push('Ollama 已安装但服务未启动');
       } else if (ollamaInstalled) {
         warnings.push('Ollama 已安装但 qwen2.5:1.5b 模型未安装');
       } else {
@@ -185,45 +246,49 @@ export function EnhancedServices() {
   const handleConfirmInstallOcr = async () => {
     try {
       setShowPathDialog(null);
-      setInstalling({ ...installing, ocr: true });
+      setInstalling((prev) => ({ ...prev, ocr: true }));
       setMessage(null);
-      setDownloadProgress({ ...downloadProgress, ocr: 0 });
+      setDownloadProgress((prev) => ({ ...prev, ocr: 0 }));
 
-      setMessage({ type: 'info', text: '正在下载 OCR 包，请稍候...' });
+      setMessage({ type: 'info', text: isMac ? '正在准备 macOS OCR 运行时，请稍候...' : '正在下载 OCR 包，请稍候...' });
 
       // 传递自定义路径（如果有）
       await tauriCommands.downloadOcrPackage(customPaths.ocr || undefined);
 
-      setMessage({ type: 'success', text: 'OCR 服务安装成功！现在可以处理扫描版 PDF 文件了' });
+      setMessage({ type: 'success', text: 'OCR 运行时安装成功。现在可以进行 PDF 文本提取；若是纯图片型 PDF，请准备更完整的 OCR 环境。' });
       await checkServicesStatus();
     } catch (error) {
       console.error('Failed to install OCR:', error);
       setMessage({ type: 'error', text: `安装失败: ${error}` });
     } finally {
-      setInstalling({ ...installing, ocr: false });
-      setDownloadProgress({ ...downloadProgress, ocr: 0 });
+      setInstalling((prev) => ({ ...prev, ocr: false }));
+      setDownloadProgress((prev) => ({ ...prev, ocr: 0 }));
     }
   };
 
   const handleUninstallOcr = async () => {
-    if (!confirm('确定要卸载 OCR 服务吗？卸载后将无法处理扫描版 PDF 文件。')) {
-      return;
-    }
+    setConfirmDialog({
+      open: true,
+      title: '确认卸载 OCR 运行时',
+      description: '卸载后将无法进行 PDF 文本提取，需要重新安装后才能继续使用。',
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, open: false }));
+        setUninstalling((prev) => ({ ...prev, ocr: true }));
+        setMessage(null);
 
-    try {
-      setUninstalling({ ...uninstalling, ocr: true });
-      setMessage(null);
+        try {
+          await tauriCommands.uninstallOcrPackage();
 
-      await tauriCommands.uninstallOcrPackage();
-
-      setMessage({ type: 'success', text: 'OCR 服务已卸载' });
-      await checkServicesStatus();
-    } catch (error) {
-      console.error('Failed to uninstall OCR:', error);
-      setMessage({ type: 'error', text: `卸载失败: ${error}` });
-    } finally {
-      setUninstalling({ ...uninstalling, ocr: false });
-    }
+          setMessage({ type: 'success', text: 'OCR 运行时已卸载' });
+          await checkServicesStatus();
+        } catch (error) {
+          console.error('Failed to uninstall OCR:', error);
+          setMessage({ type: 'error', text: `卸载失败: ${error}` });
+        } finally {
+          setUninstalling((prev) => ({ ...prev, ocr: false }));
+        }
+      },
+    });
   };
 
   const handleInstallAiModel = async () => {
@@ -234,16 +299,18 @@ export function EnhancedServices() {
   const handleConfirmInstallAiModel = async () => {
     try {
       setShowPathDialog(null);
-      setInstalling({ ...installing, aiModel: true });
+      setInstalling((prev) => ({ ...prev, aiModel: true }));
       setMessage(null);
-      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setDownloadProgress((prev) => ({ ...prev, aiModel: 0 }));
 
       // 先检查 Ollama 是否安装（包括系统安装和内置版本）
       const ollamaInstalled = await tauriCommands.checkOllamaInstalled();
       if (!ollamaInstalled) {
         setMessage({ 
           type: 'info', 
-          text: '检测到系统未安装 Ollama，正在下载内置版本...' 
+          text: isMac
+            ? '未检测到 Ollama。请先安装并启动 Ollama.app，然后重新扫描服务状态。'
+            : '未检测到 Ollama。请先完成安装后重新扫描服务状态。'
         });
         
         try {
@@ -251,17 +318,28 @@ export function EnhancedServices() {
           await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
           setMessage({ 
             type: 'success', 
-            text: 'Ollama 安装成功！现在开始下载 AI 模型...' 
+            text: isMac ? '请先完成 Ollama 安装或启动，再继续安装 AI 模型。' : 'Ollama 安装信息已准备完成，请先启动服务后再安装 AI 模型。'
           });
         } catch (error) {
           setMessage({ 
-            type: 'error', 
-            text: `Ollama 安装失败: ${error}。请手动从 https://ollama.com/download 下载安装` 
+            type: 'info',
+            text: `Ollama 准备失败: ${error}` 
           });
           return;
         }
       } else {
-        setMessage({ type: 'info', text: '检测到 Ollama 已安装，正在下载 AI 脱敏模型（qwen2.5:0.5b）...' });
+        const ollamaRunning = await tauriCommands.checkOllamaServiceRunning();
+        if (!ollamaRunning) {
+          setMessage({
+            type: 'info',
+            text: isMac
+              ? '检测到 Ollama 已安装但服务未启动。请先点击“启动 Ollama”或打开 Ollama.app，然后重新扫描。'
+              : '检测到 Ollama 已安装但服务未启动。请先启动服务并重新扫描。'
+          });
+          return;
+        }
+
+        setMessage({ type: 'info', text: '检测到 Ollama 服务已运行，正在安装 AI 脱敏模型（qwen2.5:1.5b）...' });
       }
 
       const result = await tauriCommands.installAiModel();
@@ -272,30 +350,34 @@ export function EnhancedServices() {
       console.error('Failed to install AI model:', error);
       setMessage({ type: 'error', text: `安装失败: ${error}` });
     } finally {
-      setInstalling({ ...installing, aiModel: false });
-      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+      setInstalling((prev) => ({ ...prev, aiModel: false }));
+      setDownloadProgress((prev) => ({ ...prev, aiModel: 0 }));
     }
   };
 
   const handleUninstallAiModel = async () => {
-    if (!confirm('确定要卸载 AI 脱敏模型吗？卸载后将无法使用智能脱敏功能。')) {
-      return;
-    }
+    setConfirmDialog({
+      open: true,
+      title: '确认卸载 AI 模型',
+      description: '卸载后将无法继续使用本地 AI 智能脱敏功能。',
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, open: false }));
+        setUninstalling((prev) => ({ ...prev, aiModel: true }));
+        setMessage(null);
 
-    try {
-      setUninstalling({ ...uninstalling, aiModel: true });
-      setMessage(null);
+        try {
+          const result = await tauriCommands.uninstallAiModel();
 
-      const result = await tauriCommands.uninstallAiModel();
-
-      setMessage({ type: 'success', text: result });
-      await checkServicesStatus();
-    } catch (error) {
-      console.error('Failed to uninstall AI model:', error);
-      setMessage({ type: 'error', text: `卸载失败: ${error}` });
-    } finally {
-      setUninstalling({ ...uninstalling, aiModel: false });
-    }
+          setMessage({ type: 'success', text: result });
+          await checkServicesStatus();
+        } catch (error) {
+          console.error('Failed to uninstall AI model:', error);
+          setMessage({ type: 'error', text: `卸载失败: ${error}` });
+        } finally {
+          setUninstalling((prev) => ({ ...prev, aiModel: false }));
+        }
+      },
+    });
   };
 
   const handleSelectPath = async (service: 'ocr' | 'aiModel') => {
@@ -303,7 +385,7 @@ export function EnhancedServices() {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: `选择 ${service === 'ocr' ? 'OCR' : 'AI 模型'} 安装目录（建议选择英文路径）`,
+        title: `选择 ${service === 'ocr' ? 'OCR' : 'AI 模型'} 安装目录`,
       });
 
       if (selected && typeof selected === 'string') {
@@ -333,6 +415,9 @@ export function EnhancedServices() {
             <h2 className="text-2xl font-bold text-gray-900 mb-2">增强服务</h2>
             <p className="text-gray-600">
               安装和管理应用的增强功能，提升文件处理能力
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              当前平台：{platformLabel}
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -436,7 +521,7 @@ export function EnhancedServices() {
                     OCR 文字识别服务
                   </h3>
                   <p className="text-sm text-gray-600 mb-3">
-                    支持扫描版 PDF 文件的文字识别和脱敏处理
+                    为 PDF 文本提取与后续脱敏提供本地运行时支持
                   </p>
                   
                   {/* 状态标签 */}
@@ -452,7 +537,7 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~500MB</span>
+                    <span className="text-xs text-gray-500">{isMac ? '模式: 本地 venv' : '模式: 嵌入式 Python'}</span>
                   </div>
                 </div>
               </div>
@@ -464,11 +549,11 @@ export function EnhancedServices() {
               <ul className="space-y-1 text-sm text-gray-600">
                 <li className="flex items-center">
                   <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                  支持中英文混合识别
+                  自动检测本地运行时是否可用
                 </li>
                 <li className="flex items-center">
                   <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                  自动检测扫描版 PDF
+                  macOS 使用系统 Python 创建隔离环境
                 </li>
                 <li className="flex items-center">
                   <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
@@ -567,7 +652,12 @@ export function EnhancedServices() {
                         未安装
                       </span>
                     )}
-                    <span className="text-xs text-gray-500">大小: ~1GB</span>
+                    <span className="text-xs text-gray-500">模型: qwen2.5:1.5b</span>
+                    <span className={`text-xs ${serviceStatus.ollamaRunning ? 'text-green-600' : 'text-amber-600'}`}>
+                      {serviceStatus.ollamaInstalled
+                        ? serviceStatus.ollamaRunning ? 'Ollama 服务已运行' : 'Ollama 已安装但未启动'
+                        : 'Ollama 未安装'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -632,7 +722,7 @@ export function EnhancedServices() {
                 </button>
               )}
               <a
-                href="https://ollama.com/library/qwen2.5:0.5b"
+                href="https://ollama.com/library/qwen2.5:1.5b"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
@@ -666,9 +756,9 @@ export function EnhancedServices() {
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-medium text-blue-900 mb-2">💡 OCR 服务说明</h3>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li>首次安装需要下载约 500MB 的数据包</li>
-            <li>处理扫描版 PDF 时会自动启用</li>
-            <li>所有识别处理均在本地完成</li>
+            <li>Windows 使用嵌入式 Python，macOS 使用系统 Python venv</li>
+            <li>当前轻量运行时优先支持 PDF 文本提取</li>
+            <li>所有处理均在本地完成</li>
           </ul>
         </div>
 
@@ -677,7 +767,7 @@ export function EnhancedServices() {
           <ul className="text-sm text-purple-800 space-y-1 list-disc list-inside">
             <li>使用 Qwen2.5:1.5b 轻量级模型（约 1GB）</li>
             <li>自动检测系统已安装的 Ollama，无需重复安装</li>
-            <li>如系统未安装，会自动下载内置版本</li>
+            <li>macOS 优先唤起 Ollama.app，避免重复前台 `serve` 进程</li>
             <li>提供智能敏感信息识别能力</li>
           </ul>
         </div>
@@ -691,7 +781,7 @@ export function EnhancedServices() {
               选择安装路径 - {showPathDialog === 'ocr' ? 'OCR 服务' : 'AI 模型'}
             </DialogTitle>
             <DialogDescription>
-              请选择 {showPathDialog === 'ocr' ? 'OCR 服务' : 'AI 模型'} 的安装目录，建议选择英文路径以避免兼容性问题
+              请选择 {showPathDialog === 'ocr' ? 'OCR 服务' : 'AI 模型'} 的安装目录，建议选择当前用户可写目录，避免系统保护目录
             </DialogDescription>
           </DialogHeader>
 
@@ -702,7 +792,7 @@ export function EnhancedServices() {
                 <Input
                   id="install-path"
                   value={showPathDialog ? customPaths[showPathDialog] : ''}
-                  placeholder={`默认路径：C:\\Users\\...\\${showPathDialog === 'ocr' ? 'ocr-package' : 'ollama'}`}
+                  placeholder={`默认路径：${showPathDialog ? defaultInstallPlaceholder(showPathDialog) : ''}`}
                   readOnly
                   className="flex-1"
                 />
@@ -729,15 +819,15 @@ export function EnhancedServices() {
                 <ul className="list-disc list-inside space-y-1 text-xs text-blue-800">
                   {showPathDialog === 'ocr' ? (
                     <>
-                      <li>将下载 Python 运行时和 PyMuPDF（约 30MB）</li>
-                      <li>建议选择英文路径，如 C:\OCR</li>
-                      <li>仅支持 PDF 文本提取</li>
+                      <li>{isMac ? '将基于系统 Python 创建 venv 并安装 PyMuPDF' : '将下载 Python 运行时并安装 PyMuPDF'}</li>
+                      <li>建议选择可写目录，避免系统保护目录</li>
+                      <li>当前轻量运行时仅支持 PDF 文本提取</li>
                     </>
                   ) : (
                     <>
-                      <li>将下载 Ollama 和 AI 模型（约 1GB）</li>
-                      <li>建议选择英文路径，如 C:\Ollama</li>
-                      <li>提供智能敏感信息识别</li>
+                      <li>{isMac ? '建议先完成 Ollama.app 安装并确认服务可启动' : '将检查或准备 Ollama 与 AI 模型（约 1GB）'}</li>
+                      <li>建议选择可写目录，避免系统保护目录</li>
+                      <li>若 Ollama 已安装但服务未启动，需先启动后再安装模型</li>
                     </>
                   )}
                 </ul>
@@ -760,6 +850,23 @@ export function EnhancedServices() {
             >
               <Download className="h-4 w-4 mr-2" />
               开始安装
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmDialog.open} onOpenChange={(open) => !open && setConfirmDialog((prev) => ({ ...prev, open: false }))}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{confirmDialog.title}</DialogTitle>
+            <DialogDescription>{confirmDialog.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDialog((prev) => ({ ...prev, open: false }))}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={() => void confirmDialog.onConfirm()}>
+              确认
             </Button>
           </DialogFooter>
         </DialogContent>

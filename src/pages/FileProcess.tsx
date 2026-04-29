@@ -83,7 +83,9 @@ export default function FileProcess() {
     return errorStr.includes('ocr') || 
            errorStr.includes('扫描版') || 
            errorStr.includes('python') ||
-           errorStr.includes('easyocr');
+           errorStr.includes('pymupdf') ||
+           errorStr.includes('fitz') ||
+           errorStr.includes('图片型 pdf');
   };
 
   // 轮询批处理状态

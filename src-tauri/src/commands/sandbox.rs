@@ -11,13 +11,13 @@ pub struct SandboxFile {
 
 use crate::core::dpapi;
 
-/// 检查是否已设置 PIN（用于前端判断显示"设置PIN"还是"输入PIN"）
+/// 检查是否已设置 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
 #[tauri::command]
 pub async fn has_pin() -> Result<bool, String> {
     Ok(dpapi::has_pin())
 }
 
-/// 验证 PIN（使用 Windows DPAPI 解密后比对）
+/// 验证 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
 #[tauri::command]
 pub async fn verify_pin(pin: String) -> Result<bool, String> {
     if !dpapi::has_pin() {
@@ -26,7 +26,7 @@ pub async fn verify_pin(pin: String) -> Result<bool, String> {
     dpapi::verify_pin(&pin)
 }
 
-/// 设置 PIN（使用 Windows DPAPI 加密后持久化存储）
+/// 设置 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
 #[tauri::command]
 pub async fn set_pin(pin: String) -> Result<(), String> {
     if pin.len() < 4 {
@@ -299,7 +299,7 @@ pub async fn clear_sandbox_dir() -> Result<String, String> {
     }
 }
 
-/// 锁定沙箱文件：将指定目录中的所有文件设为隐藏+系统属性
+/// 锁定沙箱文件：Windows 使用隐藏/系统属性，macOS 使用 Finder hidden flag
 #[tauri::command]
 pub async fn lock_sandbox_files(directory: String) -> Result<String, String> {
     let dir_path = Path::new(&directory);
@@ -327,10 +327,25 @@ pub async fn lock_sandbox_files(directory: String) -> Result<String, String> {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(entries) = std::fs::read_dir(dir_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = std::process::Command::new("chflags")
+                        .args(["hidden", &path.to_string_lossy()])
+                        .output();
+                    count += 1;
+                }
+            }
+        }
+    }
+
     Ok(format!("已隐藏 {} 个文件", count))
 }
 
-/// 解锁沙箱文件：将指定目录中的所有文件取消隐藏+系统属性
+/// 解锁沙箱文件：Windows 取消隐藏/系统属性，macOS 清除 Finder hidden flag
 #[tauri::command]
 pub async fn unlock_sandbox_files(directory: String) -> Result<String, String> {
     let dir_path = Path::new(&directory);
@@ -351,6 +366,21 @@ pub async fn unlock_sandbox_files(directory: String) -> Result<String, String> {
                     let _ = std::process::Command::new("attrib")
                         .creation_flags(CREATE_NO_WINDOW)
                         .args(["-h", "-s", &path.to_string_lossy()])
+                        .output();
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(entries) = std::fs::read_dir(dir_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = std::process::Command::new("chflags")
+                        .args(["nohidden", &path.to_string_lossy()])
                         .output();
                     count += 1;
                 }

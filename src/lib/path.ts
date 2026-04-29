@@ -1,10 +1,45 @@
 /**
- * 跨平台路径处理工具
+ * 跨平台路径处理工具。
+ * 桌面端优先使用 Tauri 返回的平台上下文，浏览器环境仅作回退。
  */
 
+type SupportedPlatform = 'windows' | 'macos' | 'linux';
+
+interface PathPlatformContext {
+  os: SupportedPlatform | 'unknown';
+  pathSeparator?: string;
+  defaultDocumentsDir?: string;
+  appDataDir?: string;
+  cacheDir?: string;
+  tempDir?: string;
+}
+
+let platformOverride: SupportedPlatform | null = null;
+let pathSeparatorOverride: string | null = null;
+let defaultDocumentsPathOverride: string | null = null;
+let appDataPathOverride: string | null = null;
+let cachePathOverride: string | null = null;
+let tempPathOverride: string | null = null;
+
+export const setPlatformContext = (context: PathPlatformContext) => {
+  if (context.os === 'windows' || context.os === 'macos' || context.os === 'linux')
+    platformOverride = context.os;
+
+  pathSeparatorOverride = context.pathSeparator || pathSeparatorOverride;
+  defaultDocumentsPathOverride = context.defaultDocumentsDir || defaultDocumentsPathOverride;
+  appDataPathOverride = context.appDataDir || appDataPathOverride;
+  cachePathOverride = context.cacheDir || cachePathOverride;
+  tempPathOverride = context.tempDir || tempPathOverride;
+};
+
 // 检测当前平台
-export const getPlatform = (): 'windows' | 'macos' | 'linux' => {
-  // 使用 userAgent 替代已弃用的 platform
+export const getPlatform = (): SupportedPlatform => {
+  if (platformOverride)
+    return platformOverride;
+
+  if (typeof navigator === 'undefined')
+    return 'linux';
+
   const userAgent = navigator.userAgent.toLowerCase();
   if (userAgent.includes('win')) return 'windows';
   if (userAgent.includes('mac')) return 'macos';
@@ -13,6 +48,9 @@ export const getPlatform = (): 'windows' | 'macos' | 'linux' => {
 
 // 路径分隔符
 export const getPathSeparator = (): string => {
+  if (pathSeparatorOverride)
+    return pathSeparatorOverride;
+
   return getPlatform() === 'windows' ? '\\' : '/';
 };
 
@@ -74,6 +112,9 @@ export const isAbsolutePath = (path: string): boolean => {
 
 // 获取应用数据目录
 export const getAppDataPath = (): string => {
+  if (appDataPathOverride)
+    return appDataPathOverride;
+
   const platform = getPlatform();
   switch (platform) {
     case 'windows':
@@ -89,6 +130,9 @@ export const getAppDataPath = (): string => {
 
 // 获取默认文档目录
 export const getDefaultDocumentsPath = (): string => {
+  if (defaultDocumentsPathOverride)
+    return defaultDocumentsPathOverride;
+
   const platform = getPlatform();
   switch (platform) {
     case 'windows':
@@ -104,6 +148,9 @@ export const getDefaultDocumentsPath = (): string => {
 
 // 获取临时目录
 export const getTempPath = (): string => {
+  if (tempPathOverride)
+    return tempPathOverride;
+
   const platform = getPlatform();
   switch (platform) {
     case 'windows':
@@ -139,6 +186,9 @@ export const getConfigPath = (filename: string = 'config.json'): string => {
 
 // 获取缓存目录
 export const getCachePath = (): string => {
+  if (cachePathOverride)
+    return cachePathOverride;
+
   const platform = getPlatform();
   switch (platform) {
     case 'windows':
