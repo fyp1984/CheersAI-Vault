@@ -125,6 +125,18 @@ export interface OcrDownloadProgress {
   percentage: number;
   status: string;
 }
+
+export interface PlatformContext {
+  os: "windows" | "macos" | "linux" | "unknown";
+  pathSeparator: string;
+  defaultDocumentsDir: string;
+  appDataDir: string;
+  cacheDir: string;
+  tempDir: string;
+  pinStorageMode: "windows_dpapi" | "macos_keychain" | "fallback_file" | string;
+  ocrStrategy: "embedded_python" | "system_python_venv" | "system_python" | string;
+  ollamaStrategy: "binary_check_plus_background_serve" | "binary_check_plus_app_launch" | "binary_check_plus_cli_serve" | string;
+}
 // FileBay Config types
 export interface FileBayConfig {
   url: string;

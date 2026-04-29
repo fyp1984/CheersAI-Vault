@@ -13,6 +13,7 @@ import type {
   BatchStatus,
   FileBayConfig,
   FileBayConfigStatus,
+  PlatformContext,
   SensitiveTerm,
   AddSensitiveTermRequest,
   UpdateSensitiveTermRequest,
@@ -210,6 +211,9 @@ export const tauriCommands = {
     invoke<void>("navigate_main_window_with_button", { url, returnUrl }),
 
   // OCR
+  getPlatformContext: () =>
+    invoke<PlatformContext>("get_platform_context"),
+
   checkOcrInstalled: () =>
     invoke<boolean>("check_ocr_installed"),
 
@@ -245,6 +249,12 @@ export const tauriCommands = {
   checkOllamaInstalled: () =>
     invoke<boolean>("check_ollama_installed"),
 
+  checkOllamaBinaryInstalled: () =>
+    invoke<boolean>("check_ollama_binary_installed"),
+
+  checkOllamaServiceRunning: () =>
+    invoke<boolean>("check_ollama_service_running"),
+
   startOllamaService: () =>
     invoke<string>("start_ollama_service"),
 
@@ -267,6 +277,7 @@ export const tauriCommands = {
       model_dir: string;
       ollama_installed: boolean;
       model_installed: boolean;
+      service_running?: boolean;
     }>("get_ai_model_info"),
 
   checkAiDetectionAvailable: () =>

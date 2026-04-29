@@ -5,6 +5,11 @@
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(target_os = "macos")]
+const MACOS_KEYCHAIN_SERVICE: &str = "com.cheersai.vault.pin";
+#[cfg(target_os = "macos")]
+const MACOS_KEYCHAIN_ACCOUNT: &str = "default";
+
 /// 获取 PIN 存储文件路径
 fn get_pin_file_path() -> Result<PathBuf, String> {
     let temp_dir = std::env::temp_dir();
@@ -15,6 +20,20 @@ fn get_pin_file_path() -> Result<PathBuf, String> {
 
 /// 检查是否已设置 PIN
 pub fn has_pin() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        run_macos_security_command(&[
+            "find-generic-password",
+            "-s",
+            MACOS_KEYCHAIN_SERVICE,
+            "-a",
+            MACOS_KEYCHAIN_ACCOUNT,
+        ])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "macos"))]
     match get_pin_file_path() {
         Ok(path) => path.exists(),
         Err(_) => false,
@@ -23,14 +42,61 @@ pub fn has_pin() -> bool {
 
 /// 使用 DPAPI 加密数据并保存到文件
 pub fn save_pin(pin: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = run_macos_security_command(&[
+            "add-generic-password",
+            "-U",
+            "-s",
+            MACOS_KEYCHAIN_SERVICE,
+            "-a",
+            MACOS_KEYCHAIN_ACCOUNT,
+            "-w",
+            pin,
+        ])?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        Err(format!(
+            "写入 macOS Keychain 失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
     let encrypted = dpapi_encrypt(pin.as_bytes())?;
     let path = get_pin_file_path()?;
     fs::write(&path, &encrypted).map_err(|e| format!("保存 PIN 失败: {}", e))?;
     Ok(())
+    }
 }
 
 /// 从文件加载并使用 DPAPI 解密，验证 PIN
 pub fn verify_pin(pin: &str) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = run_macos_security_command(&[
+            "find-generic-password",
+            "-s",
+            MACOS_KEYCHAIN_SERVICE,
+            "-a",
+            MACOS_KEYCHAIN_ACCOUNT,
+            "-w",
+        ])?;
+
+        if !output.status.success() {
+            return Err("尚未设置 PIN".to_string());
+        }
+
+        let stored_pin = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(stored_pin == pin)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
     let path = get_pin_file_path()?;
     if !path.exists() {
         return Err("尚未设置 PIN".to_string());
@@ -42,15 +108,41 @@ pub fn verify_pin(pin: &str) -> Result<bool, String> {
         .map_err(|_| "PIN 数据损坏".to_string())?;
 
     Ok(stored_pin == pin)
+    }
 }
 
 /// 清除已保存的 PIN
 pub fn clear_pin() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = run_macos_security_command(&[
+            "delete-generic-password",
+            "-s",
+            MACOS_KEYCHAIN_SERVICE,
+            "-a",
+            MACOS_KEYCHAIN_ACCOUNT,
+        ])?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("could not be found") || stderr.contains("The specified item could not be found") {
+            return Ok(());
+        }
+
+        Err(format!("清除 Keychain 中的 PIN 失败: {}", stderr.trim()))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
     let path = get_pin_file_path()?;
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("清除 PIN 失败: {}", e))?;
     }
     Ok(())
+    }
 }
 
 // ============ Windows DPAPI 实现 ============
@@ -159,4 +251,12 @@ fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|_| "数据格式错误".to_string())?;
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encoded)
         .map_err(|_| "解密失败".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_security_command(args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("security")
+        .args(args)
+        .output()
+        .map_err(|e| format!("调用 macOS security 命令失败: {}", e))
 }

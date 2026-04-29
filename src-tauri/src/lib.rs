@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, sensitive_terms, installer};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, sensitive_terms, installer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -124,6 +124,8 @@ pub fn run() {
             filebay_config::validate_filebay_config_file,
             filebay_config::import_filebay_config,
             ai_model::check_ollama_installed,
+            ai_model::check_ollama_binary_installed,
+            ai_model::check_ollama_service_running,
             ai_model::download_ollama,
             ai_model::start_ollama_service,
             ai_model::check_ai_model_installed,
@@ -132,6 +134,7 @@ pub fn run() {
             ai_model::call_ai_model,
             ai_model::get_ai_model_info,
             ai_model::check_ai_detection_available,
+            platform::get_platform_context,
             sensitive_terms::add_sensitive_term,
             sensitive_terms::add_sensitive_terms_batch,
             sensitive_terms::update_sensitive_term,

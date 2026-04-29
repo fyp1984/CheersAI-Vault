@@ -488,70 +488,7 @@ impl NERDetector {
     
     /// 查找 Ollama 可执行文件
     fn find_ollama_executable() -> Result<String, String> {
-        #[cfg(target_os = "windows")]
-        {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            
-            // 先检查常见路径（最快，不弹窗）
-            let possible_paths = vec![
-                format!("{}\\AppData\\Local\\Programs\\Ollama\\ollama.exe", std::env::var("USERPROFILE").unwrap_or_default()),
-                "C:\\Program Files\\Ollama\\ollama.exe".to_string(),
-                "C:\\Ollama\\ollama.exe".to_string(),
-            ];
-            
-            for path in possible_paths {
-                if std::path::Path::new(&path).exists() {
-                    return Ok(path);
-                }
-            }
-            
-            // 尝试使用 where 命令查找（隐藏窗口）
-            use std::os::windows::process::CommandExt;
-            if let Ok(output) = Command::new("where")
-                .creation_flags(CREATE_NO_WINDOW)
-                .arg("ollama")
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout);
-                    let first_path = path_str.lines().next().unwrap_or("").trim();
-                    if !first_path.is_empty() {
-                        return Ok(first_path.to_string());
-                    }
-                }
-            }
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        {
-            // Unix-like 系统
-            if let Ok(output) = Command::new("which")
-                .arg("ollama")
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !path_str.is_empty() {
-                        return Ok(path_str);
-                    }
-                }
-            }
-            
-            // 检查常见路径
-            let possible_paths = vec![
-                "/usr/local/bin/ollama",
-                "/usr/bin/ollama",
-                "/opt/homebrew/bin/ollama",
-            ];
-            
-            for path in possible_paths {
-                if std::path::Path::new(path).exists() {
-                    return Ok(path.to_string());
-                }
-            }
-        }
-        
-        Err("Ollama executable not found".to_string())
+        crate::commands::ai_model::resolve_system_ollama_path_string()
     }
     
     // 智能姓名检测：基于常见姓氏和上下文关键词

@@ -16,6 +16,7 @@ import { EnhancedServices } from "@/pages/EnhancedServices";
 import { InstallerTest } from "@/pages/InstallerTest";
 import { useLogStore } from "@/store/logStore";
 import { tauriCommands } from "@/lib/tauri";
+import { setPlatformContext } from "@/lib/path";
 
 function AppRoutes() {
   const { initializeDatabase } = useLogStore();
@@ -23,6 +24,19 @@ function AppRoutes() {
 
   useEffect(() => {
     document.title = "CheersAI Desktop · 智享AI，安全随行";
+  }, []);
+
+  useEffect(() => {
+    const bootstrapPlatformContext = async () => {
+      try {
+        const context = await tauriCommands.getPlatformContext();
+        setPlatformContext(context);
+      } catch (error) {
+        console.error("Failed to load platform context:", error);
+      }
+    };
+
+    bootstrapPlatformContext();
   }, []);
 
   // 应用启动时初始化数据库和迁移旧数据

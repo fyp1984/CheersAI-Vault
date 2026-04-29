@@ -31,8 +31,9 @@ import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
 import { formatBytes } from "@/lib/utils";
-import { getDisplayPath, validatePath, getPlatform, getDefaultDocumentsPath } from "@/lib/path";
+import { getDisplayPath, validatePath, getDefaultDocumentsPath } from "@/lib/path";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { PlatformContext } from "@/types/commands";
 
 export default function SandboxManager() {
   const { locked, files, setLocked, setFiles } = useSandboxStore();
@@ -47,6 +48,7 @@ export default function SandboxManager() {
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState<string>("");
   const [pinExists, setPinExists] = useState<boolean | null>(null);
+  const [platformContext, setPlatformContext] = useState<PlatformContext | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -64,9 +66,38 @@ export default function SandboxManager() {
     }
   }, [toast]);
 
-  // 获取当前平台信息
-  const platform = getPlatform();
-  const platformName = platform === 'windows' ? 'Windows' : platform === 'macos' ? 'macOS' : 'Linux';
+  const platformName = platformContext?.os === 'windows'
+    ? 'Windows'
+    : platformContext?.os === 'macos'
+      ? 'macOS'
+      : platformContext?.os === 'linux'
+        ? 'Linux'
+        : '当前系统';
+  const pinStorageLabel = platformContext?.pinStorageMode === "macos_keychain"
+    ? "macOS Keychain"
+    : platformContext?.pinStorageMode === "windows_dpapi"
+      ? "Windows 凭据保护"
+      : "兼容模式";
+  const pinStorageDescription = platformContext?.pinStorageMode === "macos_keychain"
+    ? "PIN 将使用 macOS Keychain 安全存储，重启应用后仍然有效。"
+    : platformContext?.pinStorageMode === "windows_dpapi"
+      ? "PIN 将使用 Windows 凭据保护加密存储，绑定当前 Windows 用户账户，重启应用后仍然有效。"
+      : "PIN 将以兼容模式存储，请仅用于本地开发或测试环境。";
+  const resolvedDefaultDocumentsPath = platformContext?.defaultDocumentsDir || getDefaultDocumentsPath();
+  const defaultPathExample = getDisplayPath(resolvedDefaultDocumentsPath, 40);
+
+  useEffect(() => {
+    const loadPlatformContext = async () => {
+      try {
+        const context = await tauriCommands.getPlatformContext();
+        setPlatformContext(context);
+      } catch (error) {
+        console.error("Failed to load platform context in sandbox:", error);
+      }
+    };
+
+    loadPlatformContext();
+  }, []);
 
   // 加载沙箱文件列表（基于输出目录）
   const loadFiles = async () => {
@@ -165,7 +196,7 @@ export default function SandboxManager() {
       setNewPin("");
       setConfirmPin("");
       setPinExists(true);
-      setToast({ message: 'PIN 设置成功，已使用 Windows DPAPI 加密存储', type: 'success' });
+      setToast({ message: `PIN 设置成功，已启用 ${pinStorageLabel} 安全存储`, type: 'success' });
       // 延迟锁定并隐藏文件
       setTimeout(async () => {
         if (outputDir) {
@@ -209,7 +240,7 @@ export default function SandboxManager() {
       const selected = await open({
         directory: true,
         title: "选择文件输出/沙箱存储路径",
-        defaultPath: outputDir || getDefaultDocumentsPath(),
+        defaultPath: outputDir || resolvedDefaultDocumentsPath,
       });
       if (selected) {
         const selectedPath = selected as string;
@@ -243,7 +274,7 @@ export default function SandboxManager() {
 
   // 使用默认路径
   const handleUseDefaultPath = () => {
-    const defaultPath = getDefaultDocumentsPath();
+    const defaultPath = resolvedDefaultDocumentsPath;
     setOutputDir(defaultPath);
     setPathError("");
   };
@@ -307,7 +338,7 @@ export default function SandboxManager() {
                 )}
                 沙箱状态
                 <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
-                  Windows DPAPI 加密
+                  {pinStorageLabel}
                 </span>
               </CardTitle>
             </CardHeader>
@@ -319,7 +350,7 @@ export default function SandboxManager() {
                   <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                     <p className="text-sm text-yellow-800">⚠️ 尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
                   </div>
-                  <p className="text-xs text-gray-500">PIN 将使用 Windows DPAPI 加密存储，绑定当前 Windows 用户账户，重启应用后仍然有效。</p>
+                  <p className="text-xs text-gray-500">{pinStorageDescription}</p>
                 </div>
               ) : locked ? (
                 <div className="space-y-4">
@@ -346,7 +377,13 @@ export default function SandboxManager() {
                       解锁
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-500">PIN 已通过 Windows DPAPI 加密存储，仅当前 Windows 用户可解密。</p>
+                  <p className="text-xs text-gray-500">
+                    {platformContext?.pinStorageMode === "macos_keychain"
+                      ? "PIN 已保存在 macOS Keychain 中，仅当前系统账户可安全读取。"
+                      : platformContext?.pinStorageMode === "windows_dpapi"
+                        ? "PIN 已通过 Windows 凭据保护加密存储，仅当前 Windows 用户可解密。"
+                        : "PIN 已保存到本地兼容存储。"}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -435,7 +472,7 @@ export default function SandboxManager() {
                 <div className="space-y-2">
                   <div className="flex gap-2">
                     <Input
-                      placeholder={`选择文件输出路径 (${platform === 'windows' ? 'C:\\Users\\用户名\\Documents\\CheersAI Vault' : '~/Documents/CheersAI Vault'})`}
+                      placeholder={`选择文件输出路径 (${defaultPathExample})`}
                       value={outputDir}
                       onChange={(e) => handlePathChange(e.target.value)}
                       className={`flex-1 ${pathError ? 'border-red-300' : ''}`}
@@ -459,7 +496,7 @@ export default function SandboxManager() {
                     onClick={handleUseDefaultPath}
                     className="text-xs"
                   >
-                    使用默认路径 ({getDisplayPath(getDefaultDocumentsPath(), 40)})
+                    使用默认路径 ({getDisplayPath(resolvedDefaultDocumentsPath, 40)})
                   </Button>
                 </div>
                 

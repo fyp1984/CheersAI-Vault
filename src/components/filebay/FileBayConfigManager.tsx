@@ -21,6 +21,7 @@ import {
 import { tauriCommands } from "@/lib/tauri";
 import type { FileBayConfigStatus } from "@/types/commands";
 import { open } from "@tauri-apps/plugin-dialog";
+import { CLOUD_APP_URL } from "@/lib/cloud";
 
 export function FileBayConfigManager() {
   const [configStatus, setConfigStatus] = useState<FileBayConfigStatus | null>(null);
@@ -103,9 +104,18 @@ export function FileBayConfigManager() {
   };
 
   // 打开 Web App 下载页面
-  const openDownloadPage = () => {
-    // 这里可以打开 Web App 的下载页面
-    window.open('http://localhost:3000/filebay-download', '_blank');
+  const openDownloadPage = async () => {
+    try {
+      const { open: openExternal } = await import("@tauri-apps/plugin-shell");
+      await openExternal(CLOUD_APP_URL);
+      setMessage({
+        type: 'info',
+        text: '已打开 Desktop 在线工作区，请在云端页面中下载或刷新 FileBay 配置文件。',
+      });
+    } catch (error) {
+      console.error("Failed to open cloud page:", error);
+      setMessage({ type: 'error', text: `打开在线工作区失败: ${error}` });
+    }
   };
 
   useEffect(() => {

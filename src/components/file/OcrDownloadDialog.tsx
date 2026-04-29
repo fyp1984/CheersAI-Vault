@@ -112,8 +112,8 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
           </DialogTitle>
           <DialogDescription>
             {isComplete
-              ? 'OCR 功能已成功安装，现在可以处理扫描版 PDF 了。'
-              : '检测到扫描版 PDF，需要下载 Python 运行时和 OCR 依赖才能识别文字。'}
+              ? 'OCR 运行时已成功安装，现在可以进行 PDF 文本提取。'
+              : '应用将根据当前平台准备本地 Python 运行时，并安装 PDF 文本提取依赖。'}
           </DialogDescription>
         </DialogHeader>
 
@@ -125,10 +125,10 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
                 <div>
                   <p className="font-medium mb-1">下载说明：</p>
                   <ul className="list-disc list-inside space-y-1 text-xs">
-                    <li>将下载 Python 运行时和 PyMuPDF（PDF 文本提取）</li>
-                    <li>总大小约 30MB，下载需要 1-2 分钟</li>
-                    <li>仅支持 PDF 文本提取，不支持图片 OCR</li>
-                    <li>如需图片 OCR，请手动安装系统 Python + easyocr</li>
+                    <li>Windows 使用嵌入式 Python，macOS 使用系统 Python venv</li>
+                    <li>当前轻量运行时安装 PyMuPDF，用于 PDF 文本提取</li>
+                    <li>不支持图片型 OCR 时会给出明确提示</li>
+                    <li>所有处理均在本地完成</li>
                   </ul>
                 </div>
               </div>
@@ -157,7 +157,7 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
               <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0" />
               <div className="text-sm text-green-700">
                 <p className="font-medium">OCR 功能已就绪</p>
-                <p className="text-xs mt-1">可以处理 PDF 文本提取（不支持图片 OCR）</p>
+                <p className="text-xs mt-1">可以处理 PDF 文本提取；图片型 OCR 仍需更完整运行时</p>
               </div>
             </div>
           )}
