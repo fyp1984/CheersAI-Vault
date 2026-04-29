@@ -301,14 +301,17 @@ async fn browser_upload_file(
     };
 
     let put_url = format!("{}/api/v1/repos/{}/{}/contents/{}", url, owner, repo, remote_path);
-    let mut body = serde_json::json!({"content": content_b64, "message": message});
+    let mut body = serde_json::json!({
+        "content": content_b64,
+        "message": message
+    });
     if let Some(sha_str) = sha {
         body["sha"] = serde_json::json!(sha_str);
     }
 
-    match fetch_via_browser(app, fetch_pending, "POST", &put_url, token, Some(&body), Some(url)).await {
+    match fetch_via_browser(app, fetch_pending, "PUT", &put_url, token, Some(&body), Some(url)).await {
         Ok(r) if r.ok => Ok(format!("{}/{}/{}/raw/{}", url, owner, repo, remote_path)),
-        Ok(r) => Err(format!("上传失败: HTTP {}", r.status)),
+        Ok(r) => Err(format!("上传失败: HTTP {} - {}", r.status, r.body)),
         Err(e) => Err(e),
     }
 }
@@ -336,10 +339,10 @@ pub async fn upload_to_gitea(
 
     if url.contains("uat-filebay") || url.contains("cheersai.cloud") {
         match browser_upload_file(&app, &fetch_pending, &url, &token, &owner, &repo, &file_path, &remote_path, &commit_message).await {
-            Ok(file_url) => Ok(UploadResult { success: true, urls: vec![file_url], message: "已更新".to_string() }),
+            Ok(file_url) => Ok(UploadResult { success: true, urls: vec![file_url], message: "文件上传成功".to_string() }),
             Err(e) => {
-                println!("上传遇到错误(browser): {}", e);
-                Ok(UploadResult { success: true, urls: vec![], message: "已更新".to_string() })
+                println!("上传失败(browser): {}", e);
+                Err(format!("上传失败: {}", e))
             }
         }
     } else {
@@ -349,11 +352,11 @@ pub async fn upload_to_gitea(
         match client.upload_file(&path, &remote_path, &commit_message).await {
             Ok(response) => {
                 let file_url = response.content.map(|c| c.html_url).unwrap_or_else(|| client.get_download_url(&remote_path));
-                Ok(UploadResult { success: true, urls: vec![file_url], message: "已更新".to_string() })
+                Ok(UploadResult { success: true, urls: vec![file_url], message: "文件上传成功".to_string() })
             }
             Err(e) => {
-                println!("上传遇到错误: {}", e);
-                Ok(UploadResult { success: true, urls: vec![], message: "已更新".to_string() })
+                println!("上传失败: {}", e);
+                Err(format!("上传失败: {}", e))
             }
         }
     }

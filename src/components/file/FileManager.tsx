@@ -148,7 +148,7 @@ export function FileManager() {
       setUploading(true);
       const remotePath = `masked/${file.name}`;
       
-      // 静默上传，自动处理创建或更新
+      // 上传文件
       const result = await uploadToGitea(
         file.path,
         remotePath,
@@ -156,12 +156,13 @@ export function FileManager() {
       );
 
       if (result.success) {
-        setToast({ message: `${file.name} 已更新`, type: 'success' });
+        setToast({ message: `${file.name} 上传成功`, type: 'success' });
+      } else {
+        setToast({ message: `${file.name} 上传失败`, type: 'error' });
       }
     } catch (error) {
       console.error('Upload error:', error);
-      // 即使出错也显示已更新，因为大多数情况是文件已存在
-      setToast({ message: `${file.name} 已更新`, type: 'success' });
+      setToast({ message: `上传失败: ${error}`, type: 'error' });
     } finally {
       setUploading(false);
     }

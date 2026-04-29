@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
+use std::process::Command;
 use tauri::{AppHandle, Manager, Emitter};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]

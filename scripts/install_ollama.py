@@ -44,10 +44,10 @@ class OllamaInstaller:
         self.ollama_url = "https://gitee.com/mirrors/ollama/releases/download/v0.1.32/ollama-windows-amd64.zip"
         self.model_name = "qwen2.5:1.5b"
         
-        # 重试配置
-        self.max_retries = 3
-        self.retry_delay = 2
-        self.download_timeout = 600  # 10分钟
+        # 重试配置 - 更激进的重试策略
+        self.max_retries = 5  # 增加到5次
+        self.retry_delay = 3  # 增加到3秒
+        self.download_timeout = 30  # 单次读取超时30秒（不是总超时）
         
     def log(self, message, level="INFO"):
         """输出日志"""
@@ -56,10 +56,17 @@ class OllamaInstaller:
     
     def download_file(self, url, dest_path, description="文件"):
         """
-        下载文件，支持重试和进度显示
+        下载文件，支持断点续传、重试和进度显示
         """
         dest_path = Path(dest_path)
         dest_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 检查是否有部分下载的文件
+        temp_path = Path(str(dest_path) + ".download")
+        downloaded_size = 0
+        if temp_path.exists():
+            downloaded_size = temp_path.stat().st_size
+            self.log(f"检测到未完成的下载，已下载: {downloaded_size / 1024 / 1024:.2f} MB")
         
         for attempt in range(1, self.max_retries + 1):
             try:
@@ -68,38 +75,93 @@ class OllamaInstaller:
                 self.log(f"保存到: {dest_path}")
                 
                 req = urllib.request.Request(url)
-                req.add_header('User-Agent', 'Mozilla/5.0')
+                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                 
-                with urllib.request.urlopen(req, timeout=self.download_timeout) as response:
-                    total_size = int(response.headers.get('Content-Length', 0))
+                # 支持断点续传
+                if downloaded_size > 0:
+                    req.add_header('Range', f'bytes={downloaded_size}-')
+                    self.log(f"从 {downloaded_size / 1024 / 1024:.2f} MB 处继续下载")
+                
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    # 获取总大小
+                    if downloaded_size > 0:
+                        # 断点续传时，Content-Length 是剩余大小
+                        content_range = response.headers.get('Content-Range', '')
+                        if content_range:
+                            total_size = int(content_range.split('/')[-1])
+                        else:
+                            total_size = downloaded_size + int(response.headers.get('Content-Length', 0))
+                    else:
+                        total_size = int(response.headers.get('Content-Length', 0))
                     
                     if total_size > 0:
-                        self.log(f"文件大小: {total_size / 1024 / 1024:.2f} MB")
+                        self.log(f"文件总大小: {total_size / 1024 / 1024:.2f} MB")
                     
-                    downloaded = 0
-                    chunk_size = 8192
+                    chunk_size = 65536  # 64KB chunks for better performance
+                    last_progress_time = time.time()
+                    last_progress_bytes = downloaded_size
                     
-                    with open(dest_path, 'wb') as f:
+                    # 打开文件（追加模式如果是断点续传）
+                    mode = 'ab' if downloaded_size > 0 else 'wb'
+                    with open(temp_path, mode) as f:
                         while True:
                             chunk = response.read(chunk_size)
                             if not chunk:
                                 break
                             f.write(chunk)
-                            downloaded += len(chunk)
+                            downloaded_size += len(chunk)
                             
-                            if total_size > 0 and downloaded % (chunk_size * 100) == 0:
-                                progress = (downloaded / total_size) * 100
-                                self.log(f"下载进度: {progress:.1f}% ({downloaded / 1024 / 1024:.2f} MB / {total_size / 1024 / 1024:.2f} MB)")
+                            # 每秒更新一次进度
+                            current_time = time.time()
+                            if current_time - last_progress_time >= 1.0:
+                                if total_size > 0:
+                                    progress = (downloaded_size / total_size) * 100
+                                    speed = (downloaded_size - last_progress_bytes) / (current_time - last_progress_time) / 1024 / 1024
+                                    self.log(f"下载进度: {progress:.1f}% ({downloaded_size / 1024 / 1024:.2f} MB / {total_size / 1024 / 1024:.2f} MB) - 速度: {speed:.2f} MB/s")
+                                else:
+                                    self.log(f"已下载: {downloaded_size / 1024 / 1024:.2f} MB")
+                                
+                                last_progress_time = current_time
+                                last_progress_bytes = downloaded_size
+                
+                # 下载完成，重命名临时文件
+                if temp_path.exists():
+                    temp_path.rename(dest_path)
                 
                 self.log(f"✓ {description} 下载完成")
                 return True
                 
+            except urllib.error.HTTPError as e:
+                if e.code == 416:  # Range Not Satisfiable - 文件已完全下载
+                    if temp_path.exists():
+                        temp_path.rename(dest_path)
+                    self.log(f"✓ {description} 已完全下载")
+                    return True
+                else:
+                    self.log(f"✗ HTTP 错误 {e.code}: {e.reason}", "ERROR")
+                    if attempt < self.max_retries:
+                        self.log(f"等待 {self.retry_delay} 秒后重试...")
+                        time.sleep(self.retry_delay)
+                    else:
+                        raise RuntimeError(f"下载 {description} 失败: HTTP {e.code}")
+                        
+            except urllib.error.URLError as e:
+                self.log(f"✗ 网络错误: {e.reason}", "ERROR")
+                if attempt < self.max_retries:
+                    self.log(f"等待 {self.retry_delay} 秒后重试...")
+                    time.sleep(self.retry_delay)
+                else:
+                    raise RuntimeError(f"下载 {description} 失败: 网络错误")
+                    
             except Exception as e:
                 self.log(f"✗ 下载失败: {e}", "ERROR")
                 if attempt < self.max_retries:
                     self.log(f"等待 {self.retry_delay} 秒后重试...")
                     time.sleep(self.retry_delay)
                 else:
+                    # 保留临时文件以便下次继续
+                    if temp_path.exists():
+                        self.log(f"已保留部分下载的文件，下次可继续: {temp_path}")
                     raise RuntimeError(f"下载 {description} 失败，已重试 {self.max_retries} 次")
     
     def run_command(self, cmd, description="命令", check=True, timeout=600):
@@ -159,7 +221,7 @@ class OllamaInstaller:
             return False
     
     def install_ollama(self):
-        """安装 Ollama"""
+        """安装 Ollama - 健壮的自动安装"""
         self.log("=" * 60)
         self.log("步骤 1: 安装 Ollama")
         self.log("=" * 60)
@@ -176,21 +238,48 @@ class OllamaInstaller:
         # 使用官方下载链接
         ollama_installer_url = "https://ollama.com/download/OllamaSetup.exe"
         
-        try:
-            self.download_file(ollama_installer_url, installer_path, "Ollama 安装程序")
-        except Exception as e:
-            self.log(f"✗ 下载失败: {e}", "ERROR")
-            self.log("请手动下载并安装 Ollama:")
-            self.log("  官方: https://ollama.com/download/windows")
-            self.log("  Gitee 镜像: https://gitee.com/mirrors/ollama")
-            raise RuntimeError("Ollama 下载失败")
+        # 尝试多个镜像源
+        mirror_urls = [
+            ollama_installer_url,
+            "https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe",
+        ]
+        
+        download_success = False
+        last_error = None
+        
+        for mirror_url in mirror_urls:
+            try:
+                self.log(f"尝试从镜像下载: {mirror_url}")
+                self.download_file(mirror_url, installer_path, "Ollama 安装程序")
+                download_success = True
+                break
+            except Exception as e:
+                last_error = e
+                self.log(f"从此镜像下载失败: {e}", "WARNING")
+                continue
+        
+        if not download_success:
+            self.log("✗ 所有镜像下载均失败", "ERROR")
+            self.log("")
+            self.log("备选方案：手动安装")
+            self.log("1. 访问 https://ollama.com/download")
+            self.log("2. 下载 Windows 版本")
+            self.log("3. 安装后重新运行此脚本")
+            raise RuntimeError(f"Ollama 下载失败: {last_error}")
+        
+        # 验证下载的文件
+        if not installer_path.exists() or installer_path.stat().st_size < 1024 * 1024:  # 至少 1MB
+            raise RuntimeError("下载的安装程序文件无效")
+        
+        self.log(f"✓ 安装程序下载完成，大小: {installer_path.stat().st_size / 1024 / 1024:.2f} MB")
         
         # 静默安装 Ollama
         self.log("开始安装 Ollama...")
-        self.log("注意：安装过程可能需要几分钟")
+        self.log("注意：安装过程可能需要几分钟，请耐心等待")
         
         try:
             # 使用静默安装参数
+            self.log("执行安装命令...")
             result = subprocess.run(
                 [str(installer_path), "/S"],
                 capture_output=True,
@@ -200,26 +289,42 @@ class OllamaInstaller:
                 errors='replace'
             )
             
+            if result.returncode != 0:
+                self.log(f"安装程序返回码: {result.returncode}", "WARNING")
+                if result.stderr:
+                    self.log(f"错误输出: {result.stderr}", "WARNING")
+            
             # 等待安装完成
             self.log("等待安装完成...")
-            time.sleep(10)
+            max_wait = 60  # 最多等待60秒
+            wait_interval = 2
+            waited = 0
             
-            # 验证安装
-            if self.check_ollama_installed():
-                self.log("✓ Ollama 安装成功")
+            while waited < max_wait:
+                time.sleep(wait_interval)
+                waited += wait_interval
                 
-                # 删除安装程序
-                try:
-                    installer_path.unlink()
-                    self.log("✓ 已清理安装文件")
-                except:
-                    pass
-            else:
-                raise RuntimeError("安装完成但无法检测到 Ollama")
+                if self.check_ollama_installed():
+                    self.log(f"✓ Ollama 安装成功（等待了 {waited} 秒）")
+                    break
+                
+                if waited % 10 == 0:
+                    self.log(f"仍在等待安装完成... ({waited}/{max_wait} 秒)")
+            
+            # 最终验证
+            if not self.check_ollama_installed():
+                raise RuntimeError("安装完成但无法检测到 Ollama，可能需要重启系统或手动添加到 PATH")
+            
+            # 删除安装程序
+            try:
+                installer_path.unlink()
+                self.log("✓ 已清理安装文件")
+            except Exception as e:
+                self.log(f"清理安装文件失败（可忽略）: {e}", "WARNING")
                 
         except subprocess.TimeoutExpired:
             self.log("✗ 安装超时", "ERROR")
-            raise RuntimeError("Ollama 安装超时")
+            raise RuntimeError("Ollama 安装超时，请检查系统权限或手动安装")
         except Exception as e:
             self.log(f"✗ 安装失败: {e}", "ERROR")
             raise
@@ -462,6 +567,13 @@ class OllamaInstaller:
             self.log("=" * 60)
             self.log("开始安装 Ollama + AI 模型")
             self.log("=" * 60)
+            self.log("")
+            self.log("⚠ 重要提示：")
+            self.log("  - 首次安装需要下载约 1.6GB 文件")
+            self.log("  - 支持断点续传，可随时中断后继续")
+            self.log("  - 请确保网络连接稳定")
+            self.log("  - 预计时间：10-30 分钟（取决于网络速度）")
+            self.log("")
             
             # 执行安装步骤
             self.install_ollama()
@@ -485,6 +597,15 @@ class OllamaInstaller:
             
         except Exception as e:
             self.log(f"✗ 安装失败: {e}", "ERROR")
+            self.log("")
+            self.log("故障排除建议：")
+            self.log("1. 检查网络连接是否稳定")
+            self.log("2. 检查防火墙是否阻止下载")
+            self.log("3. 尝试重新运行安装（支持断点续传）")
+            self.log("4. 如果问题持续，可以手动安装：")
+            self.log("   - 访问 https://ollama.com/download")
+            self.log("   - 下载并安装 Ollama")
+            self.log("   - 运行: ollama pull qwen2.5:1.5b")
             raise
     
     def uninstall_model(self):

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-// 内嵌 Python 脚本
+// 内嵌 Python 脚本 - 健壮的自动安装版本 (2026-04-29)
 const INSTALL_OCR_SCRIPT: &str = include_str!("../../../scripts/install_ocr.py");
 const INSTALL_OLLAMA_SCRIPT: &str = include_str!("../../../scripts/install_ollama.py");
 
@@ -147,6 +147,8 @@ async fn run_installer_script(
     #[cfg(not(target_os = "windows"))]
     let mut cmd = Command::new(&python_exe);
     
+    // 添加 -u 参数禁用输出缓冲
+    cmd.arg("-u");
     cmd.arg(&script_path);
     for arg in args {
         cmd.arg(arg);

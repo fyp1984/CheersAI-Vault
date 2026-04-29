@@ -13,5 +13,5 @@ pub mod ocr;
 pub mod filebay_config;
 pub mod ai_model;
 pub mod platform;
-pub mod sensitive_terms;
+// pub mod sensitive_terms;  // TODO: 文件不存在，暂时注释
 pub mod installer;

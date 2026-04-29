@@ -1,0 +1,58 @@
+--- a/src/pages/EnhancedServices.tsx
++++ b/src/pages/EnhancedServices.tsx
+@@ -340,48 +340,13 @@ export function EnhancedServices() {
+       setDownloadProgress((prev) => ({ ...prev, aiModel: 0 }));
++      setProgressStatus((prev) => ({ ...prev, aiModel: '' }));
+ 
+-      // 先检查 Ollama 是否安装（包括系统安装和内置版本）
+-      const ollamaInstalled = await tauriCommands.checkOllamaInstalled();
+-      if (!ollamaInstalled) {
+-        setMessage({ 
+-          type: 'info', 
+-          text: isMac
+-            ? '未检测到 Ollama。请先安装并启动 Ollama.app，然后重新扫描服务状态。'
+-            : '未检测到 Ollama。请先完成安装后重新扫描服务状态。'
+-        });
+-        
+-        try {
+-          // 传递自定义路径（如果有）
+-          await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
+-          setMessage({ 
+-            type: 'success', 
+-            text: isMac ? '请先完成 Ollama 安装或启动，再继续安装 AI 模型。' : 'Ollama 安装信息已准备完成，请先启动服务后再安装 AI 模型。'
+-          });
+-        } catch (error) {
+-          setMessage({ 
+-            type: 'info',
+-            text: `Ollama 准备失败: ${error}` 
+-          });
+-          return;
+-        }
+-      } else {
+-        const ollamaRunning = await tauriCommands.checkOllamaServiceRunning();
+-        if (!ollamaRunning) {
+-          setMessage({
+-            type: 'info',
+-            text: isMac
+-              ? '检测到 Ollama 已安装但服务未启动。请先点击"启动 Ollama"或打开 Ollama.app，然后重新扫描。'
+-              : '检测到 Ollama 已安装但服务未启动。请先启动服务并重新扫描。'
+-          });
+-          return;
+-        }
+-
+-        setMessage({ type: 'info', text: '检测到 Ollama 服务已运行，正在安装 AI 脱敏模型（qwen2.5:1.5b）...' });
+-      }
+-      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
+-      setProgressStatus({ ...progressStatus, aiModel: '' });
+-
+-      // 使用脚本自动安装 Ollama + AI 模型
++      // 直接使用脚本自动安装 Ollama + AI 模型
+       setMessage({ 
+         type: 'info', 
+         text: '正在安装 Ollama 和 AI 脱敏模型（qwen2.5:1.5b）...\n' +
+-              '首次安装需要下载约 1.6GB 文件，请耐心等待。'
++              '首次安装需要下载约 1.6GB 文件，请耐心等待。\n' +
++              '支持断点续传，可随时中断后继续。'
+       });
+ 
+       await tauriCommands.installOllamaWithScript();

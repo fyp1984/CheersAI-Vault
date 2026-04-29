@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, sensitive_terms, installer};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, installer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -135,17 +135,17 @@ pub fn run() {
             ai_model::get_ai_model_info,
             ai_model::check_ai_detection_available,
             platform::get_platform_context,
-            sensitive_terms::add_sensitive_term,
-            sensitive_terms::add_sensitive_terms_batch,
-            sensitive_terms::update_sensitive_term,
-            sensitive_terms::delete_sensitive_term,
-            sensitive_terms::delete_sensitive_terms_batch,
-            sensitive_terms::get_sensitive_terms,
-            sensitive_terms::get_sensitive_term_categories,
-            sensitive_terms::search_sensitive_terms,
-            sensitive_terms::get_sensitive_terms_stats,
-            sensitive_terms::export_sensitive_terms_csv,
-            sensitive_terms::import_sensitive_terms_csv,
+            // sensitive_terms::add_sensitive_term,
+            // sensitive_terms::add_sensitive_terms_batch,
+            // sensitive_terms::update_sensitive_term,
+            // sensitive_terms::delete_sensitive_term,
+            // sensitive_terms::delete_sensitive_terms_batch,
+            // sensitive_terms::get_sensitive_terms,
+            // sensitive_terms::get_sensitive_term_categories,
+            // sensitive_terms::search_sensitive_terms,
+            // sensitive_terms::get_sensitive_terms_stats,
+            // sensitive_terms::export_sensitive_terms_csv,
+            // sensitive_terms::import_sensitive_terms_csv,
             installer::install_ocr_with_script,
             installer::uninstall_ocr_with_script,
             installer::install_ollama_with_script,
