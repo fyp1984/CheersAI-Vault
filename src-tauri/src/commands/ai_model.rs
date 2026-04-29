@@ -9,7 +9,6 @@ use std::os::windows::process::CommandExt;
 pub struct AiModelConfig {
     pub model_name: String,
     pub model_size: String,
-    pub ollama_version: String,
 }
 
 impl Default for AiModelConfig {
@@ -17,7 +16,6 @@ impl Default for AiModelConfig {
         Self {
             model_name: "qwen2.5:1.5b".to_string(),
             model_size: "1GB".to_string(),
-            ollama_version: "0.1.26".to_string(), // 使用稳定版本
         }
     }
 }
@@ -53,41 +51,20 @@ fn get_bundled_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(ollama_exe)
 }
 
-/// 让用户选择 Ollama 安装目录
-#[tauri::command]
-pub async fn select_ollama_install_dir() -> Result<String, String> {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-    
-    // 使用 Tauri 的文件对话框让用户选择目录
-    // 注意：这需要在前端调用，因为需要窗口上下文
-    Err("请在前端使用 dialog.open() 选择目录".to_string())
-}
-
-/// 获取 Ollama 可执行文件路径（优先使用内置版本）
-fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
-    // 1. 优先使用内置的 Ollama
-    let bundled_path = get_bundled_ollama_path(app)?;
-    if bundled_path.exists() {
-        return Ok(bundled_path);
-    }
-    
-    // 2. 检查系统中是否安装了 Ollama
+pub(crate) fn resolve_system_ollama_path() -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
-        // 2.1 尝试从 PATH 环境变量中查找（最快，不弹窗）
+
         if let Ok(path_var) = std::env::var("PATH") {
             for path_dir in path_var.split(';') {
                 let ollama_exe = PathBuf::from(path_dir).join("ollama.exe");
                 if ollama_exe.exists() {
-                    println!("Found Ollama in PATH: {:?}", ollama_exe);
                     return Ok(ollama_exe);
                 }
             }
         }
-        
-        // 2.2 使用 PowerShell Get-Command 查找（隐藏窗口）
+
         if let Ok(output) = std::process::Command::new("powershell")
             .creation_flags(CREATE_NO_WINDOW)
             .arg("-NoProfile")
@@ -100,14 +77,12 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
                 if !path_str.is_empty() {
                     let path = PathBuf::from(&path_str);
                     if path.exists() {
-                        println!("Found Ollama using PowerShell Get-Command: {:?}", path);
                         return Ok(path);
                     }
                 }
             }
         }
-        
-        // 2.3 尝试使用 where 命令查找（隐藏窗口）
+
         if let Ok(output) = std::process::Command::new("where")
             .creation_flags(CREATE_NO_WINDOW)
             .arg("ollama")
@@ -119,14 +94,12 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
                 if !first_path.is_empty() {
                     let path = PathBuf::from(first_path);
                     if path.exists() {
-                        println!("Found Ollama using 'where' command: {:?}", path);
                         return Ok(path);
                     }
                 }
             }
         }
-        
-        // 2.4 检查常见安装路径
+
         let possible_paths = vec![
             PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("Programs\\Ollama\\ollama.exe"),
             PathBuf::from(std::env::var("PROGRAMFILES").unwrap_or_default()).join("Ollama\\ollama.exe"),
@@ -134,15 +107,13 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
             PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("Ollama\\ollama.exe"),
             PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()).join("AppData\\Local\\Programs\\Ollama\\ollama.exe"),
         ];
-        
+
         for path in possible_paths {
             if path.exists() {
-                println!("Found Ollama in common path: {:?}", path);
                 return Ok(path);
             }
         }
-        
-        // 2.5 扫描所有盘符的常见安装位置
+
         let drives = vec!["C:", "D:", "E:", "F:", "G:"];
         let common_locations = vec![
             "\\Program Files\\Ollama\\ollama.exe",
@@ -151,21 +122,19 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
             "\\Tools\\Ollama\\ollama.exe",
             "\\Software\\Ollama\\ollama.exe",
         ];
-        
+
         for drive in drives {
             for location in &common_locations {
                 let path = PathBuf::from(format!("{}{}", drive, location));
                 if path.exists() {
-                    println!("Found Ollama by scanning drives: {:?}", path);
                     return Ok(path);
                 }
             }
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
-        // 尝试从 PATH 环境变量中查找
         if let Ok(path_var) = std::env::var("PATH") {
             for path_dir in path_var.split(':') {
                 let ollama_exe = PathBuf::from(path_dir).join("ollama");
@@ -174,25 +143,23 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
                 }
             }
         }
-        
-        // 检查常见路径
+
+        let home = std::env::var("HOME").unwrap_or_default();
         let possible_paths = vec![
             PathBuf::from("/usr/local/bin/ollama"),
             PathBuf::from("/opt/homebrew/bin/ollama"),
             PathBuf::from("/usr/bin/ollama"),
+            PathBuf::from("/Applications/Ollama.app/Contents/Resources/ollama"),
+            PathBuf::from(format!("{}/Applications/Ollama.app/Contents/Resources/ollama", home)),
         ];
-        
+
         for path in possible_paths {
             if path.exists() {
                 return Ok(path);
             }
         }
-        
-        // 尝试使用 which 命令查找
-        if let Ok(output) = std::process::Command::new("which")
-            .arg("ollama")
-            .output()
-        {
+
+        if let Ok(output) = std::process::Command::new("which").arg("ollama").output() {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !path_str.is_empty() {
@@ -204,10 +171,9 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
-        // 尝试从 PATH 环境变量中查找
         if let Ok(path_var) = std::env::var("PATH") {
             for path_dir in path_var.split(':') {
                 let ollama_exe = PathBuf::from(path_dir).join("ollama");
@@ -216,25 +182,20 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
                 }
             }
         }
-        
-        // 检查常见路径
+
         let possible_paths = vec![
             PathBuf::from("/usr/local/bin/ollama"),
             PathBuf::from("/usr/bin/ollama"),
             PathBuf::from("/bin/ollama"),
         ];
-        
+
         for path in possible_paths {
             if path.exists() {
                 return Ok(path);
             }
         }
-        
-        // 尝试使用 which 命令查找
-        if let Ok(output) = std::process::Command::new("which")
-            .arg("ollama")
-            .output()
-        {
+
+        if let Ok(output) = std::process::Command::new("which").arg("ollama").output() {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !path_str.is_empty() {
@@ -246,8 +207,80 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
     }
-    
+
     Err("Ollama 未安装".to_string())
+}
+
+pub(crate) fn resolve_system_ollama_path_string() -> Result<String, String> {
+    resolve_system_ollama_path().map(|path| path.to_string_lossy().to_string())
+}
+
+async fn is_ollama_service_running() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+
+    match client.get("http://127.0.0.1:11434/api/tags").send().await {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+fn manual_install_hint() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        return "1. 访问 https://ollama.com/download\n\
+        2. 下载 macOS 版本\n\
+        3. 安装并启动 Ollama.app\n\
+        4. 回到本应用重新扫描服务状态";
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return "1. 访问 https://ollama.com/download\n\
+        2. 下载 Windows 版本\n\
+        3. 安装后重新打开本应用\n\
+        4. 回到增强服务页重新扫描";
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return "1. 访问 https://ollama.com/download\n\
+        2. 按发行版说明安装 Ollama\n\
+        3. 启动 Ollama 服务\n\
+        4. 回到本应用重新扫描服务状态";
+    }
+}
+
+async fn ensure_ollama_service_ready() -> Result<(), String> {
+    if is_ollama_service_running().await {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return Err("已检测到 Ollama，但服务尚未启动。请先点击“启动 Ollama”或打开 Ollama.app，然后重新扫描。".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Err("已检测到 Ollama，但服务尚未启动。请先启动 Ollama 服务并重新扫描。".to_string());
+    }
+}
+
+/// 获取 Ollama 可执行文件路径（优先使用内置版本）
+fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
+    // 1. 优先使用内置的 Ollama
+    let bundled_path = get_bundled_ollama_path(app)?;
+    if bundled_path.exists() {
+        return Ok(bundled_path);
+    }
+    
+    resolve_system_ollama_path()
 }
 
 /// 下载 Ollama
@@ -268,15 +301,11 @@ pub async fn download_ollama(app: AppHandle, custom_path: Option<String>) -> Res
     // 由于用户环境千差万别，路径可能包含中文等特殊字符
     // 建议用户手动安装以避免路径问题
     Err(format!(
-        "为避免路径编码问题，建议手动安装 Ollama：\n\n\
-        国内用户推荐：\n\
-        1. 访问 https://ollama.com/download（国外官网）\n\
-        2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n\
-        3. 下载 Windows 版本\n\
-        4. 安装到英文路径（如 C:\\Ollama{}）\n\
-        5. 安装完成后重启本应用\n\n\
-        手动安装更稳定可靠！",
-        custom_path.map(|p| format!(" 或 {}", p)).unwrap_or_default()
+        "为避免路径和服务状态不一致，建议手动安装 Ollama：\n\n{}\n\n{}",
+        manual_install_hint(),
+        custom_path
+            .map(|p| format!("已记录你的自定义路径偏好：{}", p))
+            .unwrap_or_else(|| "手动安装后重新扫描即可。".to_string())
     ))
 }
 
@@ -296,10 +325,24 @@ pub async fn check_ollama_installed(app: AppHandle) -> Result<bool, String> {
     }
 }
 
+#[tauri::command]
+pub async fn check_ollama_binary_installed(app: AppHandle) -> Result<bool, String> {
+    Ok(get_ollama_path(&app).is_ok())
+}
+
+#[tauri::command]
+pub async fn check_ollama_service_running() -> Result<bool, String> {
+    Ok(is_ollama_service_running().await)
+}
+
 /// 启动 Ollama 服务
 #[tauri::command]
 pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
     println!("=== Starting Ollama service ===");
+
+    if is_ollama_service_running().await {
+        return Ok("Ollama 服务已在运行".to_string());
+    }
     
     let ollama_path = get_ollama_path(&app)?;
     println!("Using Ollama at: {:?}", ollama_path);
@@ -325,13 +368,29 @@ pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
     
     #[cfg(not(target_os = "windows"))]
     {
+        #[cfg(target_os = "macos")]
+        {
+            let app_candidates = [
+                "/Applications/Ollama.app",
+                &format!("{}/Applications/Ollama.app", std::env::var("HOME").unwrap_or_default()),
+            ];
+
+            for candidate in app_candidates {
+                if std::path::Path::new(candidate).exists() {
+                    if std::process::Command::new("open").args(["-a", "Ollama"]).spawn().is_ok() {
+                        return Ok("已尝试启动 Ollama.app，请稍等几秒后重新扫描".to_string());
+                    }
+                }
+            }
+        }
+
         match std::process::Command::new(&ollama_path)
             .arg("serve")
             .spawn()
         {
             Ok(_) => {
                 println!("✓ Ollama service started");
-                Ok("Ollama 服务已启动".to_string())
+                Ok("Ollama 服务启动命令已发出，请稍等几秒后重新扫描".to_string())
             },
             Err(e) => {
                 println!("✗ Failed to start Ollama: {}", e);
@@ -361,6 +420,11 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
             return Ok(false);
         }
     };
+
+    if !is_ollama_service_running().await {
+        println!("✗ Ollama binary exists but service is not running");
+        return Ok(false);
+    }
     
     // 使用 ollama list 命令检查模型是否存在
     #[cfg(target_os = "windows")]
@@ -439,6 +503,8 @@ pub async fn install_ai_model(app: AppHandle) -> Result<String, String> {
     if !ollama_path.exists() {
         return Err(format!("Ollama executable not found: {:?}", ollama_path));
     }
+
+    ensure_ollama_service_ready().await?;
     
     // 设置 OLLAMA_MODELS 环境变量，指定模型存储位置
     // 注意：PathBuf 会自动处理中文路径
@@ -520,6 +586,8 @@ pub async fn call_ai_model(app: AppHandle, prompt: String) -> Result<String, Str
     
     // 检查 Ollama 是否安装
     let ollama_path = get_ollama_path(&app)?;
+
+    ensure_ollama_service_ready().await?;
     
     println!("Calling AI model with prompt: {}", prompt);
     
@@ -566,6 +634,11 @@ pub async fn get_ai_model_info(app: AppHandle) -> Result<serde_json::Value, Stri
     } else {
         false
     };
+    let service_running = if ollama_installed {
+        check_ollama_service_running().await.unwrap_or(false)
+    } else {
+        false
+    };
     
     let bundled_ollama = get_bundled_ollama_path(&app)?;
     let using_bundled = bundled_ollama.exists();
@@ -576,6 +649,7 @@ pub async fn get_ai_model_info(app: AppHandle) -> Result<serde_json::Value, Stri
         "model_dir": model_dir.to_string_lossy(),
         "ollama_installed": ollama_installed,
         "model_installed": model_installed,
+        "service_running": service_running,
         "using_bundled_ollama": using_bundled,
         "ollama_path": if ollama_installed {
             get_ollama_path(&app).ok().map(|p| p.to_string_lossy().to_string())

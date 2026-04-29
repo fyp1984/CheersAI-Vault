@@ -49,6 +49,14 @@ export interface PreviewResult {
   detected_entities?: RowEntities[];
 }
 
+export interface SavePreviewOptions {
+  file_path: string;
+  output_dir: string;
+  masked_rows: string[][];
+  headers?: string[];
+  passphrase?: string;
+}
+
 // Crypto commands
 export interface EncryptOptions {
   mapping_json: string;
@@ -117,6 +125,18 @@ export interface OcrDownloadProgress {
   percentage: number;
   status: string;
 }
+
+export interface PlatformContext {
+  os: "windows" | "macos" | "linux" | "unknown";
+  pathSeparator: string;
+  defaultDocumentsDir: string;
+  appDataDir: string;
+  cacheDir: string;
+  tempDir: string;
+  pinStorageMode: "windows_dpapi" | "macos_keychain" | "fallback_file" | string;
+  ocrStrategy: "embedded_python" | "system_python_venv" | "system_python" | string;
+  ollamaStrategy: "binary_check_plus_background_serve" | "binary_check_plus_app_launch" | "binary_check_plus_cli_serve" | string;
+}
 // FileBay Config types
 export interface FileBayConfig {
   url: string;
@@ -165,4 +185,11 @@ export interface SensitiveTermsStats {
   enabled: number;
   disabled: number;
   categories: number;
+}
+
+// Installer commands
+export interface InstallerProgress {
+  percentage: number;
+  status: string;
+  log: string;
 }

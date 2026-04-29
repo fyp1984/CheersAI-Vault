@@ -12,4 +12,6 @@ pub mod unmask;
 pub mod ocr;
 pub mod filebay_config;
 pub mod ai_model;
+pub mod platform;
 pub mod sensitive_terms;
+pub mod installer;

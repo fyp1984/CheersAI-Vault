@@ -4,6 +4,7 @@ import type {
   MaskResult,
   PreviewOptions,
   PreviewResult,
+  SavePreviewOptions,
   EncryptOptions,
   DecryptOptions,
   SandboxFile,
@@ -12,6 +13,7 @@ import type {
   BatchStatus,
   FileBayConfig,
   FileBayConfigStatus,
+  PlatformContext,
   SensitiveTerm,
   AddSensitiveTermRequest,
   UpdateSensitiveTermRequest,
@@ -26,6 +28,9 @@ export const tauriCommands = {
 
   previewMasking: (options: PreviewOptions) =>
     invoke<PreviewResult>("preview_masking", { options }),
+
+  savePreviewResult: (options: SavePreviewOptions) =>
+    invoke<MaskResult>("save_preview_result", { options }),
 
   // Crypto
   generatePassphrase: () =>
@@ -206,6 +211,9 @@ export const tauriCommands = {
     invoke<void>("navigate_main_window_with_button", { url, returnUrl }),
 
   // OCR
+  getPlatformContext: () =>
+    invoke<PlatformContext>("get_platform_context"),
+
   checkOcrInstalled: () =>
     invoke<boolean>("check_ocr_installed"),
 
@@ -241,6 +249,12 @@ export const tauriCommands = {
   checkOllamaInstalled: () =>
     invoke<boolean>("check_ollama_installed"),
 
+  checkOllamaBinaryInstalled: () =>
+    invoke<boolean>("check_ollama_binary_installed"),
+
+  checkOllamaServiceRunning: () =>
+    invoke<boolean>("check_ollama_service_running"),
+
   startOllamaService: () =>
     invoke<string>("start_ollama_service"),
 
@@ -263,6 +277,7 @@ export const tauriCommands = {
       model_dir: string;
       ollama_installed: boolean;
       model_installed: boolean;
+      service_running?: boolean;
     }>("get_ai_model_info"),
 
   checkAiDetectionAvailable: () =>
@@ -301,4 +316,20 @@ export const tauriCommands = {
 
   importSensitiveTermsCsv: (filePath: string) =>
     invoke<number>("import_sensitive_terms_csv", { filePath }),
+
+  // Installer (using Python scripts)
+  checkPythonAvailable: () =>
+    invoke<boolean>("check_python_available"),
+
+  installOcrWithScript: () =>
+    invoke<string>("install_ocr_with_script"),
+
+  uninstallOcrWithScript: () =>
+    invoke<string>("uninstall_ocr_with_script"),
+
+  installOllamaWithScript: () =>
+    invoke<string>("install_ollama_with_script"),
+
+  uninstallOllamaWithScript: () =>
+    invoke<string>("uninstall_ollama_with_script"),
 };

@@ -84,7 +84,9 @@ export default function FileProcess() {
     return errorStr.includes('ocr') || 
            errorStr.includes('扫描版') || 
            errorStr.includes('python') ||
-           errorStr.includes('easyocr');
+           errorStr.includes('pymupdf') ||
+           errorStr.includes('fitz') ||
+           errorStr.includes('图片型 pdf');
   };
 
   // 轮询批处理状态
@@ -118,15 +120,13 @@ export default function FileProcess() {
           setActiveJob(null);
           setIsProcessing(false); // 完成时重置状态
           
-          // 显示完成通知
+          // 记录完成日志
           const completedCount = status.completed;
           const failedCount = status.failed;
           
           if (failedCount === 0) {
-            alert(`✅ 脱敏完成！\n\n成功处理 ${completedCount} 个文件\n输出目录: ${outputDir}`);
             await addLog("success", "批处理完成", `成功: ${completedCount}, 失败: ${failedCount}`, undefined, "batch_complete");
           } else {
-            alert(`⚠️ 脱敏完成（部分失败）\n\n成功: ${completedCount} 个\n失败: ${failedCount} 个\n输出目录: ${outputDir}`);
             await addLog("warning", "批处理完成（部分失败）", `成功: ${completedCount}, 失败: ${failedCount}`, undefined, "batch_partial");
           }
           
@@ -134,7 +134,6 @@ export default function FileProcess() {
         } else if (status.status === "Failed") {
           setActiveJob(null);
           setIsProcessing(false); // 失败时重置状态
-          alert(`❌ 脱敏失败\n\n${status.error || "未知错误"}`);
           await addLog("error", "批处理失败", status.error || "未知错误", undefined, "batch_failed");
           setTimeout(() => setBatchStatus(null), 3000);
         } else if (status.status === "Cancelled") {
@@ -147,6 +146,7 @@ export default function FileProcess() {
       } catch (error) {
         console.error("Failed to get batch status:", error);
         setActiveJob(null);
+        setIsProcessing(false); // 错误时重置状态
         setBatchStatus(null);
       }
     }, 1000);
@@ -274,81 +274,49 @@ export default function FileProcess() {
     }
   };
 
-  const executeActualMasking = async (manualReplacements: ManualReplacement[] = []) => {
-    // 检查是否选择了规则
-    if (selectedRules.length === 0 && manualReplacements.length === 0) {
-      alert("请至少选择一个脱敏规则或添加手动替换规则");
-      return;
-    }
-
-    await addLog("info", `开始批处理 ${pendingCount} 个文件`, `输出目录: ${outputDir}`, undefined, "batch_start");
-
-    try {
-      const customRulesForBatch = rules
-        .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
-        .map((r) => ({
-          id: r.id,
-          name: r.name,
-          pattern: r.pattern,
-          replacement_template: r.replacement_template,
-          use_counter: r.use_counter,
-        }));
-
-      // 将手动查找替换条目转成精确匹配自定义规则（固定文本、不追加序号）
-      const manualRules = manualReplacements
-        .filter(mr => mr.find.trim())
-        .map((mr, i) => ({
-          id: `manual_replace_${i}`,
-          name: `手动替换: ${mr.find}`,
-          pattern: mr.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), // 转义为字面量
-          replacement_template: mr.replace,
-          use_counter: false,
-        }));
-
-      const allCustomRules = [...customRulesForBatch, ...manualRules];
-      const allRuleIds = [
-        ...selectedRules,
-        ...manualRules.map(r => r.id),
-      ];
-
-      const jobId = await tauriCommands.startBatchJob({
-        file_paths: files.filter(f => f.status === "pending").map(f => f.path),
-        output_dir: outputDir,
-        rule_ids: allRuleIds,
-        passphrase: passphrase || undefined,
-        custom_rules: allCustomRules.length > 0 ? allCustomRules : undefined,
-        use_ai_validation: useAiValidation,
-      });
-
-      setActiveJob(jobId);
-      
-      // 将所有待处理文件状态设为处理中
-      files.forEach(file => {
-        if (file.status === "pending") {
-          updateFile(file.id, { status: "processing" });
-        }
-      });
-    } catch (error) {
-      console.error("Failed to start batch job:", error);
-      await addLog("error", "启动批处理失败", `错误: ${error}`, undefined, "batch_error");
-      
-      // 检查是否是 OCR 错误
-      if (isOcrError(error)) {
-        setShowOcrDownload(true);
-      } else {
-        alert(`启动批处理失败: ${error}`);
-      }
-    }
-  };
-
   const pendingCount = files.filter((f) => f.status === "pending").length;
 
-  const handlePreviewConfirm = async (manualReplacements: ManualReplacement[]) => {
+  const handlePreviewConfirm = async (_manualReplacements: ManualReplacement[]) => {
     setShowPreview(false);
-    setPreviewData([]);
-    // 用户确认预览后，重新开启 isProcessing 状态显示脱敏进度
-    setIsProcessing(true);
-    await executeActualMasking(manualReplacements);
+    setIsProcessing(true); // 显示保存进度
+    
+    try {
+      // 直接保存预览结果，不重新处理
+      const pendingFiles = files.filter(f => f.status === "pending");
+      
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const file = pendingFiles[i];
+        const filePreview = previewData[i];
+        
+        if (!filePreview) continue;
+        
+        try {
+          updateFile(file.id, { status: "processing" });
+          
+          const result = await tauriCommands.savePreviewResult({
+            file_path: file.path,
+            output_dir: outputDir,
+            masked_rows: filePreview.preview.masked_rows,
+            headers: filePreview.preview.headers,
+            passphrase: passphrase || undefined,
+          });
+          
+          updateFile(file.id, { status: "completed" });
+          await addLog("success", "文件脱敏完成", `输出: ${result.output_path}`, file.path, "mask_file");
+        } catch (error) {
+          console.error(`Failed to save ${file.name}:`, error);
+          updateFile(file.id, { status: "failed", error: String(error) });
+          await addLog("error", "文件脱敏失败", String(error), file.path, "mask_file");
+        }
+      }
+      
+      setIsProcessing(false);
+      setPreviewData([]);
+    } catch (error) {
+      console.error("Failed to save preview results:", error);
+      setIsProcessing(false);
+      await addLog("error", "保存预览结果失败", String(error), undefined, "batch_error");
+    }
   };
 
   const handlePreviewCancel = () => {

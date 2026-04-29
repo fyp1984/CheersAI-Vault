@@ -1,6 +1,6 @@
 [package]
 name = "cheersai-vault"
-version = "0.1.10"
+version = "0.1.15"
 description = "CheersAI Vault - Secure Data Masking Desktop Application"
 authors = ["CheersAI Team"]
 edition = "2021"
@@ -14,9 +14,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["unstable"] }
-tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
+tauri-plugin-opener = "2.5.3"
+tauri-plugin-dialog = "2.7.0"
+tauri-plugin-fs = "2.5.0"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

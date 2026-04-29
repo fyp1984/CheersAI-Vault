@@ -48,6 +48,15 @@ pub struct PreviewOptions {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SavePreviewOptions {
+    pub file_path: String,
+    pub output_dir: String,
+    pub masked_rows: Vec<Vec<String>>,
+    pub headers: Option<Vec<String>>,
+    pub passphrase: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PreviewResult {
     pub original_rows: Vec<Vec<String>>,
     pub masked_rows: Vec<Vec<String>>,
@@ -703,3 +712,196 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     }
 }
 
+
+
+#[tauri::command]
+pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResult, String> {
+    println!("=== SAVE_PREVIEW_RESULT START ===");
+    println!("File path: {}", options.file_path);
+    println!("Output dir: {}", options.output_dir);
+    println!("Rows to save: {}", options.masked_rows.len());
+    
+    let format = file_parser::detect_format(&options.file_path);
+    let file_name = std::path::Path::new(&options.file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("masked");
+    
+    let extension = match format {
+        file_parser::FileFormat::Csv => "csv",
+        file_parser::FileFormat::Excel => "xlsx",
+        file_parser::FileFormat::Word => "docx",
+        file_parser::FileFormat::Pdf => "pdf",
+        file_parser::FileFormat::Markdown => "md",
+        file_parser::FileFormat::Text => "txt",
+        _ => "txt",
+    };
+    
+    let output_path = format!("{}/masked_{}.{}", options.output_dir, file_name, extension);
+    println!("Output path: {}", output_path);
+    
+    // 保存文件
+    match format {
+        file_parser::FileFormat::Csv => {
+            // 保存为 CSV
+            let mut wtr = csv::Writer::from_path(&output_path)
+                .map_err(|e| format!("Failed to create CSV writer: {}", e))?;
+            
+            // 写入表头
+            if let Some(headers) = &options.headers {
+                wtr.write_record(headers)
+                    .map_err(|e| format!("Failed to write headers: {}", e))?;
+            }
+            
+            // 写入数据行
+            for row in &options.masked_rows {
+                wtr.write_record(row)
+                    .map_err(|e| format!("Failed to write row: {}", e))?;
+            }
+            
+            wtr.flush()
+                .map_err(|e| format!("Failed to flush CSV: {}", e))?;
+        }
+        file_parser::FileFormat::Excel => {
+            // Excel 文件保存为 CSV 格式（因为没有 Excel 写入库）
+            // 用户可以用 Excel 打开 CSV 文件
+            let csv_output_path = format!("{}/masked_{}.csv", options.output_dir, file_name);
+            println!("Excel file will be saved as CSV: {}", csv_output_path);
+            
+            let mut wtr = csv::Writer::from_path(&csv_output_path)
+                .map_err(|e| format!("Failed to create CSV writer: {}", e))?;
+            
+            // 写入表头
+            if let Some(headers) = &options.headers {
+                wtr.write_record(headers)
+                    .map_err(|e| format!("Failed to write headers: {}", e))?;
+            }
+            
+            // 写入数据行
+            for row in &options.masked_rows {
+                wtr.write_record(row)
+                    .map_err(|e| format!("Failed to write row: {}", e))?;
+            }
+            
+            wtr.flush()
+                .map_err(|e| format!("Failed to flush CSV: {}", e))?;
+            
+            // 更新输出路径为 CSV
+            return Ok(MaskResult {
+                output_path: csv_output_path.clone(),
+                masked_count: options.masked_rows.len(),
+                mapping_path: Some(format!("{}/masked_{}.cmap", options.output_dir, file_name)),
+            });
+        }
+        file_parser::FileFormat::Word => {
+            // 保存为 Word（使用 docx-rs）
+            use docx_rs::*;
+            
+            let mut doc = Docx::new();
+            
+            // 创建表格 - 计算列数
+            let col_count = if let Some(headers) = &options.headers {
+                headers.len()
+            } else if let Some(first_row) = options.masked_rows.first() {
+                first_row.len()
+            } else {
+                1
+            };
+            
+            let mut table = Table::new(vec![TableRow::new(vec![]); 0]);
+            
+            // 添加表头
+            if let Some(headers) = &options.headers {
+                let mut cells = vec![];
+                for header in headers {
+                    cells.push(
+                        TableCell::new().add_paragraph(
+                            Paragraph::new().add_run(Run::new().add_text(header))
+                        )
+                    );
+                }
+                table = table.add_row(TableRow::new(cells));
+            }
+            
+            // 添加数据行
+            for row in &options.masked_rows {
+                let mut cells = vec![];
+                for cell in row {
+                    cells.push(
+                        TableCell::new().add_paragraph(
+                            Paragraph::new().add_run(Run::new().add_text(cell))
+                        )
+                    );
+                }
+                table = table.add_row(TableRow::new(cells));
+            }
+            
+            doc = doc.add_table(table);
+            
+            // 保存文件
+            let file = std::fs::File::create(&output_path)
+                .map_err(|e| format!("Failed to create Word file: {}", e))?;
+            doc.build().pack(file)
+                .map_err(|e| format!("Failed to write Word file: {}", e))?;
+        }
+        file_parser::FileFormat::Text | file_parser::FileFormat::Markdown => {
+            // 保存为纯文本或 Markdown
+            let mut content = String::new();
+            
+            // 写入表头
+            if let Some(headers) = &options.headers {
+                if matches!(format, file_parser::FileFormat::Markdown) {
+                    content.push_str("| ");
+                    content.push_str(&headers.join(" | "));
+                    content.push_str(" |\n");
+                    content.push_str("|");
+                    for _ in headers {
+                        content.push_str(" --- |");
+                    }
+                    content.push('\n');
+                } else {
+                    content.push_str(&headers.join("\t"));
+                    content.push('\n');
+                }
+            }
+            
+            // 写入数据行
+            for row in &options.masked_rows {
+                if matches!(format, file_parser::FileFormat::Markdown) {
+                    content.push_str("| ");
+                    content.push_str(&row.join(" | "));
+                    content.push_str(" |\n");
+                } else {
+                    content.push_str(&row.join("\t"));
+                    content.push('\n');
+                }
+            }
+            
+            std::fs::write(&output_path, content)
+                .map_err(|e| format!("Failed to write text file: {}", e))?;
+        }
+        _ => {
+            return Err(format!("Unsupported format for save_preview_result: {:?}", format));
+        }
+    }
+    
+    // 创建空的映射文件（因为预览结果没有映射信息）
+    let mapping_path = format!("{}/masked_{}.cmap", options.output_dir, file_name);
+    let empty_mapping: Vec<masking_engine::MappingEntry> = Vec::new();
+    
+    if let Some(passphrase) = &options.passphrase {
+        crypto::save_encrypted_mapping(&mapping_path, &empty_mapping, passphrase)
+            .map_err(|e| format!("Failed to save encrypted mapping: {}", e))?;
+    } else {
+        crypto::save_plain_mapping(&mapping_path, &empty_mapping)
+            .map_err(|e| format!("Failed to save plain mapping: {}", e))?;
+    }
+    
+    println!("=== SAVE_PREVIEW_RESULT END ===");
+    
+    Ok(MaskResult {
+        output_path,
+        masked_count: options.masked_rows.len(),
+        mapping_path: Some(mapping_path),
+    })
+}

@@ -28,9 +28,9 @@ const pageMeta: Record<string, { title: string; description: string }> = {
     title: "增强服务",
     description: "安装和管理 OCR 等增强功能",
   },
-  "/sensitive-terms": {
-    title: "敏感词库",
-    description: "管理自定义敏感词",
+  "/rules": {
+    title: "规则配置",
+    description: "管理脱敏规则与策略",
   },
   "/sandbox": {
     title: "沙箱管理",

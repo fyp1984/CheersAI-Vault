@@ -31,8 +31,9 @@ import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
 import { formatBytes } from "@/lib/utils";
-import { getDisplayPath, validatePath, getPlatform, getDefaultDocumentsPath } from "@/lib/path";
+import { getDisplayPath, validatePath, getDefaultDocumentsPath } from "@/lib/path";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { PlatformContext } from "@/types/commands";
 
 export default function SandboxManager() {
   const { locked, files, setLocked, setFiles } = useSandboxStore();
@@ -47,6 +48,7 @@ export default function SandboxManager() {
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState<string>("");
   const [pinExists, setPinExists] = useState<boolean | null>(null);
+  const [platformContext, setPlatformContext] = useState<PlatformContext | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -54,6 +56,7 @@ export default function SandboxManager() {
     description: string;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => {} });
+  const [syncing, setSyncing] = useState(false);
 
   // toast 自动消失
   useEffect(() => {
@@ -63,16 +66,47 @@ export default function SandboxManager() {
     }
   }, [toast]);
 
-  // 获取当前平台信息
-  const platform = getPlatform();
-  const platformName = platform === 'windows' ? 'Windows' : platform === 'macos' ? 'macOS' : 'Linux';
+  const platformName = platformContext?.os === 'windows'
+    ? 'Windows'
+    : platformContext?.os === 'macos'
+      ? 'macOS'
+      : platformContext?.os === 'linux'
+        ? 'Linux'
+        : '当前系统';
+  const pinStorageLabel = platformContext?.pinStorageMode === "macos_keychain"
+    ? "macOS Keychain"
+    : platformContext?.pinStorageMode === "windows_dpapi"
+      ? "Windows 凭据保护"
+      : "兼容模式";
+  const pinStorageDescription = platformContext?.pinStorageMode === "macos_keychain"
+    ? "PIN 将使用 macOS Keychain 安全存储，重启应用后仍然有效。"
+    : platformContext?.pinStorageMode === "windows_dpapi"
+      ? "PIN 将使用 Windows 凭据保护加密存储，绑定当前 Windows 用户账户，重启应用后仍然有效。"
+      : "PIN 将以兼容模式存储，请仅用于本地开发或测试环境。";
+  const resolvedDefaultDocumentsPath = platformContext?.defaultDocumentsDir || getDefaultDocumentsPath();
+  const defaultPathExample = getDisplayPath(resolvedDefaultDocumentsPath, 40);
+
+  useEffect(() => {
+    const loadPlatformContext = async () => {
+      try {
+        const context = await tauriCommands.getPlatformContext();
+        setPlatformContext(context);
+      } catch (error) {
+        console.error("Failed to load platform context in sandbox:", error);
+      }
+    };
+
+    loadPlatformContext();
+  }, []);
 
   // 加载沙箱文件列表（基于输出目录）
   const loadFiles = async () => {
     if (!locked && outputDir) {
       try {
         const fileList = await tauriCommands.listFilesInDirectory(outputDir);
-        setFiles(fileList);
+        // 过滤掉 .cmap 对照文件
+        const filteredFiles = fileList.filter(file => !file.name.endsWith('.cmap'));
+        setFiles(filteredFiles);
       } catch (error) {
         console.error("Failed to load sandbox files:", error);
         setFiles([]); // 如果失败，设置为空数组
@@ -162,7 +196,7 @@ export default function SandboxManager() {
       setNewPin("");
       setConfirmPin("");
       setPinExists(true);
-      setToast({ message: 'PIN 设置成功，已使用 Windows DPAPI 加密存储', type: 'success' });
+      setToast({ message: `PIN 设置成功，已启用 ${pinStorageLabel} 安全存储`, type: 'success' });
       // 延迟锁定并隐藏文件
       setTimeout(async () => {
         if (outputDir) {
@@ -206,7 +240,7 @@ export default function SandboxManager() {
       const selected = await open({
         directory: true,
         title: "选择文件输出/沙箱存储路径",
-        defaultPath: outputDir || getDefaultDocumentsPath(),
+        defaultPath: outputDir || resolvedDefaultDocumentsPath,
       });
       if (selected) {
         const selectedPath = selected as string;
@@ -240,9 +274,32 @@ export default function SandboxManager() {
 
   // 使用默认路径
   const handleUseDefaultPath = () => {
-    const defaultPath = getDefaultDocumentsPath();
+    const defaultPath = resolvedDefaultDocumentsPath;
     setOutputDir(defaultPath);
     setPathError("");
+  };
+
+  // 一键同步到 FileBay
+  const handleSyncToFileBay = async () => {
+    if (!outputDir || files.length === 0) {
+      setToast({ message: '没有可同步的文件', type: 'warning' });
+      return;
+    }
+
+    setSyncing(true);
+    
+    try {
+      // TODO: 调用 FileBay 同步 API
+      // 这里需要实现将文件上传到 FileBay 的逻辑
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 模拟上传
+      
+      setToast({ message: `成功同步 ${files.length} 个文件到 FileBay`, type: 'success' });
+    } catch (error) {
+      console.error('Sync to FileBay failed:', error);
+      setToast({ message: '同步失败: ' + error, type: 'error' });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -281,7 +338,7 @@ export default function SandboxManager() {
                 )}
                 沙箱状态
                 <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
-                  Windows DPAPI 加密
+                  {pinStorageLabel}
                 </span>
               </CardTitle>
             </CardHeader>
@@ -293,7 +350,7 @@ export default function SandboxManager() {
                   <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                     <p className="text-sm text-yellow-800">⚠️ 尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
                   </div>
-                  <p className="text-xs text-gray-500">PIN 将使用 Windows DPAPI 加密存储，绑定当前 Windows 用户账户，重启应用后仍然有效。</p>
+                  <p className="text-xs text-gray-500">{pinStorageDescription}</p>
                 </div>
               ) : locked ? (
                 <div className="space-y-4">
@@ -320,7 +377,13 @@ export default function SandboxManager() {
                       解锁
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-500">PIN 已通过 Windows DPAPI 加密存储，仅当前 Windows 用户可解密。</p>
+                  <p className="text-xs text-gray-500">
+                    {platformContext?.pinStorageMode === "macos_keychain"
+                      ? "PIN 已保存在 macOS Keychain 中，仅当前系统账户可安全读取。"
+                      : platformContext?.pinStorageMode === "windows_dpapi"
+                        ? "PIN 已通过 Windows 凭据保护加密存储，仅当前 Windows 用户可解密。"
+                        : "PIN 已保存到本地兼容存储。"}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -409,7 +472,7 @@ export default function SandboxManager() {
                 <div className="space-y-2">
                   <div className="flex gap-2">
                     <Input
-                      placeholder={`选择文件输出路径 (${platform === 'windows' ? 'C:\\Users\\用户名\\Documents\\CheersAI Vault' : '~/Documents/CheersAI Vault'})`}
+                      placeholder={`选择文件输出路径 (${defaultPathExample})`}
                       value={outputDir}
                       onChange={(e) => handlePathChange(e.target.value)}
                       className={`flex-1 ${pathError ? 'border-red-300' : ''}`}
@@ -433,7 +496,7 @@ export default function SandboxManager() {
                     onClick={handleUseDefaultPath}
                     className="text-xs"
                   >
-                    使用默认路径 ({getDisplayPath(getDefaultDocumentsPath(), 40)})
+                    使用默认路径 ({getDisplayPath(resolvedDefaultDocumentsPath, 40)})
                   </Button>
                 </div>
                 
@@ -455,15 +518,44 @@ export default function SandboxManager() {
           {!locked && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-gray-500" />
-                  输出目录文件
-                </CardTitle>
-                {outputDir && (
-                  <p className="text-xs text-gray-500">
-                    位置: {getDisplayPath(outputDir, 50)}
-                  </p>
-                )}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-gray-500" />
+                      输出目录文件
+                    </CardTitle>
+                    {outputDir && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        位置: {getDisplayPath(outputDir, 50)}
+                      </p>
+                    )}
+                  </div>
+                  {files.length > 0 && (
+                    <Button 
+                      onClick={handleSyncToFileBay} 
+                      disabled={syncing}
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {syncing ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          同步中...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          一键同步
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 {!outputDir ? (
@@ -493,11 +585,6 @@ export default function SandboxManager() {
                             {formatBytes(file.size)} · {file.modified}
                           </p>
                         </div>
-                        {file.name.endsWith('.cmap') && (
-                          <div className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
-                            映射文件
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>

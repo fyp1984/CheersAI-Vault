@@ -133,110 +133,25 @@ impl NERDetector {
     
     /// 主检测函数：使用四种方法检测实体，姓名取交集，其他取并集
     pub fn detect_entities(&self, text: &str) -> Vec<EntityMatch> {
-        // 跳过太短的文本，避免不必要的 AI 调用
-        let trimmed = text.trim();
-        if trimmed.is_empty() || trimmed.len() < 5 {
-            println!("Skipping detection for short text ({} chars)", trimmed.len());
-            return Vec::new();
-        }
-        
-        // 跳过纯数字、金额、日期等格式化数字
-        let is_numeric_like = trimmed.chars().all(|c| {
-            c.is_numeric() || c.is_whitespace() || 
-            c == '.' || c == ',' || c == '-' || c == '/' || 
-            c == ':' || c == '%' || c == '$' || c == '¥' ||
-            c == '(' || c == ')'
-        });
-        
-        if is_numeric_like {
-            println!("Skipping detection for numeric/formatted text: {}", trimmed);
-            return Vec::new();
-        }
-        
-        // 跳过看起来像金额的文本（主要是数字和少量符号）
-        let digit_count = trimmed.chars().filter(|c| c.is_numeric()).count();
-        let total_count = trimmed.chars().filter(|c| !c.is_whitespace()).count();
-        if total_count > 0 && (digit_count as f32 / total_count as f32) > 0.7 {
-            println!("Skipping detection for number-heavy text ({}% digits): {}", 
-                (digit_count as f32 / total_count as f32 * 100.0) as i32, trimmed);
-            return Vec::new();
-        }
-        
-        // 跳过表头和标签（包含大量符号或格式字符）
-        let symbol_chars = trimmed.chars().filter(|c| {
-            *c == '├' || *c == '└' || *c == '─' || *c == '│' || 
-            *c == '┌' || *c == '┐' || *c == '┘' || *c == '┴' ||
-            *c == '：' || *c == '、' || *c == '《' || *c == '》' ||
-            *c == '【' || *c == '】' || *c == '（' || *c == '）'
-        }).count();
-        
-        if symbol_chars > 2 {
-            println!("Skipping detection for label/header text (too many symbols): {}", trimmed);
-            return Vec::new();
-        }
-        
-        // 跳过看起来像标题或标签的短文本（少于15个字符且包含"阶段"、"步骤"等关键词）
-        if trimmed.len() < 15 {
-            let label_keywords = ["阶段", "步骤", "照片", "图片", "附件", "说明", "备注", "金额", "数量", "单价", "合计"];
-            if label_keywords.iter().any(|kw| trimmed.contains(kw)) {
-                println!("Skipping detection for label text: {}", trimmed);
-                return Vec::new();
-            }
-        }
-        
         if self.use_ai_detection {
-            // AI 模式：使用四种方法并行处理
-            println!("=== Starting multi-method entity detection (AI mode - parallel) ===");
+            // AI 模式：使用四种方法
+            println!("=== Starting multi-method entity detection (AI mode) ===");
             
-            use std::sync::Arc;
-            use std::thread;
+            // 1. 正则表达式检测
+            let regex_entities = self.detect_with_regex(text);
+            println!("Regex detected {} entities", regex_entities.len());
             
-            // 将 text 包装为 Arc 以便在多线程间共享
-            let text_arc = Arc::new(text.to_string());
-            let self_arc = Arc::new(self.clone());
+            // 2. NER 智能检测
+            let ner_entities = self.detect_with_ner(text);
+            println!("NER detected {} entities", ner_entities.len());
             
-            // 创建四个线程，每个处理一种检测方法
-            let text1 = Arc::clone(&text_arc);
-            let self1 = Arc::clone(&self_arc);
-            let handle_regex = thread::spawn(move || {
-                let start = std::time::Instant::now();
-                let result = self1.detect_with_regex(&text1);
-                println!("Regex detected {} entities (took {:?})", result.len(), start.elapsed());
-                result
-            });
+            // 3. AI 模型检测
+            let ai_entities = self.detect_with_ai(text);
+            println!("AI detected {} entities", ai_entities.len());
             
-            let text2 = Arc::clone(&text_arc);
-            let self2 = Arc::clone(&self_arc);
-            let handle_ner = thread::spawn(move || {
-                let start = std::time::Instant::now();
-                let result = self2.detect_with_ner(&text2);
-                println!("NER detected {} entities (took {:?})", result.len(), start.elapsed());
-                result
-            });
-            
-            let text3 = Arc::clone(&text_arc);
-            let self3 = Arc::clone(&self_arc);
-            let handle_ai = thread::spawn(move || {
-                let start = std::time::Instant::now();
-                let result = self3.detect_with_ai(&text3);
-                println!("AI detected {} entities (took {:?})", result.len(), start.elapsed());
-                result
-            });
-            
-            let text4 = Arc::clone(&text_arc);
-            let self4 = Arc::clone(&self_arc);
-            let handle_search = thread::spawn(move || {
-                let start = std::time::Instant::now();
-                let result = self4.detect_with_search(&text4);
-                println!("Search detected {} entities (took {:?})", result.len(), start.elapsed());
-                result
-            });
-            
-            // 等待所有线程完成并收集结果
-            let regex_entities = handle_regex.join().unwrap_or_else(|_| Vec::new());
-            let ner_entities = handle_ner.join().unwrap_or_else(|_| Vec::new());
-            let ai_entities = handle_ai.join().unwrap_or_else(|_| Vec::new());
-            let search_entities = handle_search.join().unwrap_or_else(|_| Vec::new());
+            // 4. 字符串搜索匹配
+            let search_entities = self.detect_with_search(text);
+            println!("Search detected {} entities", search_entities.len());
             
             // 合并结果：姓名取交集，其他取并集
             let merged = self.merge_detections(
@@ -257,124 +172,6 @@ impl NERDetector {
             
             regex_entities
         }
-    }
-    
-    /// 批量检测：一次性处理多个文本，显著提升性能
-    /// 
-    /// # 参数
-    /// - texts: 要检测的文本列表
-    /// 
-    /// # 返回
-    /// - Vec<Vec<EntityMatch>>: 每个文本对应的实体列表
-    pub fn detect_entities_batch(&self, texts: &[String]) -> Vec<Vec<EntityMatch>> {
-        if texts.is_empty() {
-            return Vec::new();
-        }
-        
-        println!("=== Batch entity detection for {} texts ===", texts.len());
-        
-        // 过滤掉不需要检测的文本
-        let mut valid_indices = Vec::new();
-        let mut valid_texts = Vec::new();
-        
-        for (idx, text) in texts.iter().enumerate() {
-            let trimmed = text.trim();
-            
-            // 应用相同的过滤逻辑
-            if trimmed.is_empty() || trimmed.len() < 5 {
-                continue;
-            }
-            
-            let is_numeric_like = trimmed.chars().all(|c| {
-                c.is_numeric() || c.is_whitespace() || 
-                c == '.' || c == ',' || c == '-' || c == '/' || 
-                c == ':' || c == '%' || c == '$' || c == '¥' ||
-                c == '(' || c == ')'
-            });
-            
-            if is_numeric_like {
-                continue;
-            }
-            
-            let digit_count = trimmed.chars().filter(|c| c.is_numeric()).count();
-            let total_count = trimmed.chars().filter(|c| !c.is_whitespace()).count();
-            if total_count > 0 && (digit_count as f32 / total_count as f32) > 0.7 {
-                continue;
-            }
-            
-            let symbol_chars = trimmed.chars().filter(|c| {
-                *c == '├' || *c == '└' || *c == '─' || *c == '│' || 
-                *c == '┌' || *c == '┐' || *c == '┘' || *c == '┴' ||
-                *c == '：' || *c == '、' || *c == '《' || *c == '》' ||
-                *c == '【' || *c == '】' || *c == '（' || *c == '）'
-            }).count();
-            
-            if symbol_chars > 2 {
-                continue;
-            }
-            
-            if trimmed.len() < 15 {
-                let label_keywords = ["阶段", "步骤", "照片", "图片", "附件", "说明", "备注", "金额", "数量", "单价", "合计"];
-                if label_keywords.iter().any(|kw| trimmed.contains(kw)) {
-                    continue;
-                }
-            }
-            
-            valid_indices.push(idx);
-            valid_texts.push(text.clone());
-        }
-        
-        println!("Filtered {} valid texts from {} total", valid_texts.len(), texts.len());
-        
-        if valid_texts.is_empty() {
-            // 所有文本都被过滤了，返回空结果
-            return vec![Vec::new(); texts.len()];
-        }
-        
-        // 合并所有有效文本，使用特殊分隔符
-        const SEPARATOR: &str = "\n###TEXT_SEPARATOR###\n";
-        let combined_text = valid_texts.join(SEPARATOR);
-        
-        println!("Combined text length: {} chars", combined_text.len());
-        
-        // 一次性检测所有实体
-        let all_entities = if self.use_ai_detection {
-            // 使用完整的多方法检测（包括AI）
-            self.detect_entities(&combined_text)
-        } else {
-            // 只使用正则表达式
-            self.detect_with_regex(&combined_text)
-        };
-        
-        println!("Detected {} entities in combined text", all_entities.len());
-        
-        // 将实体映射回各个文本
-        let mut results = vec![Vec::new(); texts.len()];
-        let mut current_pos = 0;
-        
-        for (i, (original_idx, text)) in valid_indices.iter().zip(valid_texts.iter()).enumerate() {
-            let text_start = current_pos;
-            let text_end = text_start + text.len();
-            
-            // 找到属于当前文本的实体
-            for entity in &all_entities {
-                if entity.start >= text_start && entity.end <= text_end {
-                    // 调整实体位置为相对于原文本的位置
-                    let mut text_entity = entity.clone();
-                    text_entity.start -= text_start;
-                    text_entity.end -= text_start;
-                    
-                    results[*original_idx].push(text_entity);
-                }
-            }
-            
-            // 更新位置（文本长度 + 分隔符长度）
-            current_pos = text_end + SEPARATOR.len();
-        }
-        
-        println!("Mapped entities back to {} texts", texts.len());
-        
-        results
     }
     
     /// 方法1：正则表达式检测
@@ -692,70 +489,7 @@ impl NERDetector {
     
     /// 查找 Ollama 可执行文件
     fn find_ollama_executable() -> Result<String, String> {
-        #[cfg(target_os = "windows")]
-        {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            
-            // 先检查常见路径（最快，不弹窗）
-            let possible_paths = vec![
-                format!("{}\\AppData\\Local\\Programs\\Ollama\\ollama.exe", std::env::var("USERPROFILE").unwrap_or_default()),
-                "C:\\Program Files\\Ollama\\ollama.exe".to_string(),
-                "C:\\Ollama\\ollama.exe".to_string(),
-            ];
-            
-            for path in possible_paths {
-                if std::path::Path::new(&path).exists() {
-                    return Ok(path);
-                }
-            }
-            
-            // 尝试使用 where 命令查找（隐藏窗口）
-            use std::os::windows::process::CommandExt;
-            if let Ok(output) = Command::new("where")
-                .creation_flags(CREATE_NO_WINDOW)
-                .arg("ollama")
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout);
-                    let first_path = path_str.lines().next().unwrap_or("").trim();
-                    if !first_path.is_empty() {
-                        return Ok(first_path.to_string());
-                    }
-                }
-            }
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        {
-            // Unix-like 系统
-            if let Ok(output) = Command::new("which")
-                .arg("ollama")
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !path_str.is_empty() {
-                        return Ok(path_str);
-                    }
-                }
-            }
-            
-            // 检查常见路径
-            let possible_paths = vec![
-                "/usr/local/bin/ollama",
-                "/usr/bin/ollama",
-                "/opt/homebrew/bin/ollama",
-            ];
-            
-            for path in possible_paths {
-                if std::path::Path::new(path).exists() {
-                    return Ok(path.to_string());
-                }
-            }
-        }
-        
-        Err("Ollama executable not found".to_string())
+        crate::commands::ai_model::resolve_system_ollama_path_string()
     }
     
     // 智能姓名检测：基于常见姓氏和上下文关键词
