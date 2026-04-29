@@ -42,23 +42,36 @@ fn get_filebay_config_path() -> Result<PathBuf, String> {
     Ok(sandbox.get_file_path("filebay-config.json"))
 }
 
-/// 读取 FileBay 配置文件（优先从 downloads 文件夹读取）
+/// 读取 FileBay 配置文件（优先从 downloads 文件夹读取，其次从浏览器 Downloads 文件夹）
 #[tauri::command]
 pub async fn read_filebay_config(app: AppHandle) -> Result<FileBayConfigStatus, String> {
-    // 优先从 downloads 文件夹读取
+    // 优先从 app downloads 文件夹读取
     let config_path = get_filebay_config_path_from_downloads(&app)?;
     
-    if !config_path.exists() {
-        return Ok(FileBayConfigStatus {
-            exists: false,
-            config: None,
-            file_path: None,
-            last_modified: None,
-        });
-    }
+    // 如果 app downloads 文件夹中不存在，尝试从浏览器 Downloads 文件夹读取
+    let final_path = if !config_path.exists() {
+        // 尝试从浏览器 Downloads 文件夹读取
+        let user_downloads = dirs_next::download_dir()
+            .ok_or_else(|| "无法获取用户 Downloads 文件夹".to_string())?;
+        let browser_config_path = user_downloads.join("filebay-config.json");
+        
+        if browser_config_path.exists() {
+            println!("Found config in browser Downloads folder: {:?}", browser_config_path);
+            browser_config_path
+        } else {
+            return Ok(FileBayConfigStatus {
+                exists: false,
+                config: None,
+                file_path: None,
+                last_modified: None,
+            });
+        }
+    } else {
+        config_path
+    };
     
     // 读取文件内容
-    let content = std::fs::read_to_string(&config_path)
+    let content = std::fs::read_to_string(&final_path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
     
     // 解析 JSON
@@ -66,7 +79,7 @@ pub async fn read_filebay_config(app: AppHandle) -> Result<FileBayConfigStatus, 
         .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
     
     // 获取文件修改时间
-    let metadata = std::fs::metadata(&config_path)
+    let metadata = std::fs::metadata(&final_path)
         .map_err(|e| format!("Failed to get file metadata: {}", e))?;
     
     let last_modified = metadata.modified()
@@ -83,7 +96,7 @@ pub async fn read_filebay_config(app: AppHandle) -> Result<FileBayConfigStatus, 
     Ok(FileBayConfigStatus {
         exists: true,
         config: Some(config),
-        file_path: Some(config_path.to_string_lossy().to_string()),
+        file_path: Some(final_path.to_string_lossy().to_string()),
         last_modified: Some(last_modified),
     })
 }
@@ -113,18 +126,24 @@ pub async fn delete_filebay_config(app: AppHandle) -> Result<String, String> {
 /// 验证 FileBay 配置文件格式
 #[tauri::command]
 pub async fn validate_filebay_config_file(file_path: String) -> Result<FileBayConfig, String> {
+    println!("=== Validating FileBay config file ===");
+    println!("File path: {}", file_path);
+    
     let path = PathBuf::from(&file_path);
     
     if !path.exists() {
+        println!("Error: File does not exist");
         return Err("文件不存在".to_string());
     }
     
     // 检查文件扩展名
     if let Some(extension) = path.extension() {
         if extension != "json" {
+            println!("Error: Invalid extension: {:?}", extension);
             return Err("文件必须是 JSON 格式 (.json)".to_string());
         }
     } else {
+        println!("Error: No extension");
         return Err("文件必须有 .json 扩展名".to_string());
     }
     
@@ -132,21 +151,35 @@ pub async fn validate_filebay_config_file(file_path: String) -> Result<FileBayCo
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("读取文件失败: {}", e))?;
     
+    println!("File content length: {} bytes", content.len());
+    println!("File content:\n{}", content);
+    
     let config: FileBayConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("JSON 格式错误: {}", e))?;
+        .map_err(|e| {
+            println!("JSON parse error: {}", e);
+            format!("JSON 格式错误: {}", e)
+        })?;
     
     // 验证必需字段
     if config.url.is_empty() {
+        println!("Error: URL is empty");
         return Err("配置文件缺少 URL 字段".to_string());
     }
     
     if config.username.is_empty() {
+        println!("Error: Username is empty");
         return Err("配置文件缺少用户名字段".to_string());
     }
     
     if config.repo_name.is_empty() {
+        println!("Error: Repo name is empty");
         return Err("配置文件缺少仓库名字段".to_string());
     }
+    
+    println!("✓ Validation successful");
+    println!("  URL: {}", config.url);
+    println!("  Username: {}", config.username);
+    println!("  Repo: {}", config.repo_name);
     
     Ok(config)
 }

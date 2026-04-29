@@ -36,6 +36,53 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
   });
   const [error, setError] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
+
+  // 当对话框打开时，检查 OCR 是否已安装
+  useEffect(() => {
+    if (open) {
+      const checkInstallation = async () => {
+        setIsChecking(true);
+        try {
+          const installed = await invoke<boolean>('check_ocr_installed');
+          console.log('OCR installation check:', installed);
+          if (installed) {
+            // 如果已安装，直接关闭对话框，不显示任何内容
+            console.log('OCR already installed, closing dialog');
+            onOpenChange(false);
+            return;
+          } else {
+            // 未安装，显示下载界面
+            setIsComplete(false);
+            setProgress({
+              downloaded: 0,
+              total: 0,
+              percentage: 0,
+              status: '准备下载...',
+            });
+          }
+        } catch (err) {
+          console.error('Failed to check OCR installation:', err);
+        } finally {
+          setIsChecking(false);
+        }
+      };
+      
+      checkInstallation();
+    } else {
+      // 对话框关闭时重置状态
+      setIsChecking(true);
+      setIsDownloading(false);
+      setError(null);
+      setIsComplete(false);
+      setProgress({
+        downloaded: 0,
+        total: 0,
+        percentage: 0,
+        status: '准备下载...',
+      });
+    }
+  }, [open, onOpenChange]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -118,6 +165,13 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {isChecking && (
+            <div className="flex items-center justify-center gap-2 py-4">
+              <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-muted-foreground">检查 OCR 状态...</span>
+            </div>
+          )}
+
           {!isDownloading && !isComplete && !error && (
             <div className="space-y-3">
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -174,7 +228,16 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
         </div>
 
         <DialogFooter>
-          {!isDownloading && !isComplete && (
+          {isChecking && (
+            <Button disabled>
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                检查中...
+              </div>
+            </Button>
+          )}
+
+          {!isChecking && !isDownloading && !isComplete && (
             <>
               <Button variant="outline" onClick={handleClose}>
                 取消

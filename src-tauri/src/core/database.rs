@@ -37,6 +37,17 @@ pub struct ProcessingHistory {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SensitiveTerm {
+    pub id: String,
+    pub term: String,
+    pub category: String,
+    pub description: Option<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct Database {
     pub(crate) pool: SqlitePool,
@@ -159,6 +170,32 @@ impl Database {
             .await?;
             
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_managed_files_created_at ON managed_files(created_at)")
+            .execute(&self.pool)
+            .await?;
+        
+        // 敏感信息词库表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sensitive_terms (
+                id TEXT PRIMARY KEY,
+                term TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                enabled BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        
+        // 创建敏感词索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sensitive_terms_category ON sensitive_terms(category)")
+            .execute(&self.pool)
+            .await?;
+            
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sensitive_terms_enabled ON sensitive_terms(enabled)")
             .execute(&self.pool)
             .await?;
         
@@ -443,6 +480,207 @@ impl Database {
             "averageProcessingTimeMs": if successful_files > 0 { total_time / successful_files } else { 0 },
             "recentFiles7days": recent_files,
             "successRate": if total_files > 0 { successful_files as f64 / total_files as f64 * 100.0 } else { 0.0 }
+        }))
+    }
+    
+    // === 敏感词库操作 ===
+    
+    /// 添加敏感词
+    pub async fn add_sensitive_term(&self, term: &SensitiveTerm) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO sensitive_terms (id, term, category, description, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&term.id)
+        .bind(&term.term)
+        .bind(&term.category)
+        .bind(&term.description)
+        .bind(term.enabled)
+        .bind(&term.created_at)
+        .bind(&term.updated_at)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// 批量添加敏感词
+    pub async fn add_sensitive_terms_batch(&self, terms: &[SensitiveTerm]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        
+        for term in terms {
+            sqlx::query(
+                r#"
+                INSERT INTO sensitive_terms (id, term, category, description, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&term.id)
+            .bind(&term.term)
+            .bind(&term.category)
+            .bind(&term.description)
+            .bind(term.enabled)
+            .bind(&term.created_at)
+            .bind(&term.updated_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        
+        tx.commit().await?;
+        Ok(())
+    }
+    
+    /// 更新敏感词
+    pub async fn update_sensitive_term(&self, id: &str, term: &str, category: &str, description: Option<&str>, enabled: bool) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sensitive_terms 
+            SET term = ?, category = ?, description = ?, enabled = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(term)
+        .bind(category)
+        .bind(description)
+        .bind(enabled)
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// 删除敏感词
+    pub async fn delete_sensitive_term(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM sensitive_terms WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+            
+        Ok(())
+    }
+    
+    /// 批量删除敏感词
+    pub async fn delete_sensitive_terms_batch(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        
+        let mut tx = self.pool.begin().await?;
+        
+        for id in ids {
+            sqlx::query("DELETE FROM sensitive_terms WHERE id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        
+        tx.commit().await?;
+        Ok(())
+    }
+    
+    /// 获取所有敏感词
+    pub async fn get_sensitive_terms(&self, category_filter: Option<&str>, enabled_only: bool) -> Result<Vec<SensitiveTerm>> {
+        let query = match (category_filter, enabled_only) {
+            (Some(category), true) => {
+                sqlx::query_as::<_, SensitiveTerm>(
+                    r#"
+                    SELECT id, term, category, description, enabled, created_at, updated_at
+                    FROM sensitive_terms 
+                    WHERE category = ? AND enabled = 1
+                    ORDER BY category, term
+                    "#,
+                )
+                .bind(category)
+            },
+            (Some(category), false) => {
+                sqlx::query_as::<_, SensitiveTerm>(
+                    r#"
+                    SELECT id, term, category, description, enabled, created_at, updated_at
+                    FROM sensitive_terms 
+                    WHERE category = ?
+                    ORDER BY category, term
+                    "#,
+                )
+                .bind(category)
+            },
+            (None, true) => {
+                sqlx::query_as::<_, SensitiveTerm>(
+                    r#"
+                    SELECT id, term, category, description, enabled, created_at, updated_at
+                    FROM sensitive_terms 
+                    WHERE enabled = 1
+                    ORDER BY category, term
+                    "#,
+                )
+            },
+            (None, false) => {
+                sqlx::query_as::<_, SensitiveTerm>(
+                    r#"
+                    SELECT id, term, category, description, enabled, created_at, updated_at
+                    FROM sensitive_terms 
+                    ORDER BY category, term
+                    "#,
+                )
+            },
+        };
+        
+        let terms = query.fetch_all(&self.pool).await?;
+        Ok(terms)
+    }
+    
+    /// 获取敏感词分类列表
+    pub async fn get_sensitive_term_categories(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT DISTINCT category FROM sensitive_terms ORDER BY category")
+            .fetch_all(&self.pool)
+            .await?;
+            
+        let categories: Vec<String> = rows.iter().map(|row| row.get("category")).collect();
+        Ok(categories)
+    }
+    
+    /// 搜索敏感词
+    pub async fn search_sensitive_terms(&self, keyword: &str) -> Result<Vec<SensitiveTerm>> {
+        let search_pattern = format!("%{}%", keyword);
+        
+        let terms = sqlx::query_as::<_, SensitiveTerm>(
+            r#"
+            SELECT id, term, category, description, enabled, created_at, updated_at
+            FROM sensitive_terms 
+            WHERE term LIKE ? OR description LIKE ?
+            ORDER BY category, term
+            "#,
+        )
+        .bind(&search_pattern)
+        .bind(&search_pattern)
+        .fetch_all(&self.pool)
+        .await?;
+        
+        Ok(terms)
+    }
+    
+    /// 获取敏感词统计
+    pub async fn get_sensitive_terms_stats(&self) -> Result<serde_json::Value> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms")
+            .fetch_one(&self.pool)
+            .await?;
+            
+        let enabled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms WHERE enabled = 1")
+            .fetch_one(&self.pool)
+            .await?;
+            
+        let categories: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT category) FROM sensitive_terms")
+            .fetch_one(&self.pool)
+            .await?;
+        
+        Ok(serde_json::json!({
+            "total": total,
+            "enabled": enabled,
+            "disabled": total - enabled,
+            "categories": categories
         }))
     }
 }

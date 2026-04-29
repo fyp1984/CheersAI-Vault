@@ -143,7 +143,7 @@ export function GiteaSettings() {
       if (!configStatus.exists || !configStatus.config) {
         setMessage({ 
           type: 'error', 
-          text: '未检测到配置文件。请先从 Desktop 在线工作区下载配置文件到 downloads 文件夹' 
+          text: '未检测到配置文件。请先从 Desktop 在线工作区下载配置文件到浏览器的 Downloads 文件夹，然后点击此按钮自动读取' 
         });
         return;
       }
@@ -171,6 +171,52 @@ export function GiteaSettings() {
       });
     } finally {
       setAutoLoading(false);
+    }
+  };
+
+  // 导入配置文件
+  const handleImportConfig = async () => {
+    try {
+      setMessage(null);
+      
+      // 使用 Tauri 文件选择器
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: 'JSON',
+          extensions: ['json']
+        }],
+        title: '选择 FileBay 配置文件',
+      });
+      
+      if (!selected) {
+        return; // 用户取消选择
+      }
+      
+      const filePath = selected as string;
+      console.log('Selected file path:', filePath);
+      
+      // 导入配置文件
+      const result = await tauriCommands.importFilebayConfig(filePath);
+      
+      setMessage({ 
+        type: 'success', 
+        text: result 
+      });
+      
+      // 导入成功后自动读取配置
+      setTimeout(() => {
+        handleAutoLoadConfig();
+      }, 500);
+      
+    } catch (error) {
+      console.error('Failed to import config:', error);
+      console.error('Error details:', JSON.stringify(error));
+      setMessage({ 
+        type: 'error', 
+        text: `导入失败: ${error}` 
+      });
     }
   };
 
@@ -378,9 +424,19 @@ export function GiteaSettings() {
           className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          <span>{autoLoading ? '读取中...' : '一键读取配置'}</span>
+          <span>{autoLoading ? '读取中...' : '读取已下载配置'}</span>
+        </button>
+
+        <button
+          onClick={handleImportConfig}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <span>手动导入配置</span>
         </button>
         
         <button
@@ -442,26 +498,31 @@ export function GiteaSettings() {
         <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
           <h3 className="font-medium text-green-900 mb-2">✅ 快速配置步骤</h3>
           <ol className="text-sm text-green-800 space-y-1 list-decimal list-inside">
-            <li><strong>方式一（推荐）</strong>：切换到 Desktop 在线工作区，下载配置文件后，点击"一键读取配置"按钮自动填充</li>
-            <li><strong>方式二</strong>：手动配置 - 登录 FileBay 服务器，进入 设置 → 应用 → 管理访问令牌</li>
-            <li>点击"生成新令牌"，选择 repo 权限</li>
-            <li>复制生成的 Token 并填写到上方表单</li>
-            <li>填写完整信息后点击"保存配置"</li>
-            <li>点击"创建仓库"按钮（如果仓库不存在）</li>
+            <li><strong>方式一（推荐 - 最简单）</strong>：
+              <ul className="ml-6 mt-1 space-y-1 list-disc">
+                <li>切换到 Desktop 在线工作区，在 FileBay 设置页面点击"下载配置文件"</li>
+                <li>文件会下载到浏览器的 Downloads 文件夹</li>
+                <li>返回本页面，直接点击"读取已下载配置"按钮，系统会自动从 Downloads 文件夹读取</li>
+                <li>配置信息自动填充后，点击"保存配置"即可</li>
+              </ul>
+            </li>
+            <li><strong>方式二（手动导入）</strong>：
+              <ul className="ml-6 mt-1 space-y-1 list-disc">
+                <li>如果自动读取失败，可以点击"导入配置文件"按钮</li>
+                <li>手动选择 Downloads 文件夹中的 filebay-config.json 文件</li>
+                <li>导入成功后会自动填充配置信息</li>
+              </ul>
+            </li>
+            <li><strong>方式三（完全手动）</strong>：
+              <ul className="ml-6 mt-1 space-y-1 list-disc">
+                <li>登录 FileBay 服务器，进入 设置 → 应用 → 管理访问令牌</li>
+                <li>点击"生成新令牌"，选择 repo 权限</li>
+                <li>复制生成的 Token 并手动填写到上方表单</li>
+                <li>填写完整信息后点击"保存配置"</li>
+                <li>点击"创建仓库"按钮（如果仓库不存在）</li>
+              </ul>
+            </li>
           </ol>
-        </div>
-
-        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-          <h3 className="font-medium text-gray-900 mb-2">📝 配置示例</h3>
-          <div className="text-sm text-gray-700 space-y-2 font-mono">
-            <div><strong>URL:</strong> http://localhost:8080 或 http://localhost:3000</div>
-            <div><strong>Token:</strong> 从 FileBay 设置中生成的令牌</div>
-            <div><strong>用户名:</strong> 你的 FileBay 用户名</div>
-            <div><strong>仓库:</strong> masked-files</div>
-          </div>
-          <div className="mt-3 text-xs text-gray-600">
-            💡 提示：URL 端口取决于你的 FileBay 配置，常见端口有 3000、3001、8080
-          </div>
         </div>
       </div>
     </div>

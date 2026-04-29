@@ -269,6 +269,86 @@ pub fn mask_value_with_ner(
     result
 }
 
+/// 应用已检测到的实体进行脱敏（用于批量处理）
+pub fn apply_entities_to_text(
+    value: &str,
+    entities: &[crate::core::ner::EntityMatch],
+    mapping: &mut HashMap<String, MappingEntry>,
+    counter: &mut usize,
+) -> String {
+    if entities.is_empty() {
+        return value.to_string();
+    }
+    
+    let mut result = value.to_string();
+    
+    // 按位置倒序排列实体，从后往前替换，避免位置偏移问题
+    let mut sorted_entities = entities.to_vec();
+    sorted_entities.sort_by(|a, b| b.start.cmp(&a.start));
+    
+    for entity in sorted_entities {
+        let original = entity.text.clone();
+        
+        // 检查是否已经有映射
+        if let Some(entry) = mapping.values().find(|e| e.original == original) {
+            result = result.replace(&original, &entry.masked);
+            continue;
+        }
+        
+        // 根据实体类型生成脱敏值
+        let (masked, rule_id) = match entity.entity_type.as_str() {
+            "身份证号" => {
+                *counter += 1;
+                (format!("***IDCARD{}***", counter), "id_card_ner".to_string())
+            },
+            "手机号" => {
+                *counter += 1;
+                (format!("***PHONE{}***", counter), "phone_ner".to_string())
+            },
+            "邮箱" => {
+                *counter += 1;
+                (format!("***EMAIL{}***", counter), "email_ner".to_string())
+            },
+            "银行卡号" => {
+                *counter += 1;
+                (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string())
+            },
+            "IP地址" => {
+                *counter += 1;
+                (format!("***IP{}***", counter), "ipv4_ner".to_string())
+            },
+            "护照号" => {
+                *counter += 1;
+                (format!("***PASSPORT{}***", counter), "passport_ner".to_string())
+            },
+            "姓名" => {
+                *counter += 1;
+                (format!("***NAME{}***", counter), "name_ner".to_string())
+            },
+            _ => {
+                // 未知类型，使用通用脱敏
+                *counter += 1;
+                (format!("***SENSITIVE{}***", counter), "unknown_ner".to_string())
+            }
+        };
+        
+        // 添加到映射
+        mapping.insert(
+            original.clone(),
+            MappingEntry {
+                original: original.clone(),
+                masked: masked.clone(),
+                rule_id,
+            },
+        );
+        
+        // 替换文本
+        result = result.replace(&original, &masked);
+    }
+    
+    result
+}
+
 pub fn mask_value(
     value: &str,
     rules: &[MaskingRule],

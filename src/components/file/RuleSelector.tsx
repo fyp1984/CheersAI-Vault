@@ -27,7 +27,10 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
     try {
       const saved = localStorage.getItem("selected-rules");
       const savedIds: string[] = saved ? JSON.parse(saved) : [];
-      const valid = savedIds.filter((id) => rules.some((r) => r.id === id));
+      // 过滤掉不存在的规则ID，但保留 use_sensitive_terms
+      const valid = savedIds.filter((id) => 
+        id === "use_sensitive_terms" || rules.some((r) => r.id === id)
+      );
       if (valid.length > 0) { 
         console.log("Restoring saved rules:", valid);
         onRulesChange(valid); 
@@ -35,10 +38,11 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
       }
     } catch { /* ignore */ }
     
-    // 默认选择所有启用的规则
+    // 默认选择所有启用的规则 + 敏感词库
     const defaultRules = rules.filter((r) => r.enabled).map((r) => r.id);
-    console.log("Using default enabled rules:", defaultRules);
-    onRulesChange(defaultRules);
+    const defaultWithSensitiveTerms = [...defaultRules, "use_sensitive_terms"];
+    console.log("Using default enabled rules:", defaultWithSensitiveTerms);
+    onRulesChange(defaultWithSensitiveTerms);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rules]);
 
@@ -72,17 +76,33 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
             />
           </div>
         ))}
+        
+        {/* 敏感词库 - 始终启用，不显示开关 */}
+        <div className="border-t pt-2 mt-2">
+          <div className="flex items-center justify-between mb-1 bg-blue-50 px-2 py-1.5 rounded">
+            <div className="flex items-center gap-1.5">
+              <Label className="text-sm font-normal text-blue-900">
+                敏感词库
+              </Label>
+              <Badge variant="secondary" className="text-xs px-1 py-0 bg-blue-100">自动启用</Badge>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 ml-2 mb-2">
+            自动使用敏感词库中启用的词条进行脱敏
+          </p>
+        </div>
+        
         {custom.length > 0 && (
           <>
             <div className="border-t pt-2 mt-2">
-              <p className="text-xs text-gray-400 mb-2">自定义规则</p>
+              <p className="text-xs text-gray-400 mb-2">自定义正则规则</p>
               {custom.map((rule) => (
                 <div key={rule.id} className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-1.5">
                     <Label htmlFor={rule.id} className="text-sm font-normal cursor-pointer">
                       {rule.name}
                     </Label>
-                    <Badge variant="secondary" className="text-xs px-1 py-0">自定义</Badge>
+                    <Badge variant="secondary" className="text-xs px-1 py-0">正则</Badge>
                   </div>
                   <Switch
                     id={rule.id}
