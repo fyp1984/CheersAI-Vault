@@ -23,8 +23,11 @@ fn get_python_exe() -> Result<String, String> {
     // 尝试查找系统 Python
     #[cfg(target_os = "windows")]
     {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         // 尝试 python3
         if let Ok(output) = Command::new("where")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("python3")
             .output()
         {
@@ -39,6 +42,7 @@ fn get_python_exe() -> Result<String, String> {
         
         // 尝试 python
         if let Ok(output) = Command::new("where")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("python")
             .output()
         {
@@ -53,6 +57,7 @@ fn get_python_exe() -> Result<String, String> {
         
         // 尝试 py launcher
         if let Ok(output) = Command::new("py")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("--version")
             .output()
         {
@@ -375,4 +380,44 @@ pub async fn check_python_available() -> Result<bool, String> {
             Ok(false)
         }
     }
+}
+
+/// 获取 Ollama 安装程序路径（如果存在）
+#[tauri::command]
+pub async fn get_ollama_installer_path() -> Result<Option<String>, String> {
+    let temp_dir = std::env::temp_dir();
+    let installer_path = temp_dir.join("OllamaSetup.exe");
+    
+    if installer_path.exists() {
+        Ok(Some(installer_path.to_string_lossy().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 打开文件所在文件夹
+#[tauri::command]
+pub async fn open_installer_folder() -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        std::process::Command::new("explorer")
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg(temp_dir)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {}", e))?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("open")
+            .arg(temp_dir)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {}", e))?;
+    }
+    
+    Ok(())
 }

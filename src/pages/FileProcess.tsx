@@ -62,11 +62,8 @@ export default function FileProcess() {
         console.log("AI detection available:", available);
         setAiDetectionAvailable(available);
         
-        // 如果 AI 可用，默认打开开关
-        if (available) {
-          setUseAiValidation(true);
-          console.log("AI detection enabled by default");
-        }
+        // AI 检测默认关闭（用户可手动开启）
+        console.log("AI detection available but disabled by default (user can enable manually)");
       } catch (error) {
         console.error("Failed to check AI availability:", error);
         setAiDetectionAvailable(false);
@@ -564,7 +561,7 @@ export default function FileProcess() {
                     </p>
                   ) : (
                     <p className="text-xs text-purple-700 mb-2">
-                      使用 AI+NER+正则+搜索 四种方法检测敏感信息
+                      使用 AI+NER+正则+搜索 四种方法检测敏感信息（可选，会增加处理时间）
                     </p>
                   )}
                   <p className="text-xs text-purple-600 mb-1">

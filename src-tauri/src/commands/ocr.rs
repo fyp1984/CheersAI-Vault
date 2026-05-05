@@ -204,7 +204,7 @@ pub async fn download_ocr_package(
             downloaded: 0,
             total: 0,
             percentage: 50.0,
-            status: "正在安装 PyMuPDF（PDF 文本提取）...".to_string(),
+            status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
         });
 
         install_ocr_dependencies(&python_dir)?;
@@ -225,7 +225,7 @@ pub async fn download_ocr_package(
             downloaded: 0,
             total: 0,
             percentage: 55.0,
-            status: "正在安装 PyMuPDF（PDF 文本提取）...".to_string(),
+            status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
         });
 
         install_ocr_dependencies(&ocr_dir.join("venv"))?;
@@ -435,11 +435,12 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     ensure_python_packaging_toolchain(&python_exe, python_dir)?;
     
-    // 使用更轻量的 OCR 方案：PyMuPDF (fitz) 用于 PDF 文本提取
-    // easyocr 太大且依赖复杂，改为可选安装
+    // 安装完整版 OCR：PyMuPDF + EasyOCR
+    // PyMuPDF 用于文本型 PDF，EasyOCR 用于扫描版 PDF
     let packages = vec![
-        "PyMuPDF",  // PDF 文本提取，约 20MB
-        // "easyocr" 暂时不自动安装，太大（约 500MB+）
+        "PyMuPDF",      // PDF 文本提取，约 20MB
+        "easyocr",      // OCR 引擎，约 100MB（包含依赖）
+        "Pillow",       // 图片处理
     ];
     
     for package in packages {
