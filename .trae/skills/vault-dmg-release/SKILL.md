@@ -163,7 +163,7 @@ pnpm build:dmg:portable
 - 再检查 `cargo check`
 - 再检查 `xcode-select -p` 与 `xcodebuild -version`
 
-### 4. 其他设备提示“已损坏，移到废纸篓”
+### 4. 其他设备提示“无法验证开发者”
 
 - 优先检查原始 `.app` 是否通过 `codesign --verify --deep --strict`
 - 若原始 Tauri DMG 内的 `.app` 为无效 ad-hoc 签名，必须改走 `pnpm build:dmg:portable`
