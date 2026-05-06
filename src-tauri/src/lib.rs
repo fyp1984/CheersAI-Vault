@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, sensitive_terms, installer};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, installer, sensitive_terms};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -151,6 +151,8 @@ pub fn run() {
             installer::install_ollama_with_script,
             installer::uninstall_ollama_with_script,
             installer::check_python_available,
+            installer::get_ollama_installer_path,
+            installer::open_installer_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

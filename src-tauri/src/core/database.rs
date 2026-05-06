@@ -664,24 +664,33 @@ impl Database {
     
     /// 获取敏感词统计
     pub async fn get_sensitive_terms_stats(&self) -> Result<serde_json::Value> {
+        println!("=== Getting sensitive terms stats ===");
+        
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms")
             .fetch_one(&self.pool)
             .await?;
+        println!("Total sensitive terms: {}", total);
             
         let enabled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms WHERE enabled = 1")
             .fetch_one(&self.pool)
             .await?;
+        println!("Enabled sensitive terms: {}", enabled);
             
         let categories: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT category) FROM sensitive_terms")
             .fetch_one(&self.pool)
             .await?;
+        println!("Categories: {}", categories);
         
-        Ok(serde_json::json!({
+        let result = serde_json::json!({
             "total": total,
             "enabled": enabled,
             "disabled": total - enabled,
             "categories": categories
-        }))
+        });
+        
+        println!("Stats result: {}", result);
+        
+        Ok(result)
     }
 }
 

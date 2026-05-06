@@ -437,13 +437,7 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
             300  // 5 分钟超时
         );
     } else {
-        println!("✗ Downloaded OCR not found");
-        if !downloaded_python.exists() {
-            println!("  Missing: {}", downloaded_python.display());
-        }
-        if !downloaded_script.exists() {
-            println!("  Missing: {}", downloaded_script.display());
-        }
+        println!("✗ OCR runtime not found");
     }
 
     // 方案 2: 使用打包的 exe（仅 Windows）

@@ -81,34 +81,53 @@ export function EnhancedServices() {
       : service === 'ocr'
         ? '选择 OCR 运行时目录'
         : '选择 Ollama 目录';
-    setupProgressListeners();
-  }, []);
 
-  const setupProgressListeners = () => {
+  useEffect(() => {
+    const unlistenPromises: Promise<() => void>[] = [];
+    
     // 监听 OCR 安装进度
-    listen<InstallerProgress>('ocr-install-progress', (event) => {
-      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
-      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
-    });
+    unlistenPromises.push(
+      listen<InstallerProgress>('ocr-install-progress', (event) => {
+        console.log('OCR install progress:', event.payload);
+        setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+        setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+      })
+    );
 
     // 监听 OCR 卸载进度
-    listen<InstallerProgress>('ocr-uninstall-progress', (event) => {
-      setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
-      setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
-    });
+    unlistenPromises.push(
+      listen<InstallerProgress>('ocr-uninstall-progress', (event) => {
+        console.log('OCR uninstall progress:', event.payload);
+        setDownloadProgress(prev => ({ ...prev, ocr: event.payload.percentage }));
+        setProgressStatus(prev => ({ ...prev, ocr: event.payload.status }));
+      })
+    );
 
     // 监听 Ollama 安装进度
-    listen<InstallerProgress>('ollama-install-progress', (event) => {
-      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
-      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
-    });
+    unlistenPromises.push(
+      listen<InstallerProgress>('ollama-install-progress', (event) => {
+        console.log('Ollama install progress:', event.payload);
+        setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+        setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+      })
+    );
 
     // 监听 Ollama 卸载进度
-    listen<InstallerProgress>('ollama-uninstall-progress', (event) => {
-      setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
-      setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
-    });
-  };
+    unlistenPromises.push(
+      listen<InstallerProgress>('ollama-uninstall-progress', (event) => {
+        console.log('Ollama uninstall progress:', event.payload);
+        setDownloadProgress(prev => ({ ...prev, aiModel: event.payload.percentage }));
+        setProgressStatus(prev => ({ ...prev, aiModel: event.payload.status }));
+      })
+    );
+    
+    // 清理函数
+    return () => {
+      Promise.all(unlistenPromises).then(unlisteners => {
+        unlisteners.forEach(unlisten => unlisten());
+      });
+    };
+  }, []);
 
   const checkServicesStatus = async () => {
     try {
@@ -337,52 +356,14 @@ export function EnhancedServices() {
       setMessage(null);
       setDownloadProgress((prev) => ({ ...prev, aiModel: 0 }));
 
-      // 先检查 Ollama 是否安装（包括系统安装和内置版本）
-      const ollamaInstalled = await tauriCommands.checkOllamaInstalled();
-      if (!ollamaInstalled) {
-        setMessage({ 
-          type: 'info', 
-          text: isMac
-            ? '未检测到 Ollama。请先安装并启动 Ollama.app，然后重新扫描服务状态。'
-            : '未检测到 Ollama。请先完成安装后重新扫描服务状态。'
-        });
-        
-        try {
-          // 传递自定义路径（如果有）
-          await tauriCommands.downloadOllama(customPaths.aiModel || undefined);
-          setMessage({ 
-            type: 'success', 
-            text: isMac ? '请先完成 Ollama 安装或启动，再继续安装 AI 模型。' : 'Ollama 安装信息已准备完成，请先启动服务后再安装 AI 模型。'
-          });
-        } catch (error) {
-          setMessage({ 
-            type: 'info',
-            text: `Ollama 准备失败: ${error}` 
-          });
-          return;
-        }
-      } else {
-        const ollamaRunning = await tauriCommands.checkOllamaServiceRunning();
-        if (!ollamaRunning) {
-          setMessage({
-            type: 'info',
-            text: isMac
-              ? '检测到 Ollama 已安装但服务未启动。请先点击“启动 Ollama”或打开 Ollama.app，然后重新扫描。'
-              : '检测到 Ollama 已安装但服务未启动。请先启动服务并重新扫描。'
-          });
-          return;
-        }
+      setProgressStatus((prev) => ({ ...prev, aiModel: '' }));
 
-        setMessage({ type: 'info', text: '检测到 Ollama 服务已运行，正在安装 AI 脱敏模型（qwen2.5:1.5b）...' });
-      }
-      setDownloadProgress({ ...downloadProgress, aiModel: 0 });
-      setProgressStatus({ ...progressStatus, aiModel: '' });
-
-      // 使用脚本自动安装 Ollama + AI 模型
+      // 使用 Ollama 官方脚本自动安装
       setMessage({ 
         type: 'info', 
-        text: '正在安装 Ollama 和 AI 脱敏模型（qwen2.5:1.5b）...\n' +
-              '首次安装需要下载约 1.6GB 文件，请耐心等待。'
+        text: '正在使用 Ollama 官方脚本安装...\n' +
+              '首次安装需要下载约 1.6GB 文件，请耐心等待。\n' +
+              '安装过程可能需要 5-10 分钟。'
       });
 
       await tauriCommands.installOllamaWithScript();
@@ -401,11 +382,14 @@ export function EnhancedServices() {
       }
       
       helpText += '您也可以手动安装 Ollama：\n' +
-                  '1. 访问 https://ollama.com/download（国外官网）\n' +
-                  '2. 或访问 https://gitee.com/mirrors/ollama（国内镜像）\n' +
-                  '3. 下载 Windows 版本并安装\n' +
-                  '4. 安装完成后，在命令行运行：ollama pull qwen2.5:1.5b\n' +
-                  '5. 重启本应用即可使用';
+                  '方法1（推荐）：\n' +
+                  '  1. 打开 PowerShell（管理员）\n' +
+                  '  2. 运行: irm https://ollama.com/install.ps1 | iex\n\n' +
+                  '方法2：\n' +
+                  '  1. 访问 https://ollama.com/download\n' +
+                  '  2. 下载 Windows 版本并安装\n' +
+                  '  3. 安装完成后，在命令行运行：ollama pull qwen2.5:1.5b\n' +
+                  '  4. 重启本应用即可使用';
       
       setMessage({ type: 'error', text: helpText });
     } finally {
@@ -743,25 +727,58 @@ export function EnhancedServices() {
             </div>
 
             {/* 操作按钮 */}
-            <div className="mt-6 flex items-center space-x-3">
+            <div className="mt-6 flex items-center space-x-3 flex-wrap gap-y-2">
               {!serviceStatus.aiModel ? (
-                <button
-                  onClick={handleInstallAiModel}
-                  disabled={installing.aiModel || serviceStatus.aiModel}
-                  className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                >
-                  {installing.aiModel ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      安装中...
-                    </>
+                <>
+                  {serviceStatus.ollamaInstalled ? (
+                    <button
+                      onClick={handleInstallAiModel}
+                      disabled={installing.aiModel}
+                      className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                    >
+                      {installing.aiModel ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          安装中...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4 mr-2" />
+                          安装 AI 模型
+                        </>
+                      )}
+                    </button>
                   ) : (
                     <>
-                      <Download className="w-4 h-4 mr-2" />
-                      一键安装
+                      <a
+                        href="https://ollama.com/download"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                      >
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                        下载 Ollama
+                      </a>
+                      <button
+                        onClick={handleInstallAiModel}
+                        disabled={installing.aiModel}
+                        className="inline-flex items-center px-4 py-2 border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      >
+                        {installing.aiModel ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            检查中...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4 mr-2" />
+                            安装 AI 模型
+                          </>
+                        )}
+                      </button>
                     </>
                   )}
-                </button>
+                </>
               ) : (
                 <button
                   onClick={handleUninstallAiModel}
