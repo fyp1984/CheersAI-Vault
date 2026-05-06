@@ -30,7 +30,7 @@ function readState() {
   const tauriConf = readJson(files.tauriConf);
   const cargoToml = fs.readFileSync(files.cargoToml, "utf8");
   const cargoMatch = cargoToml.match(
-    /(\[package\][\s\S]*?\nversion\s*=\s*")([^"]+)(")/m
+    /(\[package\][\s\S]*?\nversion\s*=\s*")( [^"]+)(")/m
   );
 
   if (!cargoMatch) {
@@ -79,7 +79,7 @@ function updatePackageVersion(nextVersion) {
 function updateCargoVersion(nextVersion) {
   const cargoToml = fs.readFileSync(files.cargoToml, "utf8");
   const updated = cargoToml.replace(
-    /(\[package\][\s\S]*?\nversion\s*=\s*")([^"]+)(")/m,
+    /(\[package\][\s\S]*?\nversion\s*=\s*")( [^"]+)(")/m,
     `$1${nextVersion}$3`
   );
   fs.writeFileSync(files.cargoToml, updated);
