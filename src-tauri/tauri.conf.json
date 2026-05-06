@@ -46,7 +46,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../scripts/install_ocr.py",
       "../scripts/install_ollama.py"
     ],
     "publisher": "CheersAI Team",

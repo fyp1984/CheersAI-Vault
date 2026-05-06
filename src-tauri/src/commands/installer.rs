@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader, Write};
-use tauri::{AppHandle, Manager, Emitter};
+use std::io::{BufRead, BufReader};
+use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-// 内嵌 Python 脚本
-const INSTALL_OCR_SCRIPT: &str = include_str!("../../../scripts/install_ocr.py");
+// 当前仓库仅保留 Ollama 安装脚本；OCR 已切换到现有原生安装链路。
 const INSTALL_OLLAMA_SCRIPT: &str = include_str!("../../../scripts/install_ollama.py");
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -105,8 +104,10 @@ fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
     
     // 获取脚本内容
     let script_content = match script_name {
-        "install_ocr.py" => INSTALL_OCR_SCRIPT,
         "install_ollama.py" => INSTALL_OLLAMA_SCRIPT,
+        "install_ocr.py" => {
+            return Err("OCR 脚本安装入口已停用，请改用当前 OCR 原生安装链路。".to_string())
+        }
         _ => return Err(format!("Unknown script: {}", script_name)),
     };
     
@@ -305,15 +306,9 @@ pub async fn install_ocr_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Installing OCR using script ===");
-    
-    run_installer_script(
-        app,
-        window,
-        "install_ocr.py",
-        vec![],
-        "ocr-install-progress",
-    ).await
+    let _ = app;
+    let _ = window;
+    Err("OCR 脚本安装入口已停用，请改用当前 OCR 原生安装链路。".to_string())
 }
 
 /// 卸载 OCR 环境
@@ -322,15 +317,9 @@ pub async fn uninstall_ocr_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Uninstalling OCR using script ===");
-    
-    run_installer_script(
-        app,
-        window,
-        "install_ocr.py",
-        vec!["uninstall"],
-        "ocr-uninstall-progress",
-    ).await
+    let _ = app;
+    let _ = window;
+    Err("OCR 脚本卸载入口已停用，请改用当前 OCR 原生卸载链路。".to_string())
 }
 
 /// 安装 Ollama + AI 模型
