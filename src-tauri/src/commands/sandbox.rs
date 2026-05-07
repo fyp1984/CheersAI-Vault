@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+// 文件管理相关命令 - 支持删除文件及其对照文件
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SandboxFile {
     pub name: String,
@@ -183,10 +184,54 @@ pub async fn import_sandbox(_src_path: String, _passphrase: String) -> Result<Sa
 /// 删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
+    println!("=== DELETE_SANDBOX_FILE ===");
+    println!("File path: {}", file_path);
+    
     let path = Path::new(&file_path);
     
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| format!("删除文件失败: {}", e))?;
+        println!("✅ Main file deleted: {}", file_path);
+        
+        // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
+        let file_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let parent_dir = path.parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".");
+        
+        // 模式1: {file_path}.cmap (mask_file 创建的)
+        let cmap_path1 = format!("{}.cmap", file_path);
+        println!("Looking for cmap pattern 1: {}", cmap_path1);
+        
+        if Path::new(&cmap_path1).exists() {
+            println!("✅ Cmap file (pattern 1) exists, deleting...");
+            match std::fs::remove_file(&cmap_path1) {
+                Ok(_) => println!("✅ Cmap file deleted successfully"),
+                Err(e) => println!("⚠️ Failed to delete cmap file: {}", e),
+            }
+        } else {
+            println!("ℹ️ Cmap file (pattern 1) does not exist");
+            
+            // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
+            let file_stem = path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
+            println!("Looking for cmap pattern 2: {}", cmap_path2);
+            
+            if Path::new(&cmap_path2).exists() {
+                println!("✅ Cmap file (pattern 2) exists, deleting...");
+                match std::fs::remove_file(&cmap_path2) {
+                    Ok(_) => println!("✅ Cmap file deleted successfully"),
+                    Err(e) => println!("⚠️ Failed to delete cmap file: {}", e),
+                }
+            } else {
+                println!("ℹ️ Cmap file (pattern 2) does not exist");
+            }
+        }
+        
         Ok("文件已删除".to_string())
     } else {
         Err("文件不存在".to_string())
@@ -196,17 +241,68 @@ pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
 /// 批量删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_files(file_paths: Vec<String>) -> Result<String, String> {
+    println!("=== DELETE_SANDBOX_FILES (BATCH) ===");
+    println!("Files to delete: {}", file_paths.len());
+    
     let mut deleted_count = 0;
     let mut errors = Vec::new();
     
     for file_path in file_paths {
+        println!("Processing: {}", file_path);
         let path = Path::new(&file_path);
         
         if path.exists() {
             match std::fs::remove_file(path) {
-                Ok(_) => deleted_count += 1,
-                Err(e) => errors.push(format!("删除失败: {}", e)),
+                Ok(_) => {
+                    deleted_count += 1;
+                    println!("✅ Main file deleted: {}", file_path);
+                    
+                    // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
+                    let file_name = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    let parent_dir = path.parent()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or(".");
+                    
+                    // 模式1: {file_path}.cmap (mask_file 创建的)
+                    let cmap_path1 = format!("{}.cmap", file_path);
+                    println!("Looking for cmap pattern 1: {}", cmap_path1);
+                    
+                    if Path::new(&cmap_path1).exists() {
+                        println!("✅ Cmap file (pattern 1) exists, deleting...");
+                        match std::fs::remove_file(&cmap_path1) {
+                            Ok(_) => println!("✅ Cmap file deleted successfully"),
+                            Err(e) => println!("⚠️ Failed to delete cmap file: {}", e),
+                        }
+                    } else {
+                        println!("ℹ️ Cmap file (pattern 1) does not exist");
+                        
+                        // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
+                        let file_stem = path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
+                        println!("Looking for cmap pattern 2: {}", cmap_path2);
+                        
+                        if Path::new(&cmap_path2).exists() {
+                            println!("✅ Cmap file (pattern 2) exists, deleting...");
+                            match std::fs::remove_file(&cmap_path2) {
+                                Ok(_) => println!("✅ Cmap file deleted successfully"),
+                                Err(e) => println!("⚠️ Failed to delete cmap file: {}", e),
+                            }
+                        } else {
+                            println!("ℹ️ Cmap file (pattern 2) does not exist");
+                        }
+                    }
+                },
+                Err(e) => {
+                    println!("❌ Failed to delete main file: {}", e);
+                    errors.push(format!("删除失败: {}", e));
+                },
             }
+        } else {
+            println!("⚠️ File does not exist: {}", file_path);
         }
     }
     

@@ -6,11 +6,11 @@ import { RuleSelector } from "@/components/file/RuleSelector";
 import { PassphraseBox } from "@/components/common/PassphraseBox";
 import { MaskingPreviewDialog, type ManualReplacement } from "@/components/file/MaskingPreviewDialog";
 import { OcrDownloadDialog } from "@/components/file/OcrDownloadDialog";
-import { Button } from "@/components/ui/button";
+import { Button, Message } from "@/components/ui/cheersai-ui";
 import { useFileStore } from "@/store/fileStore";
 import { useLogStore } from "@/store/logStore";
 import { useRuleStore } from "@/store/ruleStore";
-import { Play, Trash2, FolderOpen } from "lucide-react";
+import { Play, Trash2, FolderOpen, Bot, AlertTriangle, Info } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { stat, exists } from "@tauri-apps/plugin-fs";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -52,6 +52,7 @@ export default function FileProcess() {
   const [aiDetectionAvailable, setAiDetectionAvailable] = useState(false); // AI 是否可用
   const [isCheckingAi, setIsCheckingAi] = useState(true); // 是否正在检查 AI
   const [isProcessing, setIsProcessing] = useState(false); // 是否正在处理（包括预览和脱敏）
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // 检查 AI 检测是否可用
   useEffect(() => {
@@ -136,7 +137,7 @@ export default function FileProcess() {
         } else if (status.status === "Cancelled") {
           setActiveJob(null);
           setIsProcessing(false); // 取消时重置状态
-          alert("⏹️ 脱敏已取消");
+          setMessage({ type: 'info', text: '脱敏已取消' });
           await addLog("info", "批处理已取消", undefined, undefined, "batch_cancelled");
           setTimeout(() => setBatchStatus(null), 3000);
         }
@@ -203,7 +204,7 @@ export default function FileProcess() {
         if (validation.valid) {
           setOutputDir(selectedPath);
         } else {
-          alert(`路径无效: ${validation.error}`);
+          setMessage({ type: 'error', text: `路径无效: ${validation.error}` });
         }
       }
     } catch (error) {
@@ -214,11 +215,11 @@ export default function FileProcess() {
   const handleStart = async () => {
     if (pendingCount === 0) return;
     if (!outputDir) {
-      alert("请先选择输出目录");
+      setMessage({ type: 'error', text: '请先选择输出目录' });
       return;
     }
     if (selectedRules.length === 0) {
-      alert("请至少选择一个脱敏规则");
+      setMessage({ type: 'error', text: '请至少选择一个脱敏规则' });
       return;
     }
 
@@ -263,7 +264,7 @@ export default function FileProcess() {
       if (isOcrError(error)) {
         setShowOcrDownload(true);
       } else {
-        alert(`加载预览失败: ${error}`);
+        setMessage({ type: 'error', text: `加载预览失败: ${error}` });
       }
       setIsProcessing(false); // 失败时重置状态
     } finally {
@@ -326,6 +327,18 @@ export default function FileProcess() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* 消息提示 */}
+      {message && (
+        <div className="fixed top-4 right-4 z-50 max-w-md">
+          <Message
+            type={message.type}
+            onClose={() => setMessage(null)}
+          >
+            {message.text}
+          </Message>
+        </div>
+      )}
+      
       {/* 处理中的全局遮罩层 - 包括预览加载和实际处理 */}
       {(isLoadingPreview || isProcessing) && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -376,9 +389,10 @@ export default function FileProcess() {
                       </p>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-4">
-                    ⚠️ 请勿关闭窗口或切换页面
-                  </p>
+                  <div className="flex items-center gap-1 text-xs text-gray-500 mt-4">
+                    <AlertTriangle className="w-3 h-3" />
+                    <p>请勿关闭窗口或切换页面</p>
+                  </div>
                 </>
               ) : (
                 <>
@@ -462,10 +476,13 @@ export default function FileProcess() {
                   const dbInfo = await tauriCommands.getDatabaseInfo();
                   console.log("Database info:", dbInfo);
                   
-                  alert(`数据库测试完成！\n数据库路径: ${dbInfo.database_path}\n数据库存在: ${dbInfo.database_exists}\n日志数量: ${dbInfo.log_count}`);
+                  setMessage({ 
+                    type: 'success', 
+                    text: `数据库测试完成！数据库路径: ${dbInfo.database_path}，数据库存在: ${dbInfo.database_exists}，日志数量: ${dbInfo.log_count}` 
+                  });
                 } catch (error) {
                   console.error("Database test failed:", error);
-                  alert(`数据库测试失败: ${error}`);
+                  setMessage({ type: 'error', text: `数据库测试失败: ${error}` });
                 }
               }}
             >
@@ -548,17 +565,23 @@ export default function FileProcess() {
             <div className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 rounded-xl">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <h3 className="text-sm font-semibold text-purple-900 mb-1">
-                    🤖 AI 多方法检测
-                  </h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Bot className="w-4 h-4 text-purple-900" />
+                    <h3 className="text-sm font-semibold text-purple-900">
+                      AI 多方法检测
+                    </h3>
+                  </div>
                   {isCheckingAi ? (
                     <p className="text-xs text-purple-600 mb-2">
                       正在检查 AI 配置...
                     </p>
                   ) : !aiDetectionAvailable ? (
-                    <p className="text-xs text-orange-600 mb-2">
-                      ⚠️ 未配置 Ollama 或模型，请先安装
-                    </p>
+                    <div className="flex items-start gap-1 mb-2">
+                      <AlertTriangle className="w-3 h-3 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-orange-600">
+                        未配置 Ollama 或模型，请先安装
+                      </p>
+                    </div>
                   ) : (
                     <p className="text-xs text-purple-700 mb-2">
                       使用 AI+NER+正则+搜索 四种方法检测敏感信息（可选，会增加处理时间）
@@ -594,7 +617,10 @@ export default function FileProcess() {
 
         {/* 使用说明 */}
         <div className="mt-8 p-6 bg-blue-50/60 border border-blue-100 rounded-xl">
-          <h3 className="text-sm font-bold text-blue-900 mb-3">使用说明</h3>
+          <div className="flex items-center gap-2 mb-3">
+            <Info className="w-4 h-4 text-blue-900" />
+            <h3 className="text-sm font-bold text-blue-900">使用说明</h3>
+          </div>
           <ol className="space-y-2 text-sm text-blue-700">
             <li>1. 拖放或点击选择需要脱敏的文件（支持 CSV、Excel、JSON、TXT、Word、PPT、PDF、Markdown）</li>
             <li>2. 在右侧选择需要启用的脱敏规则（如身份证号、手机号、邮箱等）</li>

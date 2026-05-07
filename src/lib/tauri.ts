@@ -332,4 +332,18 @@ export const tauriCommands = {
 
   uninstallOllamaWithScript: () =>
     invoke<string>("uninstall_ollama_with_script"),
+  
+  // Config Extraction
+  extractConfigFromDesktopWebview: () =>
+    invoke<string>("extract_config_from_desktop_webview"),
+  
+  evalJsInDesktopWebview: (jsCode: string) =>
+    invoke<string>("eval_js_in_desktop_webview", { jsCode }),
+  
+  // FileBay Config Sync
+  syncFilebayConfigFromDesktop: (url: string, token: string, owner: string, repo: string) =>
+    invoke<string>("sync_filebay_config_from_desktop", { url, token, owner, repo }),
+  
+  // Get FileBay Token
+  getFilebayToken: () => invoke<string>("get_filebay_token"),
 };

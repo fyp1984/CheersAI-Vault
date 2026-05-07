@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Lightbulb } from "lucide-react";
 import { useRuleStore } from "@/store/ruleStore";
 import { tauriCommands } from "@/lib/tauri";
 import { useNavigate } from "react-router-dom";
@@ -129,7 +130,7 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
             // 未配置敏感词库 - 显示提示
             <div className="bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-lg">
               <div className="flex items-start gap-2 mb-2">
-                <span className="text-amber-600 text-base">💡</span>
+                <Lightbulb className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <p className="text-sm font-medium text-amber-900 mb-1">
                     为了效果更好更有针对性，请配置您专属的敏感词库

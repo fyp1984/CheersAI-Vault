@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, installer, sensitive_terms};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, vault_api_server, vault, ai_model, platform, installer, sensitive_terms, sync_config, extract_config};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,7 +35,7 @@ pub fn run() {
 
     println!("=== CheersAI Vault Starting ===");
     
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -97,6 +97,8 @@ pub fn run() {
             gitea::create_gitea_repo,
             gitea::upload_to_gitea,
             gitea::upload_batch_to_gitea,
+            gitea::sync_filebay_config_from_desktop,
+            gitea::get_filebay_token,
             file_manager::add_managed_file,
             file_manager::get_managed_files,
             file_manager::get_managed_file,
@@ -153,7 +155,42 @@ pub fn run() {
             installer::check_python_available,
             installer::get_ollama_installer_path,
             installer::open_installer_folder,
+            vault_api_server::start_vault_api_server,
+            vault_api_server::stop_vault_api_server,
+            vault_api_server::check_vault_api_server_status,
+            vault_api_server::save_filebay_config_via_api,
+            vault_api_server::get_filebay_config_via_api,
+            vault_api_server::delete_filebay_config_via_api,
+            vault::list_vault_configs,
+            vault::get_vault_config_by_user_id,
+            vault::get_vault_config_by_email,
+            vault::check_vault_db_exists,
+            vault::get_vault_db_path_string,
+            vault::get_vault_db_stats,
+            sync_config::sync_config_from_desktop,
+            extract_config::extract_config_from_desktop_webview,
+            extract_config::eval_js_in_desktop_webview,
         ])
-        .run(tauri::generate_context!())
+        .setup(|app| {
+            // 启动 Vault API 服务器
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use crate::commands::vault_api_server::VaultApiServer;
+                let server = VaultApiServer::new(app_handle, 7788);
+                match server.start().await {
+                    Ok(_) => println!("✅ Vault API Server started successfully on port 7788"),
+                    Err(e) => eprintln!("❌ Failed to start Vault API server: {}", e),
+                }
+            });
+            Ok(())
+        })
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            // 可以在这里添加清理逻辑
+            api.prevent_exit();
+        }
+    });
 }

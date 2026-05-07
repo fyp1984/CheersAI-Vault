@@ -193,3 +193,13 @@ export interface InstallerProgress {
   status: string;
   log: string;
 }
+
+// Sync Config types
+export interface SyncConfigRequest {
+  url: string;
+  username: string;
+  repo_name: string;
+  email: string;
+  token: string;
+  user_id?: string;
+}

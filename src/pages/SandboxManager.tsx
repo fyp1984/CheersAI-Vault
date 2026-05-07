@@ -347,8 +347,9 @@ export default function SandboxManager() {
                 <p className="text-sm text-gray-500">正在检查 PIN 状态...</p>
               ) : !pinExists ? (
                 <div className="space-y-3">
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <p className="text-sm text-yellow-800">⚠️ 尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-yellow-800">尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
                   </div>
                   <p className="text-xs text-gray-500">{pinStorageDescription}</p>
                 </div>
@@ -387,7 +388,10 @@ export default function SandboxManager() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <p className="text-sm text-green-600">✅ 沙箱已解锁，可以访问安全文件</p>
+                  <p className="text-sm text-green-600 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    沙箱已解锁，可以访问安全文件
+                  </p>
                   <div className="text-sm text-gray-600">
                     文件数量: {files.length} 个
                   </div>

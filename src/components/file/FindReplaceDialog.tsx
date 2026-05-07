@@ -5,7 +5,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Search, Plus, Trash2, X, CheckCheck } from 'lucide-react';
+import { Search, Plus, Trash2, X, CheckCheck, Lightbulb, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -127,9 +127,10 @@ export function FindReplaceDialog({
               </div>
             </div>
           ) : (
-            <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
-              💡 未检测到标准 PII（手机号/身份证等）。可在下方手动输入要替换的文本，
-              或前往<strong>规则配置</strong>添加自定义正则规则后重新处理。
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 flex items-start gap-2">
+              <Lightbulb className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+              <span>未检测到标准 PII（手机号/身份证等）。可在下方手动输入要替换的文本，
+              或前往<strong>规则配置</strong>添加自定义正则规则后重新处理。</span>
             </div>
           )}
 
@@ -176,7 +177,10 @@ export function FindReplaceDialog({
           {/* 预览摘要 */}
           {feedback && feedback.total === 0 && (
             <div className="bg-red-50 border border-red-300 rounded-lg p-2.5 text-xs text-red-700 space-y-1">
-              <p className="font-medium">⚠️ 未找到匹配内容，替换未执行</p>
+              <p className="font-medium flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4" />
+                未找到匹配内容，替换未执行
+              </p>
               <p>以下文本在当前预览中不存在（可能已被脱敏规则替换为占位符）：</p>
               <ul className="list-disc list-inside">
                 {feedback.notFound.map((t, i) => <li key={i} className="font-mono">{t}</li>)}

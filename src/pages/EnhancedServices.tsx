@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen, Lightbulb, Bot } from 'lucide-react';
 import { tauriCommands } from '@/lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
@@ -831,7 +831,10 @@ export function EnhancedServices() {
       {/* 帮助信息 */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h3 className="font-medium text-blue-900 mb-2">💡 OCR 服务说明</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <Lightbulb className="w-4 h-4 text-blue-900" />
+            <h3 className="font-medium text-blue-900">OCR 服务说明</h3>
+          </div>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
             <li>Windows 使用嵌入式 Python，macOS 使用系统 Python venv</li>
             <li>当前轻量运行时优先支持 PDF 文本提取</li>
@@ -840,7 +843,10 @@ export function EnhancedServices() {
         </div>
 
         <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
-          <h3 className="font-medium text-purple-900 mb-2">🤖 AI 模型说明</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <Bot className="w-4 h-4 text-purple-900" />
+            <h3 className="font-medium text-purple-900">AI 模型说明</h3>
+          </div>
           <ul className="text-sm text-purple-800 space-y-1 list-disc list-inside">
             <li>使用 Qwen2.5:1.5b 轻量级模型（约 1GB）</li>
             <li>自动检测系统已安装的 Ollama，无需重复安装</li>

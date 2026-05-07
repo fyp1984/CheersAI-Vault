@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
+use tokio::process::Command;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct OcrDownloadProgress {
@@ -207,7 +208,7 @@ pub async fn download_ocr_package(
             status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
         });
 
-        install_ocr_dependencies(&python_dir)?;
+        install_ocr_dependencies(&python_dir).await?;
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -228,7 +229,7 @@ pub async fn download_ocr_package(
             status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
         });
 
-        install_ocr_dependencies(&ocr_dir.join("venv"))?;
+        install_ocr_dependencies(&ocr_dir.join("venv")).await?;
     }
     
     // 4. 复制 OCR 脚本
@@ -423,7 +424,7 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
 }
 
 /// 安装 OCR 依赖
-fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
+async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     
@@ -459,6 +460,7 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
                 .args(&["-m", "pip", "install", "--no-warn-script-location", package])
                 .current_dir(python_dir)
                 .output()
+                .await
                 .map_err(|e| format!("Failed to install {}: {} (path may contain unsupported characters)", package, e))?;
             
             let elapsed = start.elapsed();
@@ -492,7 +494,8 @@ fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
             .creation_flags(CREATE_NO_WINDOW)
             .args(&["-c", "import fitz; print('OK')"])
             .current_dir(python_dir)
-            .output();
+            .output()
+            .await;
         
         match verify_output {
             Ok(output) if output.status.success() => {

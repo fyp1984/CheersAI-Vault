@@ -8,7 +8,9 @@ import {
   Loader2,
   AlertCircle,
   Globe,
-  Monitor
+  Monitor,
+  Rocket,
+  Lightbulb
 } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import { CLOUD_APP_URL, resolveCloudUrl } from "@/lib/cloud";
@@ -249,7 +251,7 @@ export default function NativeBrowser({
             title="注入自动跳转脚本"
             className="text-blue-600 border-blue-300 hover:bg-blue-50"
           >
-            🚀
+            <Rocket className="w-4 h-4" />
           </Button>
           <Button
             variant="outline"
@@ -327,9 +329,14 @@ export default function NativeBrowser({
           {isWebviewReady && (
             <div className="mt-6 p-4 bg-white rounded-lg border border-blue-200">
               <div className="text-sm text-blue-800">
-                <div className="font-medium mb-1">💡 使用提示</div>
+                <div className="font-medium mb-1 flex items-center gap-1.5">
+                  <Lightbulb className="w-4 h-4" />
+                  使用提示
+                </div>
                 <div className="text-left space-y-1">
-                  <div>• 点击 🚀 按钮注入自动跳转脚本</div>
+                  <div className="flex items-center gap-1.5">
+                    • 点击 <Rocket className="w-3.5 h-3.5 inline" /> 按钮注入自动跳转脚本
+                  </div>
                   <div>• 使用地址栏直接导航到其他页面</div>
                   <div>• 浏览器窗口支持完整的网页功能</div>
                 </div>

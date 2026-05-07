@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Search, Download, Upload, ChevronUp } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import type { SensitiveTerm, AddSensitiveTermRequest } from "@/types/commands";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -328,7 +328,10 @@ export default function SensitiveTerms() {
         {/* 使用说明 */}
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="pt-4">
-            <p className="text-xs font-medium text-amber-800 mb-2">💡 使用提示</p>
+            <p className="text-xs font-medium text-amber-800 mb-2 flex items-center gap-1.5">
+              <Lightbulb className="w-4 h-4" />
+              使用提示
+            </p>
             <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
               <li>敏感词会在脱敏时进行精确匹配和替换</li>
               <li>可以按分类组织敏感词，如：姓名、地址、公司名等</li>

@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ExternalLink, Globe, Sparkles, Shield, Zap, RefreshCw, Code } from "lucide-react";
+import { Button, Message } from "@/components/ui/cheersai-ui";
+import { ExternalLink, Globe, Sparkles, Shield, Zap, RefreshCw, Code, Lightbulb } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import { CLOUD_APP_URL, CLOUD_LOGIN_URLS } from "@/lib/cloud";
 
@@ -9,6 +9,7 @@ export default function CheersAICloud() {
   const [isOpening, setIsOpening] = useState(false);
   const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(null);
   const [isDebugging, setIsDebugging] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const cloudUrl = CLOUD_APP_URL;
   const debugIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -101,7 +102,7 @@ export default function CheersAICloud() {
       
     } catch (error) {
       console.error("Failed to open webview:", error);
-      alert(`打开失败: ${error}`);
+      setMessage({ type: 'error', text: `打开失败: ${error}` });
     } finally {
       setIsOpening(false);
     }
@@ -119,7 +120,7 @@ export default function CheersAICloud() {
 
   const handleDebugWindow = async () => {
     if (!currentWindowLabel) {
-      alert("请先打开 WebView 窗口");
+      setMessage({ type: 'error', text: '请先打开 WebView 窗口' });
       return;
     }
 
@@ -156,7 +157,7 @@ export default function CheersAICloud() {
 
   const handleForceLogin = async () => {
     if (!currentWindowLabel) {
-      alert("请先打开 WebView 窗口");
+      setMessage({ type: 'error', text: '请先打开 WebView 窗口' });
       return;
     }
 
@@ -202,13 +203,13 @@ export default function CheersAICloud() {
       
     } catch (error) {
       console.error("Failed to navigate to login:", error);
-      alert(`跳转失败: ${error}`);
+      setMessage({ type: 'error', text: `跳转失败: ${error}` });
     }
   };
 
   const handleInspectPage = async () => {
     if (!currentWindowLabel) {
-      alert("请先打开 WebView 窗口");
+      setMessage({ type: 'error', text: '请先打开 WebView 窗口' });
       return;
     }
 
@@ -267,16 +268,16 @@ export default function CheersAICloud() {
       `);
       
       console.log("Page inspection completed. Check the WebView console for details.");
-      alert("页面检查完成，请查看控制台输出");
+      setMessage({ type: 'success', text: '页面检查完成，请查看控制台输出' });
     } catch (error) {
       console.error("Failed to inspect page:", error);
-      alert(`检查失败: ${error}`);
+      setMessage({ type: 'error', text: `检查失败: ${error}` });
     }
   };
 
   const handleTryDifferentStrategies = async () => {
     if (!currentWindowLabel) {
-      alert("请先打开 WebView 窗口");
+      setMessage({ type: 'error', text: '请先打开 WebView 窗口' });
       return;
     }
 
@@ -338,10 +339,10 @@ export default function CheersAICloud() {
       `);
       
       console.log("Strategy testing completed. Check the WebView console for details.");
-      alert("策略测试完成，请查看控制台输出");
+      setMessage({ type: 'success', text: '策略测试完成，请查看控制台输出' });
     } catch (error) {
       console.error("Failed to test strategies:", error);
-      alert(`策略测试失败: ${error}`);
+      setMessage({ type: 'error', text: `策略测试失败: ${error}` });
     }
   };
 
@@ -388,10 +389,10 @@ export default function CheersAICloud() {
             
             if (!currentUrl.includes('/apps/')) {
               console.log(`Success with User Agent ${i + 1}!`);
-              alert(`成功！使用 User Agent ${i + 1} 成功跳转`);
+              setMessage({ type: 'success', text: `成功！使用 User Agent ${i + 1} 成功跳转` });
               return;
             } else if (i === userAgents.length - 1) {
-              alert("所有 User Agent 都尝试过了，仍然无法自动跳转");
+              setMessage({ type: 'error', text: '所有 User Agent 都尝试过了，仍然无法自动跳转' });
             } else {
               // 关闭当前窗口，尝试下一个
               await tauriCommands.closeWebviewWindow(windowLabel);
@@ -414,6 +415,18 @@ export default function CheersAICloud() {
 
   return (
     <div className="flex flex-col h-full bg-gradient-to-br from-green-50 via-blue-50 to-purple-50">
+      {/* 消息提示 */}
+      {message && (
+        <div className="fixed top-4 right-4 z-50 max-w-md">
+          <Message
+            type={message.type}
+            onClose={() => setMessage(null)}
+          >
+            {message.text}
+          </Message>
+        </div>
+      )}
+      
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="max-w-4xl w-full">
           <Card className="shadow-2xl border-0 overflow-hidden">
@@ -570,8 +583,9 @@ export default function CheersAICloud() {
           </Card>
 
           {/* 使用提示 */}
-          <div className="mt-6 text-center text-sm text-gray-600">
-            <p>💡 提示：如果页面没有自动跳转到登录页面，请使用"强制跳转登录"按钮</p>
+          <div className="mt-6 text-center text-sm text-gray-600 flex items-center justify-center gap-2">
+            <Lightbulb className="w-4 h-4 text-gray-500" />
+            <p>提示：如果页面没有自动跳转到登录页面，请使用"强制跳转登录"按钮</p>
           </div>
         </div>
       </div>

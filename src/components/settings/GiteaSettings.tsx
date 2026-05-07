@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import { getGiteaStatus, updateGiteaConfig, createGiteaRepo, testGiteaConnection } from '../../services/gitea';
 import type { GiteaStatusResponse } from '../../types/gitea';
 import { tauriCommands } from '@/lib/tauri';
+import { VaultConfigSelector } from '../VaultConfigSelector';
+import type { VaultFileBayConfig } from '@/lib/vault';
+import { Button, Input, Message, Switch, Badge, Card } from '../ui/cheersai-ui';
+import { RefreshCw, Database, Lock, Upload, Download, FileJson, Lightbulb, AlertTriangle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 
 export function GiteaSettings() {
   const [status, setStatus] = useState<GiteaStatusResponse | null>(null);
@@ -10,7 +14,30 @@ export function GiteaSettings() {
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState(false);
   const [autoLoading, setAutoLoading] = useState(false);
+  const [autoSyncing, setAutoSyncing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [showVaultSelector, setShowVaultSelector] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+  
+  const handleToggleShowToken = async () => {
+    if (!showToken) {
+      // 如果要显示 Token，从数据库读取最新的 Token
+      try {
+        console.log('🔍 正在从数据库读取 Token...');
+        const token = await tauriCommands.getFilebayToken();
+        console.log('✅ Token 读取成功，长度:', token.length);
+        console.log('🔑 Token 内容:', token);
+        setConfig(prev => ({ ...prev, token }));
+        setShowToken(true);
+      } catch (error) {
+        console.error('❌ 读取 Token 失败:', error);
+        setShowToken(true); // 即使失败也切换显示状态
+      }
+    } else {
+      // 隐藏时不清空 token，只是切换显示状态
+      setShowToken(false);
+    }
+  };
   
   const [config, setConfig] = useState({
     url: 'https://uat-filebay.cheersai.cloud',
@@ -29,14 +56,31 @@ export function GiteaSettings() {
       setLoading(true);
       const result = await getGiteaStatus();
       setStatus(result);
-      // 只在初始加载时更新配置，保存后不清空用户输入
+      
+      // 如果数据库中有 token，自动加载
+      let tokenFromDb = '';
+      if (result.config.has_token) {
+        try {
+          tokenFromDb = await tauriCommands.getFilebayToken();
+          console.log('✅ 从数据库加载 Token，长度:', tokenFromDb.length);
+        } catch (error) {
+          console.error('❌ 从数据库加载 Token 失败:', error);
+        }
+      }
+      
+      // 更新配置
       setConfig(prev => ({
         url: result.config.url || prev.url,
-        token: prev.token, // 保留用户输入的 token
+        token: tokenFromDb || prev.token, // 使用数据库中的 token
         owner: result.config.owner || prev.owner,
         repo: result.config.repo || prev.repo,
         enabled: result.config.enabled || prev.enabled,
       }));
+      
+      // 如果有 token，自动显示
+      if (tokenFromDb) {
+        setShowToken(true);
+      }
     } catch (error) {
       console.error('Failed to load Gitea status:', error);
       // 设置默认状态，避免一直加载
@@ -62,7 +106,7 @@ export function GiteaSettings() {
     const tokenProvided = !!config.token;
     const tokenAlreadySaved = !!status?.config.has_token;
     if (!config.url || (!tokenProvided && !tokenAlreadySaved) || !config.owner || !config.repo) {
-      alert('请填写完整的配置信息');
+      setMessage({ type: 'error', text: '请填写完整的配置信息' });
       return;
     }
 
@@ -79,10 +123,10 @@ export function GiteaSettings() {
       const result = await getGiteaStatus();
       setStatus(result);
       setConfig(prev => ({ ...prev, enabled: result.config.enabled }));
-      alert('配置已保存');
+      setMessage({ type: 'success', text: '配置已保存' });
     } catch (error) {
       console.error('Failed to save config:', error);
-      alert('保存失败: ' + error);
+      setMessage({ type: 'error', text: '保存失败: ' + error });
     } finally {
       setSaving(false);
     }
@@ -105,10 +149,10 @@ export function GiteaSettings() {
     try {
       setTesting(true);
       const result = await testGiteaConnection();
-      alert('✅ ' + result);
+      setMessage({ type: 'success', text: '连接成功: ' + result });
     } catch (error) {
       console.error('Connection test failed:', error);
-      alert('❌ ' + error);
+      setMessage({ type: 'error', text: '连接失败: ' + error });
     } finally {
       setTesting(false);
     }
@@ -120,13 +164,13 @@ export function GiteaSettings() {
       const result = await createGiteaRepo(true);
       
       // 显示结果
-      alert(result);
+      setMessage({ type: 'success', text: result });
       
-      // 刷新状态（在用户关闭弹窗后）
+      // 刷新状态
       await loadStatus();
     } catch (error) {
       console.error('Failed to create repo:', error);
-      alert('创建仓库失败: ' + error);
+      setMessage({ type: 'error', text: '创建仓库失败: ' + error });
       await loadStatus();
     } finally {
       setCreating(false);
@@ -220,15 +264,64 @@ export function GiteaSettings() {
     }
   };
 
+  // 从 Vault 加载配置
+  const handleVaultConfigSelected = (vaultConfig: VaultFileBayConfig) => {
+    setConfig({
+      url: vaultConfig.url,
+      token: vaultConfig.token,
+      owner: vaultConfig.username,
+      repo: vaultConfig.repo_name,
+      enabled: config.enabled,
+    });
+    
+    setMessage({
+      type: 'success',
+      text: `已从 Vault 加载配置：${vaultConfig.email} - ${vaultConfig.repo_name}。请点击"保存配置"以应用更改`
+    });
+    
+    setShowVaultSelector(false);
+  };
+  
+  // 自动从 Desktop 提取配置
+  const handleAutoSync = async () => {
+    try {
+      setAutoSyncing(true);
+      setMessage(null);
+      
+      // 调用 Tauri 命令从 Desktop webview 提取配置
+      const result = await tauriCommands.extractConfigFromDesktopWebview();
+      
+      setMessage({
+        type: 'success',
+        text: result
+      });
+      
+      // 等待一会儿让配置同步完成
+      setTimeout(() => {
+        loadStatus();
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Failed to auto-sync:', error);
+      setMessage({
+        type: 'error',
+        text: `自动同步失败: ${error}`
+      });
+    } finally {
+      setAutoSyncing(false);
+    }
+  };
+
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
-          <div className="space-y-3">
-            <div className="h-10 bg-gray-200 rounded"></div>
-            <div className="h-10 bg-gray-200 rounded"></div>
-            <div className="h-10 bg-gray-200 rounded"></div>
+      <div className="p-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 bg-gray-200 rounded-lg w-1/4"></div>
+          <div className="h-4 bg-gray-100 rounded w-1/2"></div>
+          <div className="space-y-3 mt-6">
+            <div className="h-12 bg-gray-200 rounded-lg"></div>
+            <div className="h-12 bg-gray-200 rounded-lg"></div>
+            <div className="h-12 bg-gray-200 rounded-lg"></div>
           </div>
         </div>
       </div>
@@ -236,28 +329,28 @@ export function GiteaSettings() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">FileBay 配置</h2>
-        <p className="text-gray-600">
+    <div className="p-8 max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h2 className="text-3xl font-bold text-gray-900 mb-2">FileBay 配置</h2>
+        <p className="text-base text-gray-600">
           配置 FileBay 服务器信息，将脱敏后的文件自动上传到 FileBay 仓库进行版本管理
         </p>
       </div>
 
       {/* 状态指示器 */}
       {status && (
-        <div className="mb-6 p-4 rounded-lg border">
+        <Card className="mb-6 p-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center gap-4">
               <div className={`w-3 h-3 rounded-full ${
                 status.enabled && status.configured && status.repo_exists 
-                  ? 'bg-green-500' 
+                  ? 'bg-success animate-pulse' 
                   : status.enabled && status.configured 
-                  ? 'bg-yellow-500' 
+                  ? 'bg-warning' 
                   : 'bg-gray-300'
               }`}></div>
               <div>
-                <div className="font-medium text-gray-900">
+                <div className="font-semibold text-gray-900 text-base">
                   {status.enabled && status.configured && status.repo_exists
                     ? '已启用并就绪'
                     : status.enabled && status.configured
@@ -266,7 +359,7 @@ export function GiteaSettings() {
                     ? '已启用，需要配置'
                     : '未启用'}
                 </div>
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-gray-600 mt-1">
                   {status.configured ? '配置完整' : '请完成配置'}
                   {status.repo_exists !== null && (
                     <> · {status.repo_exists ? '仓库已存在' : '仓库未创建'}</>
@@ -274,255 +367,139 @@ export function GiteaSettings() {
                 </div>
               </div>
             </div>
+            <div className="flex gap-2">
+              {status.enabled && status.configured && status.repo_exists && (
+                <Badge variant="success">就绪</Badge>
+              )}
+              {status.enabled && status.configured && !status.repo_exists && (
+                <Badge variant="warning">待创建</Badge>
+              )}
+              {!status.configured && (
+                <Badge variant="neutral">未配置</Badge>
+              )}
+            </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* 消息提示 */}
       {message && (
-        <div className={`mb-6 p-4 rounded-lg border ${
-          message.type === 'success' ? 'bg-green-50 border-green-200' :
-          message.type === 'error' ? 'bg-red-50 border-red-200' :
-          'bg-blue-50 border-blue-200'
-        }`}>
-          <div className="flex items-start space-x-3">
-            <div className="flex-shrink-0">
-              {message.type === 'success' && (
-                <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-              )}
-              {message.type === 'error' && (
-                <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                </svg>
-              )}
-              {message.type === 'info' && (
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                </svg>
-              )}
-            </div>
-            <div className="flex-1">
-              <p className={`text-sm ${
-                message.type === 'success' ? 'text-green-800' :
-                message.type === 'error' ? 'text-red-800' :
-                'text-blue-800'
-              }`}>
-                {message.text}
-              </p>
-            </div>
-            <button
-              onClick={() => setMessage(null)}
-              className="flex-shrink-0 text-gray-400 hover:text-gray-600"
-            >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </div>
-        </div>
+        <Message
+          type={message.type}
+          onClose={() => setMessage(null)}
+          className="mb-6"
+        >
+          {message.text}
+        </Message>
       )}
 
       {/* 配置表单 */}
-      <div className="space-y-4 mb-6">
-        {/* 启用开关 */}
-        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-          <div>
-            <label className="font-medium text-gray-900">启用 FileBay 上传</label>
-            <p className="text-sm text-gray-500">脱敏完成后可选择上传到 FileBay</p>
-          </div>
-          <button
-            type="button"
-            onClick={handleToggleEnabled}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              config.enabled ? 'bg-blue-600' : 'bg-gray-200'
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                config.enabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
+      <Card className="p-6 mb-6">
+        <div className="space-y-6">
+          {/* 启用开关 */}
+          <Switch
+            checked={config.enabled}
+            onChange={handleToggleEnabled}
+            label="启用 FileBay 上传"
+            description="脱敏完成后可选择上传到 FileBay"
+          />
 
-        {/* Gitea URL */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            FileBay 服务器地址
-          </label>
-          <input
-            type="url"
+          {/* Gitea URL */}
+          <Input
+            label="FileBay 服务器地址"
             value="https://uat-filebay.cheersai.cloud"
             disabled
-            className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 cursor-not-allowed"
           />
-        </div>
 
-        {/* Access Token */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            访问令牌 (Access Token)
-          </label>
-          <div className="relative">
-            <input
-              type="password"
-              value={config.token}
-              onChange={(e) => setConfig({ ...config, token: e.target.value })}
-              placeholder={status?.config.has_token ? "••••••••（已保存，如需修改请重新输入）" : "输入您的 FileBay Access Token"}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Access Token */}
+          <div>
+            <div className="relative">
+              <Input
+                label="访问令牌 (Access Token)"
+                type={showToken ? "text" : "password"}
+                value={config.token}
+                onChange={(e) => setConfig({ ...config, token: e.target.value })}
+                placeholder={status?.config.has_token ? "••••••••（已保存，如需修改请重新输入）" : "输入您的 FileBay Access Token"}
+                helperText="在 FileBay 设置 → 应用 → 管理访问令牌 中生成。出于安全考虑，已保存的 Token 不会显示。"
+              />
+              <button
+                type="button"
+                onClick={handleToggleShowToken}
+                className="absolute right-3 top-9 text-gray-500 hover:text-gray-700 transition-colors"
+                title={showToken ? "隐藏 Token" : "显示 Token"}
+              >
+                {showToken ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
             {status?.config.has_token && !config.token && (
-              <div className="absolute right-3 top-2.5">
-                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">✓ 已保存</span>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant="success">✓ Token 已保存</Badge>
+                <span className="text-sm text-gray-600">
+                  （出于安全考虑不显示，如需修改请重新输入）
+                </span>
               </div>
             )}
           </div>
-          <p className="mt-1 text-xs text-gray-500">
-            在 FileBay 设置 → 应用 → 管理访问令牌 中生成。出于安全考虑，已保存的 Token 不会显示。
-          </p>
-        </div>
 
-        {/* Owner */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            用户名 / 组织名
-          </label>
-          <input
-            type="text"
+          {/* Owner */}
+          <Input
+            label="用户名 / 组织名"
             value={config.owner}
             onChange={(e) => setConfig({ ...config, owner: e.target.value })}
             placeholder="your-username"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-        </div>
 
-        {/* Repo */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            仓库名称
-          </label>
-          <input
-            type="text"
+          {/* Repo */}
+          <Input
+            label="仓库名称"
             value={config.repo}
             onChange={(e) => setConfig({ ...config, repo: e.target.value })}
             placeholder="masked-files"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            helperText="用于存储脱敏文件的仓库名称"
           />
-          <p className="mt-1 text-xs text-gray-500">
-            用于存储脱敏文件的仓库名称
-          </p>
         </div>
-      </div>
+      </Card>
 
       {/* 操作按钮 */}
-      <div className="flex items-center space-x-3 flex-wrap gap-y-2">
-        <button
-          onClick={handleAutoLoadConfig}
-          disabled={autoLoading}
-          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          <span>{autoLoading ? '读取中...' : '读取已下载配置'}</span>
-        </button>
-
-        <button
+      <div className="flex items-center gap-3 flex-wrap mb-6">
+        <Button
+          variant="primary"
+          icon={FileJson}
           onClick={handleImportConfig}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          <span>手动导入配置</span>
-        </button>
+          手动导入配置
+        </Button>
         
-        <button
+        <Button
+          variant="primary"
+          icon={Database}
           onClick={handleSave}
-          disabled={saving}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          loading={saving}
         >
-          {saving ? '保存中...' : '保存配置'}
-        </button>
-
-        <button
-          onClick={handleTestConnection}
-          disabled={testing}
-          className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {testing ? '测试中...' : '测试连接'}
-        </button>
-
-        {status?.configured && !status?.repo_exists && (
-          <button
-            onClick={handleCreateRepo}
-            disabled={creating}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {creating ? '创建中...' : '创建仓库'}
-          </button>
-        )}
-
-        <button
-          onClick={loadStatus}
-          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
-        >
-          刷新状态
-        </button>
+          保存配置
+        </Button>
       </div>
 
+      {/* Vault 配置选择器 */}
+      {showVaultSelector && (
+        <Card className="mt-6 p-6 bg-info/5 border-2 border-info/20">
+          <VaultConfigSelector onConfigSelected={handleVaultConfigSelected} />
+        </Card>
+      )}
+
       {/* 帮助信息 */}
-      <div className="mt-8 space-y-4">
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h3 className="font-medium text-blue-900 mb-2">💡 配置说明</h3>
-          <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li><strong>FileBay 服务器地址</strong>：完整的 FileBay 服务器 URL（例如：http://localhost:3000）</li>
-            <li><strong>访问令牌</strong>：在 FileBay 设置 → 应用 → 管理访问令牌 中生成（需要 repo 权限）</li>
-            <li><strong>用户名</strong>：你的 FileBay 用户名（不是邮箱）</li>
-            <li><strong>仓库名称</strong>：用于存储脱敏文件的仓库名（如：masked-files）</li>
-          </ul>
-        </div>
-
-        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <h3 className="font-medium text-yellow-900 mb-2">⚠️ 常见问题</h3>
-          <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
-            <li><strong>认证失败</strong>：请检查 Token 是否正确，是否有 repo 权限</li>
-            <li><strong>URL 错误</strong>：确保 URL 格式正确，不要包含 /api 路径</li>
-            <li><strong>用户名错误</strong>：使用 FileBay 用户名，不是显示名称</li>
-            <li><strong>仓库已存在</strong>：如果仓库已存在，无需重复创建</li>
-          </ul>
-        </div>
-
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-          <h3 className="font-medium text-green-900 mb-2">✅ 快速配置步骤</h3>
-          <ol className="text-sm text-green-800 space-y-1 list-decimal list-inside">
-            <li><strong>方式一（推荐 - 最简单）</strong>：
-              <ul className="ml-6 mt-1 space-y-1 list-disc">
-                <li>切换到 Desktop 在线工作区，在 FileBay 设置页面点击"下载配置文件"</li>
-                <li>文件会下载到浏览器的 Downloads 文件夹</li>
-                <li>返回本页面，直接点击"读取已下载配置"按钮，系统会自动从 Downloads 文件夹读取</li>
-                <li>配置信息自动填充后，点击"保存配置"即可</li>
-              </ul>
-            </li>
-            <li><strong>方式二（手动导入）</strong>：
-              <ul className="ml-6 mt-1 space-y-1 list-disc">
-                <li>如果自动读取失败，可以点击"导入配置文件"按钮</li>
-                <li>手动选择 Downloads 文件夹中的 filebay-config.json 文件</li>
-                <li>导入成功后会自动填充配置信息</li>
-              </ul>
-            </li>
-            <li><strong>方式三（完全手动）</strong>：
-              <ul className="ml-6 mt-1 space-y-1 list-disc">
-                <li>登录 FileBay 服务器，进入 设置 → 应用 → 管理访问令牌</li>
-                <li>点击"生成新令牌"，选择 repo 权限</li>
-                <li>复制生成的 Token 并手动填写到上方表单</li>
-                <li>填写完整信息后点击"保存配置"</li>
-                <li>点击"创建仓库"按钮（如果仓库不存在）</li>
-              </ul>
-            </li>
-          </ol>
+      <div className="mt-8">
+        <div className="flex items-start gap-3 p-4 bg-success/5 border border-success/20 rounded-lg">
+          <CheckCircle className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-semibold text-success mb-2">快速配置</h3>
+            <ol className="space-y-2 text-sm text-gray-700 list-decimal list-inside">
+              <li>点击左侧"CheersAI"按钮，进入 Desktop 在线工作区</li>
+              <li>在 Desktop 页面访问 FileBay 设置页面</li>
+              <li>点击"下载配置文件"按钮</li>
+              <li>配置会自动同步到本程序，无需手动操作</li>
+            </ol>
+          </div>
         </div>
       </div>
     </div>

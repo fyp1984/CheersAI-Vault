@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { uploadToGitea, getGiteaStatus } from '../../services/gitea';
 import { useFileStore } from '../../store/fileStore';
 import Toast from '../common/Toast';
+import { FolderOpen } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -62,6 +63,14 @@ export function FileManager() {
       const result = await invoke<SandboxFile[]>('list_files_in_directory', { directory: outputDir });
       // 过滤掉 .cmap 对照文件
       const filteredFiles = result.filter(file => !file.name.endsWith('.cmap'));
+      
+      // 按修改时间降序排序（最新的文件在最上面）
+      filteredFiles.sort((a, b) => {
+        const dateA = new Date(a.modified).getTime();
+        const dateB = new Date(b.modified).getTime();
+        return dateB - dateA; // 降序：最新的在前
+      });
+      
       setFiles(filteredFiles);
     } catch (error) {
       console.error('Failed to load files:', error);
@@ -170,7 +179,7 @@ export function FileManager() {
 
   const handleClearAll = async () => {
     if (!outputDir) {
-      alert('请先设置输出目录');
+      setToast({ message: '请先设置输出目录', type: 'error' });
       return;
     }
 
@@ -269,7 +278,7 @@ export function FileManager() {
           <p className="text-gray-600">管理输出目录中的脱敏文件</p>
         </div>
         <div className="flex flex-col items-center justify-center py-20 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl">
-          <div className="text-5xl mb-4">📁</div>
+          <FolderOpen className="w-16 h-16 text-gray-400 mb-4" />
           <h3 className="text-lg font-semibold text-gray-700 mb-2">尚未配置输出目录</h3>
           <p className="text-sm text-gray-500 mb-6">请先前往「文件脱敏」页面，点击「选择输出目录」完成配置</p>
           <button 

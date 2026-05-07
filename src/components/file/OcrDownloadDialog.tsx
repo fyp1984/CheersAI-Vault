@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { AlertCircle, Download, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Download, CheckCircle2, CheckCircle } from 'lucide-react';
 
 interface OcrDownloadProgress {
   downloaded: number;
@@ -179,8 +179,14 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
                 <div>
                   <p className="font-medium mb-1">完整版 OCR 说明：</p>
                   <ul className="list-disc list-inside space-y-1 text-xs">
-                    <li>✅ 支持文本型 PDF（可复制文字的 PDF）</li>
-                    <li>✅ 支持扫描版 PDF（图片型，使用 PaddleOCR 识别）</li>
+                    <li className="flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3 text-green-600 inline flex-shrink-0" />
+                      支持文本型 PDF（可复制文字的 PDF）
+                    </li>
+                    <li className="flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3 text-green-600 inline flex-shrink-0" />
+                      支持扫描版 PDF（图片型，使用 PaddleOCR 识别）
+                    </li>
                     <li>包含 PyMuPDF + PaddleOCR，约 270MB</li>
                     <li>所有处理均在本地完成，数据不上传</li>
                   </ul>
@@ -211,7 +217,10 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
               <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0" />
               <div className="text-sm text-green-700">
                 <p className="font-medium">完整版 OCR 已就绪</p>
-                <p className="text-xs mt-1">✅ 支持文本型和扫描版 PDF</p>
+                <p className="text-xs mt-1 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 inline" />
+                  支持文本型和扫描版 PDF
+                </p>
               </div>
             </div>
           )}

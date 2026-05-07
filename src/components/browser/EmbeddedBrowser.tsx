@@ -10,7 +10,8 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle,
-  Bug
+  Bug,
+  RefreshCw
 } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import { CLOUD_APP_URL } from "@/lib/cloud";
@@ -549,7 +550,7 @@ export default function EmbeddedBrowser({
           title="回到 Desktop 登录页"
           className="text-orange-600 border-orange-300 hover:bg-orange-50"
         >
-          🔄
+          <RefreshCw className="w-4 h-4" />
         </Button>
       </div>
 
