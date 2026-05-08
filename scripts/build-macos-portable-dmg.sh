@@ -35,6 +35,9 @@ Options:
   - 未传 --output-dir 时，输出到 $DEFAULT_OUTPUT_DIR
   - --sign=N 时，使用 ad-hoc 签名，适合内部验证包
   - --sign=Y 时，必须传入 --sign-file，且签名文件首行应为可用的 codesign identity
+  - portable DMG 作为当前 macOS 默认交付形态，需承载最新的“/cloud 默认内嵌 + 统一回退页”逻辑
+  - 当前统一验收入口为 src/pages/CheersAICloudBrowser.tsx，对应 /cloud 主窗口回退页
+  - 验收至少覆盖：首次启动不闪退、/cloud 默认尝试内嵌、失败时停留在统一回退页并提供重试/独立窗口/系统浏览器入口
 
 版本号修改建议:
   1. 自动递增:
@@ -45,6 +48,17 @@ Options:
      pnpm version:set -- 0.1.21
   3. 单次打包直接指定:
      bash ./scripts/build-macos-portable-dmg.sh --version 0.1.21
+EOF
+}
+
+print_acceptance_checklist() {
+  cat <<EOF
+==> Portable DMG 验收提示
+1. 首次启动主应用不闪退，主窗口可稳定进入。
+2. 进入 /cloud 后默认先尝试内嵌工作区，而不是直接落到旧的独立页流程。
+3. 若内嵌子 WebView 创建失败，主窗口仍保持可用，并停留在统一 Cloud 回退页。
+4. 统一回退页至少可见“重新尝试嵌入式打开”“在独立窗口打开”“在系统浏览器打开”三个入口。
+5. 验收记录需注明当前 DMG 是否基于最新“默认内嵌 + 统一回退页”逻辑构建。
 EOF
 }
 
@@ -201,3 +215,4 @@ hdiutil create \
 echo "==> Portable DMG created"
 echo "PATH: $OUTPUT_DMG"
 shasum -a 256 "$OUTPUT_DMG"
+print_acceptance_checklist
