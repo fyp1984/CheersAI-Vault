@@ -133,10 +133,10 @@ export function FileBayConfigManager() {
       <CardContent className="space-y-4">
         {/* 状态显示 */}
         {configStatus?.exists ? (
-          <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-5 h-5 text-green-600" />
-              <span className="font-semibold text-green-800">配置已加载</span>
+              <CheckCircle2 className="w-5 h-5 text-blue-600" />
+              <span className="font-semibold text-blue-800">配置已加载</span>
             </div>
             
             {configStatus.config && (
@@ -176,7 +176,7 @@ export function FileBayConfigManager() {
         {/* 消息显示 */}
         {message && (
           <div className={`p-3 rounded-lg ${
-            message.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' :
+            message.type === 'success' ? 'bg-blue-50 border border-blue-200 text-blue-800' :
             message.type === 'error' ? 'bg-red-50 border border-red-200 text-red-800' :
             'bg-blue-50 border border-blue-200 text-blue-800'
           }`}>

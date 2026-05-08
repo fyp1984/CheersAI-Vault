@@ -283,7 +283,7 @@ export function FileManager() {
           <p className="text-sm text-gray-500 mb-6">请先前往「文件脱敏」页面，点击「选择输出目录」完成配置</p>
           <button 
             onClick={() => navigate('/process')}
-            className="px-4 py-2 bg-indigo-500 text-white text-sm rounded-md hover:bg-indigo-600 transition-colors"
+            className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors"
           >
             前往文件脱敏
           </button>
@@ -320,9 +320,9 @@ export function FileManager() {
           <div className="text-sm text-blue-600 font-medium">文件总数</div>
           <div className="text-2xl font-bold text-blue-900">{files.length}</div>
         </div>
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-          <div className="text-sm text-purple-600 font-medium">总大小</div>
-          <div className="text-2xl font-bold text-purple-900">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="text-sm text-blue-600 font-medium">总大小</div>
+          <div className="text-2xl font-bold text-blue-900">
             {formatFileSize(files.reduce((sum, f) => sum + f.size, 0))}
           </div>
         </div>
@@ -457,7 +457,7 @@ export function FileManager() {
                     <div className="flex items-center gap-2">
                       <span>{file.name}</span>
                       {file.name.includes('masked') && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
                           已脱敏
                         </span>
                       )}
@@ -471,7 +471,7 @@ export function FileManager() {
                       <button
                         onClick={() => handleUploadToGitea(file)}
                         disabled={uploading}
-                        className={`${giteaEnabled ? 'text-green-600 hover:text-green-800' : 'text-gray-400'} disabled:opacity-50`}
+                        className={`${giteaEnabled ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400'} disabled:opacity-50`}
                         title={giteaEnabled ? '上传到 FileBay' : '请先配置 FileBay'}
                       >
                         上传

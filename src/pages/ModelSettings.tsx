@@ -33,7 +33,7 @@ export default function ModelSettings() {
               <Label>模型名称</Label>
               <Input placeholder="gpt-4o-mini" />
             </div>
-            <Button className="bg-indigo-500 hover:bg-indigo-600 w-full">
+            <Button className="bg-blue-500 hover:bg-blue-600 w-full">
               保存配置
             </Button>
             <p className="text-xs text-gray-400 text-center">

@@ -128,21 +128,21 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
             </div>
           ) : sensitiveTermsCount === 0 ? (
             // 未配置敏感词库 - 显示提示
-            <div className="bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-lg">
+            <div className="bg-blue-50 border border-blue-200 px-3 py-2.5 rounded-lg">
               <div className="flex items-start gap-2 mb-2">
-                <Lightbulb className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <Lightbulb className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-amber-900 mb-1">
+                  <p className="text-sm font-medium text-blue-900 mb-1">
                     为了效果更好更有针对性，请配置您专属的敏感词库
                   </p>
-                  <p className="text-xs text-amber-700">
+                  <p className="text-xs text-blue-700">
                     添加您业务相关的敏感词，如公司名称、项目代号、内部术语等
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => navigate("/sensitive-terms")}
-                className="w-full text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded transition-colors"
+                className="w-full text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition-colors"
               >
                 前往配置敏感词库 →
               </button>
@@ -158,7 +158,7 @@ export function RuleSelector({ selectedRules, onRulesChange }: RuleSelectorProps
                   <Badge variant="secondary" className="text-xs px-1 py-0 bg-blue-100">
                     自动启用
                   </Badge>
-                  <Badge variant="secondary" className="text-xs px-1 py-0 bg-green-100 text-green-700">
+                  <Badge variant="secondary" className="text-xs px-1 py-0 bg-blue-100 text-blue-700">
                     {sensitiveTermsCount} 个词条
                   </Badge>
                 </div>

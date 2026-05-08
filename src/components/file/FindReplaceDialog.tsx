@@ -112,7 +112,7 @@ export function FindReplaceDialog({
           {uniqueEntities.length > 0 ? (
             <div className="space-y-1.5">
               <Label className="text-xs">识别到的敏感词（点击添加替换条目）</Label>
-              <div className="flex flex-wrap gap-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg max-h-28 overflow-y-auto">
+              <div className="flex flex-wrap gap-1.5 p-2.5 bg-blue-50 border border-blue-200 rounded-lg max-h-28 overflow-y-auto">
                 {uniqueEntities.map((entity, idx) => (
                   <Badge
                     key={idx}

@@ -559,7 +559,7 @@ export default function EmbeddedBrowser({
         <div className={`flex items-center gap-2 p-2 text-sm border-b ${
           error ? 'bg-red-50 text-red-700' : 
           isLoading ? 'bg-blue-50 text-blue-700' : 
-          'bg-green-50 text-green-700'
+          'bg-blue-50 text-blue-700'
         }`}>
           {error ? (
             <AlertCircle className="w-4 h-4" />

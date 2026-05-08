@@ -82,7 +82,7 @@ export function PassphraseBox({
         </Button>
       </div>
       {value && (
-        <p className="text-xs text-green-600">
+        <p className="text-xs text-blue-600">
           口令已保存，下次使用时会自动填充
         </p>
       )}

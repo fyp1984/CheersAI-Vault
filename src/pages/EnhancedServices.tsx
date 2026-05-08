@@ -468,7 +468,7 @@ export function EnhancedServices() {
             <button
               onClick={handleStartOllama}
               disabled={startingOllama || loading}
-              className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {startingOllama ? (
                 <>
@@ -511,14 +511,14 @@ export function EnhancedServices() {
       {/* 消息提示 */}
       {message && (
         <div className={`mb-6 p-4 rounded-lg border ${
-          message.type === 'success' ? 'bg-green-50 border-green-200' :
+          message.type === 'success' ? 'bg-blue-50 border-blue-200' :
           message.type === 'error' ? 'bg-red-50 border-red-200' :
           'bg-blue-50 border-blue-200'
         }`}>
           <div className="flex items-start space-x-3">
             <div className="flex-shrink-0">
               {message.type === 'success' && (
-                <CheckCircle className="w-5 h-5 text-green-600" />
+                <CheckCircle className="w-5 h-5 text-blue-600" />
               )}
               {message.type === 'error' && (
                 <AlertCircle className="w-5 h-5 text-red-600" />
@@ -529,7 +529,7 @@ export function EnhancedServices() {
             </div>
             <div className="flex-1">
               <p className={`text-sm ${
-                message.type === 'success' ? 'text-green-800' :
+                message.type === 'success' ? 'text-blue-800' :
                 message.type === 'error' ? 'text-red-800' :
                 'text-blue-800'
               }`}>
@@ -571,7 +571,7 @@ export function EnhancedServices() {
                   {/* 状态标签 */}
                   <div className="flex items-center space-x-2">
                     {serviceStatus.ocr ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         <CheckCircle className="w-3 h-3 mr-1" />
                         已安装
                       </span>
@@ -592,15 +592,15 @@ export function EnhancedServices() {
               <h4 className="text-sm font-medium text-gray-900 mb-2">功能特性</h4>
               <ul className="space-y-1 text-sm text-gray-600">
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   自动检测本地运行时是否可用
                 </li>
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   macOS 使用系统 Python 创建隔离环境
                 </li>
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   本地离线处理，保护隐私
                 </li>
               </ul>
@@ -671,8 +671,8 @@ export function EnhancedServices() {
             <div className="flex items-start justify-between">
               <div className="flex items-start space-x-4">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                    <Brain className="w-6 h-6 text-purple-600" />
+                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <Brain className="w-6 h-6 text-blue-600" />
                   </div>
                 </div>
                 <div className="flex-1">
@@ -686,7 +686,7 @@ export function EnhancedServices() {
                   {/* 状态标签 */}
                   <div className="flex items-center space-x-2">
                     {serviceStatus.aiModel ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         <CheckCircle className="w-3 h-3 mr-1" />
                         已安装
                       </span>
@@ -697,7 +697,7 @@ export function EnhancedServices() {
                       </span>
                     )}
                     <span className="text-xs text-gray-500">模型: qwen2.5:1.5b</span>
-                    <span className={`text-xs ${serviceStatus.ollamaRunning ? 'text-green-600' : 'text-amber-600'}`}>
+                    <span className={`text-xs ${serviceStatus.ollamaRunning ? 'text-blue-600' : 'text-blue-400'}`}>
                       {serviceStatus.ollamaInstalled
                         ? serviceStatus.ollamaRunning ? 'Ollama 服务已运行' : 'Ollama 已安装但未启动'
                         : 'Ollama 未安装'}
@@ -712,15 +712,15 @@ export function EnhancedServices() {
               <h4 className="text-sm font-medium text-gray-900 mb-2">功能特性</h4>
               <ul className="space-y-1 text-sm text-gray-600">
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   智能识别姓名、身份证等敏感信息
                 </li>
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   上下文理解，减少误判
                 </li>
                 <li className="flex items-center">
-                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                  <CheckCircle className="w-4 h-4 text-blue-500 mr-2 flex-shrink-0" />
                   本地运行，数据不出本地
                 </li>
               </ul>
@@ -734,7 +734,7 @@ export function EnhancedServices() {
                     <button
                       onClick={handleInstallAiModel}
                       disabled={installing.aiModel}
-                      className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                      className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                     >
                       {installing.aiModel ? (
                         <>
@@ -754,7 +754,7 @@ export function EnhancedServices() {
                         href="https://ollama.com/download"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 text-sm"
+                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
                       >
                         <ExternalLink className="w-4 h-4 mr-2" />
                         下载 Ollama
@@ -762,7 +762,7 @@ export function EnhancedServices() {
                       <button
                         onClick={handleInstallAiModel}
                         disabled={installing.aiModel}
-                        className="inline-flex items-center px-4 py-2 border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                        className="inline-flex items-center px-4 py-2 border border-blue-300 text-blue-700 rounded-md hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                       >
                         {installing.aiModel ? (
                           <>
@@ -818,7 +818,7 @@ export function EnhancedServices() {
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
-                    className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${downloadProgress.aiModel}%` }}
                   />
                 </div>
@@ -842,12 +842,12 @@ export function EnhancedServices() {
           </ul>
         </div>
 
-        <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center gap-2 mb-2">
-            <Bot className="w-4 h-4 text-purple-900" />
-            <h3 className="font-medium text-purple-900">AI 模型说明</h3>
+            <Bot className="w-4 h-4 text-blue-900" />
+            <h3 className="font-medium text-blue-900">AI 模型说明</h3>
           </div>
-          <ul className="text-sm text-purple-800 space-y-1 list-disc list-inside">
+          <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
             <li>使用 Qwen2.5:1.5b 轻量级模型（约 1GB）</li>
             <li>自动检测系统已安装的 Ollama，无需重复安装</li>
             <li>macOS 优先唤起 Ollama.app，避免重复前台 `serve` 进程</li>

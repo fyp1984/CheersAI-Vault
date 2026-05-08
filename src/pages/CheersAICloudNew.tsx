@@ -414,7 +414,7 @@ export default function CheersAICloud() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-br from-green-50 via-blue-50 to-purple-50">
+    <div className="flex flex-col h-full bg-gradient-to-br from-blue-50 via-blue-100 to-blue-50">
       {/* 消息提示 */}
       {message && (
         <div className="fixed top-4 right-4 z-50 max-w-md">
@@ -446,7 +446,7 @@ export default function CheersAICloud() {
               {/* 功能介绍 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex items-start gap-3 p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
-                  <div className="flex items-center justify-center w-10 h-10 bg-green-500 rounded-lg flex-shrink-0">
+                  <div className="flex items-center justify-center w-10 h-10 bg-blue-500 rounded-lg flex-shrink-0">
                     <Sparkles className="w-5 h-5 text-white" />
                   </div>
                   <div>
@@ -465,8 +465,8 @@ export default function CheersAICloud() {
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-4 bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl">
-                  <div className="flex items-center justify-center w-10 h-10 bg-purple-500 rounded-lg flex-shrink-0">
+                <div className="flex items-start gap-3 p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
+                  <div className="flex items-center justify-center w-10 h-10 bg-blue-500 rounded-lg flex-shrink-0">
                     <Zap className="w-5 h-5 text-white" />
                   </div>
                   <div>
@@ -477,7 +477,7 @@ export default function CheersAICloud() {
               </div>
 
               {/* 访问方式说明 */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-6">
+              <div className="bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 rounded-xl p-6">
                 <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                   <Globe className="w-5 h-5 text-blue-600" />
                   选择访问方式
@@ -488,7 +488,7 @@ export default function CheersAICloud() {
                     <p><span className="font-medium">应用内窗口</span>：在独立窗口中打开，完整的浏览器体验，支持自动跳转到登录页面</p>
                   </div>
                   <div className="flex items-start gap-2">
-                    <div className="w-1.5 h-1.5 bg-purple-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>
                     <p><span className="font-medium">系统浏览器</span>：使用默认浏览器打开，适合需要多标签页或扩展功能的场景</p>
                   </div>
                 </div>
@@ -516,7 +516,7 @@ export default function CheersAICloud() {
                 </Button>
                 
                 <Button 
-                  variant="outline" 
+                  variant="secondary" 
                   onClick={handleOpenExternal}
                   className="flex-1 h-14 border-2 border-gray-300 hover:border-gray-400 hover:bg-gray-50 text-base font-medium"
                   size="lg"
@@ -535,7 +535,7 @@ export default function CheersAICloud() {
                   </h4>
                   <div className="flex gap-2 flex-wrap">
                     <Button 
-                      variant="outline" 
+                      variant="secondary" 
                       size="sm"
                       onClick={handleDebugWindow}
                       className={isDebugging ? "bg-yellow-50 border-yellow-300" : ""}
@@ -544,28 +544,28 @@ export default function CheersAICloud() {
                       {isDebugging ? "停止调试" : "开始调试"}
                     </Button>
                     <Button 
-                      variant="outline" 
+                      variant="secondary" 
                       size="sm"
                       onClick={handleForceLogin}
                     >
                       强制跳转登录
                     </Button>
                     <Button 
-                      variant="outline" 
+                      variant="secondary" 
                       size="sm"
                       onClick={handleInspectPage}
                     >
                       检查页面内容
                     </Button>
                     <Button 
-                      variant="outline" 
+                      variant="secondary" 
                       size="sm"
                       onClick={handleTryDifferentStrategies}
                     >
                       尝试其他策略
                     </Button>
                     <Button 
-                      variant="outline" 
+                      variant="secondary" 
                       size="sm"
                       onClick={handleTryDifferentUserAgents}
                     >

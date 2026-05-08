@@ -8,28 +8,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        // CheersAI 品牌主色
+        // CheersAI 品牌主色 - 统一使用浅蓝色系
         primary: {
-          DEFAULT: '#3b82f6',
-          dark: '#2563eb',
-          light: '#60a5fa',
+          DEFAULT: '#3b82f6',  // blue-500
+          dark: '#2563eb',     // blue-600
+          light: '#60a5fa',    // blue-400
           foreground: '#ffffff',
         },
         // 功能色
         success: {
-          DEFAULT: '#10b981',
+          DEFAULT: '#3b82f6',  // 统一使用蓝色
           foreground: '#ffffff',
         },
         warning: {
-          DEFAULT: '#f59e0b',
+          DEFAULT: '#f59e0b',  // 保留黄色用于警告
           foreground: '#ffffff',
         },
         error: {
-          DEFAULT: '#ef4444',
+          DEFAULT: '#ef4444',  // 保留红色用于错误
           foreground: '#ffffff',
         },
         info: {
-          DEFAULT: '#8b5cf6',
+          DEFAULT: '#3b82f6',  // 统一使用蓝色
           foreground: '#ffffff',
         },
         // 中性色

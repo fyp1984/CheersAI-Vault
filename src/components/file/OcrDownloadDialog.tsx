@@ -147,7 +147,7 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
           <DialogTitle className="flex items-center gap-2">
             {isComplete ? (
               <>
-                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <CheckCircle2 className="h-5 w-5 text-blue-500" />
                 OCR 安装完成
               </>
             ) : (
@@ -180,11 +180,11 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
                   <p className="font-medium mb-1">完整版 OCR 说明：</p>
                   <ul className="list-disc list-inside space-y-1 text-xs">
                     <li className="flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3 text-green-600 inline flex-shrink-0" />
+                      <CheckCircle className="w-3 h-3 text-blue-600 inline flex-shrink-0" />
                       支持文本型 PDF（可复制文字的 PDF）
                     </li>
                     <li className="flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3 text-green-600 inline flex-shrink-0" />
+                      <CheckCircle className="w-3 h-3 text-blue-600 inline flex-shrink-0" />
                       支持扫描版 PDF（图片型，使用 PaddleOCR 识别）
                     </li>
                     <li>包含 PyMuPDF + PaddleOCR，约 270MB</li>
@@ -213,9 +213,9 @@ export function OcrDownloadDialog({ open, onOpenChange, onComplete }: OcrDownloa
           )}
 
           {isComplete && (
-            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
-              <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0" />
-              <div className="text-sm text-green-700">
+            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <CheckCircle2 className="h-5 w-5 text-blue-500 flex-shrink-0" />
+              <div className="text-sm text-blue-700">
                 <p className="font-medium">完整版 OCR 已就绪</p>
                 <p className="text-xs mt-1 flex items-center gap-1">
                   <CheckCircle className="w-3 h-3 inline" />

@@ -267,7 +267,7 @@ export default function NativeBrowser({
       {/* 状态显示 */}
       <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b text-sm">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isWebviewReady ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+          <div className={`w-2 h-2 rounded-full ${isWebviewReady ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
           <span className="text-gray-700">
             {isWebviewReady ? '浏览器已就绪' : '正在初始化浏览器...'}
           </span>
@@ -317,11 +317,11 @@ export default function NativeBrowser({
               <span>支持完整的 JavaScript 执行</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <div className="w-1 h-1 bg-green-500 rounded-full"></div>
+              <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
               <span>自动处理 Cookie 和会话</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <div className="w-1 h-1 bg-purple-500 rounded-full"></div>
+              <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
               <span>原生性能，无代理延迟</span>
             </div>
           </div>

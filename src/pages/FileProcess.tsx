@@ -379,7 +379,7 @@ export default function FileProcess() {
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2.5">
                       <div 
-                        className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                        className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
                         style={{ width: `${(batchStatus.completed / batchStatus.total) * 100}%` }}
                       ></div>
                     </div>
@@ -447,12 +447,12 @@ export default function FileProcess() {
         description="拖放文件进行数据脱敏"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={clearCompleted}>
+            <Button variant="secondary" size="sm" onClick={clearCompleted}>
               <Trash2 className="w-4 h-4 mr-1" />
               清除已完成
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={handleSelectOutputDir}
             >
@@ -460,7 +460,7 @@ export default function FileProcess() {
               选择输出目录
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={async () => {
                 try {
@@ -492,7 +492,7 @@ export default function FileProcess() {
               size="sm"
               onClick={handleStart}
               disabled={pendingCount === 0 || !outputDir || !!activeJobId || selectedRules.length === 0 || isLoadingPreview}
-              className="bg-indigo-500 hover:bg-indigo-600"
+              className="bg-blue-500 hover:bg-blue-600"
             >
               {isLoadingPreview ? (
                 <>
@@ -525,8 +525,8 @@ export default function FileProcess() {
               />
               
               {outputDir && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <p className="text-sm text-green-700">
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-700">
                     <strong>输出目录:</strong> {getDisplayPath(outputDir, 60)}
                   </p>
                 </div>
@@ -562,17 +562,17 @@ export default function FileProcess() {
             />
             
             {/* AI 检测开关 */}
-            <div className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 rounded-xl">
+            <div className="p-4 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <Bot className="w-4 h-4 text-purple-900" />
-                    <h3 className="text-sm font-semibold text-purple-900">
+                    <Bot className="w-4 h-4 text-blue-900" />
+                    <h3 className="text-sm font-semibold text-blue-900">
                       AI 多方法检测
                     </h3>
                   </div>
                   {isCheckingAi ? (
-                    <p className="text-xs text-purple-600 mb-2">
+                    <p className="text-xs text-blue-600 mb-2">
                       正在检查 AI 配置...
                     </p>
                   ) : !aiDetectionAvailable ? (
@@ -583,14 +583,14 @@ export default function FileProcess() {
                       </p>
                     </div>
                   ) : (
-                    <p className="text-xs text-purple-700 mb-2">
+                    <p className="text-xs text-blue-700 mb-2">
                       使用 AI+NER+正则+搜索 四种方法检测敏感信息（可选，会增加处理时间）
                     </p>
                   )}
-                  <p className="text-xs text-purple-600 mb-1">
+                  <p className="text-xs text-blue-600 mb-1">
                     • 姓名：四种方法<strong>交集</strong>（全部确认才脱敏）
                   </p>
-                  <p className="text-xs text-purple-600">
+                  <p className="text-xs text-blue-600">
                     • 其他：四种方法<strong>并集</strong>（任一识别即脱敏）
                   </p>
                 </div>
@@ -605,9 +605,9 @@ export default function FileProcess() {
                   <div className={`w-11 h-6 ${
                     !aiDetectionAvailable || isCheckingAi 
                       ? 'bg-gray-300 cursor-not-allowed' 
-                      : 'bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300'
+                      : 'bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300'
                   } rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${
-                    aiDetectionAvailable && !isCheckingAi ? 'peer-checked:bg-purple-600' : ''
+                    aiDetectionAvailable && !isCheckingAi ? 'peer-checked:bg-blue-600' : ''
                   }`}></div>
                 </label>
               </div>

@@ -24,7 +24,7 @@ const levelColor: Record<LogLevel, string> = {
   info: "bg-blue-100 text-blue-600",
   warning: "bg-yellow-100 text-yellow-700",
   error: "bg-red-100 text-red-600",
-  success: "bg-green-100 text-green-600",
+  success: "bg-blue-100 text-blue-600",
 };
 
 const levelLabel: Record<LogLevel, string> = {
@@ -286,7 +286,7 @@ export default function OperationLog() {
               <CardContent>
                 <div className="flex items-center gap-4 text-sm">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                     <span>状态: {dbInfo.status}</span>
                   </div>
                   <div>日志表: {dbInfo.log_table}</div>

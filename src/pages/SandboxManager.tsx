@@ -334,7 +334,7 @@ export default function SandboxManager() {
                 {locked ? (
                   <Lock className="w-5 h-5 text-red-500" />
                 ) : (
-                  <Unlock className="w-5 h-5 text-green-500" />
+                  <Unlock className="w-5 h-5 text-blue-500" />
                 )}
                 沙箱状态
                 <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
@@ -388,7 +388,7 @@ export default function SandboxManager() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <p className="text-sm text-green-600 flex items-center gap-1.5">
+                  <p className="text-sm text-blue-600 flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4" />
                     沙箱已解锁，可以访问安全文件
                   </p>
@@ -505,11 +505,11 @@ export default function SandboxManager() {
                 </div>
                 
                 {outputDir && !pathError && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <p className="text-sm text-green-700">
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-700">
                       <strong>当前路径:</strong> {getDisplayPath(outputDir, 60)}
                     </p>
-                    <p className="text-xs text-green-600 mt-1">
+                    <p className="text-xs text-blue-600 mt-1">
                       脱敏文件和映射文件都将保存到此目录
                     </p>
                   </div>
@@ -603,11 +603,11 @@ export default function SandboxManager() {
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border ${
-            toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
+            toast.type === 'success' ? 'bg-blue-50 border-blue-200 text-blue-800' :
             toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
             'bg-yellow-50 border-yellow-200 text-yellow-800'
           }`}>
-            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />}
+            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
             {toast.type === 'error' && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
             {toast.type === 'warning' && <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />}
             <span className="text-sm font-medium">{toast.message}</span>
