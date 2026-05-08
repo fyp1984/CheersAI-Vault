@@ -1,17 +1,23 @@
 {
   "name": "cheersai-vault",
   "private": true,
-  "version": "0.1.21",
+"version": "0.1.23",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "version:sync": "node scripts/version-manager.js sync",
+    "version:check": "node scripts/version-manager.js check",
+    "version:prepare": "node scripts/version-manager.js prepare",
+    "version:set": "node scripts/version-manager.js set",
+    "build": "pnpm version:prepare && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:dmg:portable": "bash ./scripts/build-macos-portable-dmg.sh",
     "version:patch": "node scripts/bump-version.js patch",
     "version:minor": "node scripts/bump-version.js minor",
     "version:major": "node scripts/bump-version.js major",
+    "build:windows": "pnpm tauri build --bundles nsis,msi",
+    "build:linux": "pnpm tauri build --bundles appimage,deb,rpm",
     "release": "node scripts/bump-version.js patch && pnpm tauri build"
   },
   "dependencies": {

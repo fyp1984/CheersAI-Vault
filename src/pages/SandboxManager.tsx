@@ -22,11 +22,13 @@ import {
   Eye,
   EyeOff,
   Save,
+  RefreshCw,
   Info,
   CheckCircle2,
   AlertTriangle,
   XCircle
 } from "lucide-react";
+import { FileBayConfigManager } from "@/components/filebay/FileBayConfigManager";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
@@ -37,13 +39,14 @@ import type { PlatformContext } from "@/types/commands";
 
 export default function SandboxManager() {
   const { locked, files, setLocked, setFiles } = useSandboxStore();
-  const { outputDir, setOutputDir } = useFileStore();
+  const { passphrase, outputDir, rememberPassphrase, setPassphrase, setOutputDir, setRememberPassphrase } = useFileStore();
   
   // 本地状态
   const [pin, setPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [showPin, setShowPin] = useState(false);
+  const [showPassphrase, setShowPassphrase] = useState(false);
   const [showNewPin, setShowNewPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState<string>("");
@@ -56,7 +59,6 @@ export default function SandboxManager() {
     description: string;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => {} });
-  const [syncing, setSyncing] = useState(false);
 
   // toast 自动消失
   useEffect(() => {
@@ -104,9 +106,7 @@ export default function SandboxManager() {
     if (!locked && outputDir) {
       try {
         const fileList = await tauriCommands.listFilesInDirectory(outputDir);
-        // 过滤掉 .cmap 对照文件
-        const filteredFiles = fileList.filter(file => !file.name.endsWith('.cmap'));
-        setFiles(filteredFiles);
+        setFiles(fileList);
       } catch (error) {
         console.error("Failed to load sandbox files:", error);
         setFiles([]); // 如果失败，设置为空数组
@@ -150,6 +150,18 @@ export default function SandboxManager() {
   // 初始化：如果不记住口令，清空已保存的口令
   useEffect(() => {
     console.log("=== SandboxManager 初始化 ===");
+    console.log("Passphrase loaded:", passphrase ? `"${passphrase}"` : "(空)");
+    console.log("Remember passphrase:", rememberPassphrase);
+    console.log("Passphrase length:", passphrase.length);
+    
+    // 检查 localStorage
+    const stored = localStorage.getItem("file-store");
+    console.log("LocalStorage file-store:", stored ? JSON.parse(stored) : "(无)");
+    
+    if (!rememberPassphrase && passphrase) {
+      console.log("Clearing passphrase because rememberPassphrase is false");
+      setPassphrase("");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -279,26 +291,13 @@ export default function SandboxManager() {
     setPathError("");
   };
 
-  // 一键同步到 FileBay
-  const handleSyncToFileBay = async () => {
-    if (!outputDir || files.length === 0) {
-      setToast({ message: '没有可同步的文件', type: 'warning' });
-      return;
-    }
-
-    setSyncing(true);
-    
+  // 生成随机口令
+  const generatePassphrase = async () => {
     try {
-      // TODO: 调用 FileBay 同步 API
-      // 这里需要实现将文件上传到 FileBay 的逻辑
-      await new Promise(resolve => setTimeout(resolve, 2000)); // 模拟上传
-      
-      setToast({ message: `成功同步 ${files.length} 个文件到 FileBay`, type: 'success' });
+      const newPassphrase = await tauriCommands.generatePassphrase();
+      setPassphrase(newPassphrase);
     } catch (error) {
-      console.error('Sync to FileBay failed:', error);
-      setToast({ message: '同步失败: ' + error, type: 'error' });
-    } finally {
-      setSyncing(false);
+      console.error("Failed to generate passphrase:", error);
     }
   };
 
@@ -400,6 +399,9 @@ export default function SandboxManager() {
             </CardContent>
           </Card>
 
+          {/* FileBay 配置管理 */}
+          {!locked && <FileBayConfigManager />}
+
           {/* 安全设置 */}
           <Card>
             <CardHeader>
@@ -456,6 +458,54 @@ export default function SandboxManager() {
                       清除 PIN
                     </Button>
                   )}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* 默认加密口令 */}
+              <div className="space-y-4">
+                <Label className="text-sm font-medium">默认加密口令</Label>
+                <p className="text-xs text-gray-500">
+                  用于脱敏映射文件的加密，设置后会自动应用到文件处理
+                </p>
+                <div className="flex gap-2 max-w-md">
+                  <div className="relative flex-1">
+                    <Input
+                      type={showPassphrase ? "text" : "password"}
+                      placeholder="加密口令"
+                      value={passphrase}
+                      onChange={(e) => setPassphrase(e.target.value)}
+                      className="pr-10"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-0 top-0 h-full"
+                      onClick={() => setShowPassphrase(!showPassphrase)}
+                    >
+                      {showPassphrase ? (
+                        <EyeOff className="w-4 h-4 text-gray-500" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-gray-500" />
+                      )}
+                    </Button>
+                  </div>
+                  <Button variant="outline" size="icon" onClick={generatePassphrase}>
+                    <RefreshCw className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="remember-passphrase"
+                    checked={rememberPassphrase}
+                    onChange={(e) => setRememberPassphrase(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="remember-passphrase" className="text-sm text-gray-700 cursor-pointer">
+                    记住解密口令（下次自动填充）
+                  </label>
                 </div>
               </div>
 
@@ -522,44 +572,15 @@ export default function SandboxManager() {
           {!locked && (
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-gray-500" />
-                      输出目录文件
-                    </CardTitle>
-                    {outputDir && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        位置: {getDisplayPath(outputDir, 50)}
-                      </p>
-                    )}
-                  </div>
-                  {files.length > 0 && (
-                    <Button 
-                      onClick={handleSyncToFileBay} 
-                      disabled={syncing}
-                      size="sm"
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      {syncing ? (
-                        <>
-                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          同步中...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                          </svg>
-                          一键同步
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </div>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-gray-500" />
+                  输出目录文件
+                </CardTitle>
+                {outputDir && (
+                  <p className="text-xs text-gray-500">
+                    位置: {getDisplayPath(outputDir, 50)}
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 {!outputDir ? (
@@ -589,6 +610,11 @@ export default function SandboxManager() {
                             {formatBytes(file.size)} · {file.modified}
                           </p>
                         </div>
+                        {file.name.endsWith('.cmap') && (
+                          <div className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                            映射文件
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
