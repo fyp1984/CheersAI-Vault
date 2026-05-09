@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,6 @@ import {
   AlertTriangle,
   XCircle
 } from "lucide-react";
-import { FileBayConfigManager } from "@/components/filebay/FileBayConfigManager";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
@@ -102,7 +101,7 @@ export default function SandboxManager() {
   }, []);
 
   // 加载沙箱文件列表（基于输出目录）
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     if (!locked && outputDir) {
       try {
         const fileList = await tauriCommands.listFilesInDirectory(outputDir);
@@ -114,11 +113,11 @@ export default function SandboxManager() {
     } else {
       setFiles([]);
     }
-  };
+  }, [locked, outputDir]);
 
   useEffect(() => {
-    loadFiles();
-  }, [locked, outputDir]);
+    void loadFiles();
+  }, [loadFiles]);
 
   // 检查是否已设置 PIN（DPAPI 持久化）
   useEffect(() => {
@@ -136,6 +135,7 @@ export default function SandboxManager() {
           // 有 PIN 且应用刚启动时，确保文件隐藏
           if (outputDir) {
             await tauriCommands.lockSandboxFiles(outputDir);
+            setLocked(true);
           }
         }
       } catch (error) {
@@ -333,7 +333,7 @@ export default function SandboxManager() {
                 {locked ? (
                   <Lock className="w-5 h-5 text-red-500" />
                 ) : (
-                  <Unlock className="w-5 h-5 text-green-500" />
+                  <Unlock className="w-5 h-5 text-blue-500" />
                 )}
                 沙箱状态
                 <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
@@ -346,8 +346,9 @@ export default function SandboxManager() {
                 <p className="text-sm text-gray-500">正在检查 PIN 状态...</p>
               ) : !pinExists ? (
                 <div className="space-y-3">
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <p className="text-sm text-yellow-800">⚠️ 尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-yellow-800">尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
                   </div>
                   <p className="text-xs text-gray-500">{pinStorageDescription}</p>
                 </div>
@@ -386,7 +387,10 @@ export default function SandboxManager() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <p className="text-sm text-green-600">✅ 沙箱已解锁，可以访问安全文件</p>
+                  <p className="text-sm text-blue-600 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    沙箱已解锁，可以访问安全文件
+                  </p>
                   <div className="text-sm text-gray-600">
                     文件数量: {files.length} 个
                   </div>
@@ -394,9 +398,6 @@ export default function SandboxManager() {
               )}
             </CardContent>
           </Card>
-
-          {/* FileBay 配置管理 */}
-          {!locked && <FileBayConfigManager />}
 
           {/* 安全设置 */}
           <Card>
@@ -551,11 +552,11 @@ export default function SandboxManager() {
                 </div>
                 
                 {outputDir && !pathError && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <p className="text-sm text-green-700">
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-700">
                       <strong>当前路径:</strong> {getDisplayPath(outputDir, 60)}
                     </p>
-                    <p className="text-xs text-green-600 mt-1">
+                    <p className="text-xs text-blue-600 mt-1">
                       脱敏文件和映射文件都将保存到此目录
                     </p>
                   </div>
@@ -625,11 +626,11 @@ export default function SandboxManager() {
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border ${
-            toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
+            toast.type === 'success' ? 'bg-blue-50 border-blue-200 text-blue-800' :
             toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
             'bg-yellow-50 border-yellow-200 text-yellow-800'
           }`}>
-            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />}
+            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
             {toast.type === 'error' && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
             {toast.type === 'warning' && <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />}
             <span className="text-sm font-medium">{toast.message}</span>

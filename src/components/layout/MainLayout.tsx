@@ -1,5 +1,5 @@
 import { Outlet, useLocation } from "react-router-dom";
-import { Wifi } from "lucide-react";
+import { Wifi, WifiOff, Globe } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -57,7 +57,7 @@ export function MainLayout() {
         label: "在线",
         detail: isDesktopWorkspace ? "当前操作 Desktop 在线工作区" : "当前操作 FileBay 在线服务",
         tone: "text-emerald-600",
-        Icon: Wifi,
+        Icon: Globe,
         dot: "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]",
         panel: "border-emerald-100 bg-emerald-50/80",
       }
@@ -65,7 +65,7 @@ export function MainLayout() {
         label: "离线",
         detail: "当前操作 Vault 本地工作区",
         tone: "text-slate-600",
-        Icon: Wifi,
+        Icon: WifiOff,
         dot: "bg-slate-400 shadow-[0_0_0_4px_rgba(148,163,184,0.12)]",
         panel: "border-slate-100 bg-slate-50/80",
       };
@@ -88,8 +88,7 @@ export function MainLayout() {
               <div className={`h-2.5 w-2.5 rounded-full ${networkStatus.dot}`} />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Network</span>
-                  <networkStatus.Icon className={`h-3.5 w-3.5 ${networkStatus.tone}`} />
+                  <networkStatus.Icon className={`h-4 w-4 ${networkStatus.tone}`} />
                   <span className={`text-sm font-semibold ${networkStatus.tone}`}>{networkStatus.label}</span>
                 </div>
                 <div className="truncate text-xs text-slate-500">{networkStatus.detail}</div>

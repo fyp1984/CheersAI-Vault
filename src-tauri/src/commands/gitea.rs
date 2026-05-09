@@ -1,4 +1,5 @@
 use crate::core::gitea::{GiteaClient, GiteaConfig};
+use crate::core::database::Database;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
@@ -38,7 +39,7 @@ pub struct GiteaState {
 
 impl Default for GiteaState {
     fn default() -> Self {
-        // 尝试从文件加载配置
+        // 尝试从文件加载配置（作为备份）
         let config = load_config_from_file().unwrap_or_default();
         Self {
             config: Mutex::new(config),
@@ -96,6 +97,19 @@ pub async fn get_gitea_status(
     state: State<'_, GiteaState>,
     fetch_pending: State<'_, BrowserFetchPending>,
 ) -> Result<GiteaStatusResponse, String> {
+    // 先尝试从数据库加载最新配置
+    if let Ok(db) = Database::new().await {
+        if let Ok(Some(db_config)) = db.get_filebay_config().await {
+            let mut config = state.config.lock().await;
+            config.url = db_config.url;
+            config.token = db_config.token;
+            config.owner = db_config.owner;
+            config.repo = db_config.repo;
+            config.enabled = db_config.enabled;
+            println!("✅ 从数据库加载 FileBay 配置成功");
+        }
+    }
+    
     let (url, token, owner, repo, enabled) = {
         let config = state.config.lock().await;
         (config.url.clone(), config.token.clone(), config.owner.clone(), config.repo.clone(), config.enabled)
@@ -109,10 +123,21 @@ pub async fn get_gitea_status(
             let check_url = format!("{}/api/v1/repos/{}/{}", url, owner, repo);
             match fetch_via_browser(&app, &fetch_pending, "GET", &check_url, &token, None, Some(&url)).await {
                 Ok(result) => {
-                    println!("仓库检查结果(browser): status={}", result.status);
-                    repo_exists = Some(result.ok);
+                    println!("仓库检查结果(browser): status={}, ok={}, body={}", result.status, result.ok, result.body);
+                    // 200 表示仓库存在，404 表示不存在，其他状态码（如 401）表示认证问题
+                    if result.status == 200 {
+                        repo_exists = Some(true);
+                    } else if result.status == 404 {
+                        repo_exists = Some(false);
+                    } else {
+                        // 其他状态码（如 401 认证失败）不确定仓库是否存在
+                        repo_exists = None;
+                    }
                 }
-                Err(e) => println!("检查仓库时出错(browser): {}", e),
+                Err(e) => {
+                    println!("检查仓库时出错(browser): {}", e);
+                    repo_exists = None;
+                }
             }
         } else {
             let gitea_config = GiteaConfig { url: url.clone(), token: token.clone(), owner: owner.clone(), repo: repo.clone() };
@@ -167,8 +192,17 @@ pub async fn update_gitea_config(
         config.enabled = enabled;
     }
 
-    // 保存配置到文件
-    save_config_to_file(&config).map_err(|e| format!("保存配置失败: {}", e))?;
+    // 初始化数据库
+    let db = Database::new().await
+        .map_err(|e| format!("数据库初始化失败: {}", e))?;
+    
+    // 保存到数据库
+    db.save_filebay_config(&config.url, &config.token, &config.owner, &config.repo, config.enabled)
+        .await
+        .map_err(|e| format!("保存配置到数据库失败: {}", e))?;
+
+    // 保存配置到文件作为备份
+    save_config_to_file(&config).map_err(|e| format!("保存配置到文件失败: {}", e))?;
 
     Ok("配置已保存".to_string())
 }
@@ -401,4 +435,69 @@ pub async fn upload_batch_to_gitea(
             Err(e) => Err(format!("批量上传失败: {}", e)),
         }
     }
+}
+
+/// 获取 FileBay Token（用于显示）
+#[tauri::command]
+pub async fn get_filebay_token() -> Result<String, String> {
+    // 从数据库读取 Token
+    let db = Database::new().await
+        .map_err(|e| format!("数据库初始化失败: {}", e))?;
+    
+    if let Ok(Some(config)) = db.get_filebay_config().await {
+        Ok(config.token)
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// 从 Desktop 同步 FileBay 配置（自动同步）
+#[tauri::command]
+pub async fn sync_filebay_config_from_desktop(
+    state: State<'_, GiteaState>,
+    url: String,
+    token: String,
+    owner: String,
+    repo: String,
+) -> Result<String, String> {
+    println!("🔄 开始同步 FileBay 配置...");
+    println!("  URL: {}", url);
+    println!("  Owner: {}", owner);
+    println!("  Repo: {}", repo);
+    println!("  Token 长度: {}", token.len());
+    println!("  Token 前4位: {}", if token.len() >= 4 { &token[..4] } else { &token });
+    
+    // 初始化数据库
+    let db = Database::new().await
+        .map_err(|e| {
+            println!("❌ 数据库初始化失败: {}", e);
+            format!("数据库初始化失败: {}", e)
+        })?;
+    
+    // 保存到数据库
+    db.save_filebay_config(&url, &token, &owner, &repo, true).await
+        .map_err(|e| {
+            println!("❌ 保存配置到数据库失败: {}", e);
+            format!("保存配置到数据库失败: {}", e)
+        })?;
+    
+    // 更新内存中的配置
+    let mut config = state.config.lock().await;
+    config.url = url.clone();
+    config.token = token.clone();
+    config.owner = owner.clone();
+    config.repo = repo.clone();
+    config.enabled = true;
+    drop(config);
+    
+    // 同时保存到 JSON 文件作为备份
+    let config = state.config.lock().await;
+    save_config_to_file(&config).map_err(|e| {
+        println!("⚠️ 保存配置到 JSON 文件失败: {}", e);
+        format!("保存配置到 JSON 文件失败: {}", e)
+    })?;
+    
+    println!("✅ FileBay 配置已保存到数据库和文件");
+    
+    Ok(format!("✅ FileBay 配置已自动同步\n  用户: {}\n  仓库: {}\n  Token: 已保存（{}字符）", owner, repo, token.len()))
 }

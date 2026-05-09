@@ -17,6 +17,8 @@ import { InstallerTest } from "@/pages/InstallerTest";
 import { useLogStore } from "@/store/logStore";
 import { tauriCommands } from "@/lib/tauri";
 import { setPlatformContext } from "@/lib/path";
+// 导入配置同步工具，使其在开发者控制台中可用
+import '@/lib/sync-config';
 
 function AppRoutes() {
   const { initializeDatabase } = useLogStore();

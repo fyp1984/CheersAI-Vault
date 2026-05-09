@@ -48,6 +48,18 @@ pub struct SensitiveTerm {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FileBayConfig {
+    pub id: i32,
+    pub url: String,
+    pub token: String,
+    pub owner: String,
+    pub repo: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct Database {
     pub(crate) pool: SqlitePool,
@@ -198,6 +210,24 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sensitive_terms_enabled ON sensitive_terms(enabled)")
             .execute(&self.pool)
             .await?;
+        
+        // FileBay 配置表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS filebay_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                url TEXT NOT NULL,
+                token TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                repo TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
         
         Ok(())
     }
@@ -692,6 +722,91 @@ impl Database {
         
         Ok(result)
     }
+    
+    // === FileBay 配置操作 ===
+    
+    /// 获取 FileBay 配置
+    pub async fn get_filebay_config(&self) -> Result<Option<FileBayConfig>> {
+        let config = sqlx::query_as::<_, FileBayConfig>(
+            r#"
+            SELECT id, url, token, owner, repo, enabled, created_at, updated_at
+            FROM filebay_config
+            WHERE id = 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        
+        Ok(config)
+    }
+    
+    /// 保存或更新 FileBay 配置
+    pub async fn save_filebay_config(
+        &self,
+        url: &str,
+        token: &str,
+        owner: &str,
+        repo: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        println!("💾 保存 FileBay 配置到数据库...");
+        println!("  URL: {}", url);
+        println!("  Owner: {}", owner);
+        println!("  Repo: {}", repo);
+        println!("  Token 长度: {}", token.len());
+        println!("  Enabled: {}", enabled);
+        
+        // 使用 UPSERT (INSERT OR REPLACE)
+        sqlx::query(
+            r#"
+            INSERT INTO filebay_config (id, url, token, owner, repo, enabled, updated_at)
+            VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                url = excluded.url,
+                token = excluded.token,
+                owner = excluded.owner,
+                repo = excluded.repo,
+                enabled = excluded.enabled,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(url)
+        .bind(token)
+        .bind(owner)
+        .bind(repo)
+        .bind(enabled)
+        .execute(&self.pool)
+        .await?;
+        
+        println!("✅ FileBay 配置已保存到数据库");
+        
+        Ok(())
+    }
+    
+    /// 更新 FileBay 启用状态
+    pub async fn update_filebay_enabled(&self, enabled: bool) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE filebay_config
+            SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            "#,
+        )
+        .bind(enabled)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// 删除 FileBay 配置
+    pub async fn delete_filebay_config(&self) -> Result<()> {
+        sqlx::query("DELETE FROM filebay_config WHERE id = 1")
+            .execute(&self.pool)
+            .await?;
+        
+        Ok(())
+    }
 }
 
 /// 获取跨平台数据库路径
@@ -715,7 +830,7 @@ fn get_cross_platform_app_data_dir() -> PathBuf {
     {
         dirs_next::data_dir()
             .unwrap_or_else(|| PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())))
-            .join("CheersAI-Vault") // 使用连字符而不是空格
+            .join("CheersAI-Vault")
     }
     
     #[cfg(target_os = "macos")]
