@@ -230,6 +230,13 @@ export function FileBayConfigManager() {
           )}
         </div>
 
+        {/* 故障排查提示 */}
+        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <p className="text-sm text-yellow-800">
+            💡 如果下载没有反应的话，请重新点击 FileBay 配置文件或者手动上传重试。
+          </p>
+        </div>
+
         {/* 使用说明 */}
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h4 className="font-semibold text-blue-900 mb-2">使用说明</h4>

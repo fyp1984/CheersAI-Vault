@@ -487,6 +487,16 @@ export function GiteaSettings() {
         </Card>
       )}
 
+      {/* 故障排查提示 */}
+      <div className="mt-8 mb-6 flex items-start gap-3 p-4 bg-warning/10 border border-warning/30 rounded-lg">
+        <Lightbulb className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <p className="text-sm text-warning">
+            💡 如果下载没有成功同步配置，请重新点击下载 FileBay 配置文件或者手动导入重试。
+          </p>
+        </div>
+      </div>
+
       {/* 帮助信息 */}
       <div className="mt-8">
         <div className="flex items-start gap-3 p-4 bg-success/5 border border-success/20 rounded-lg">

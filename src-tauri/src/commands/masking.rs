@@ -55,6 +55,7 @@ pub struct SavePreviewOptions {
     pub masked_rows: Vec<Vec<String>>,
     pub headers: Option<Vec<String>>,
     pub passphrase: Option<String>,
+    pub mapping: Option<Vec<masking_engine::MappingEntry>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +64,7 @@ pub struct PreviewResult {
     pub masked_rows: Vec<Vec<String>>,
     pub headers: Vec<String>,
     pub detected_entities: Option<Vec<ner::RowEntities>>,
+    pub mapping: Option<Vec<masking_engine::MappingEntry>>,
 }
 
 #[tauri::command]
@@ -546,12 +548,16 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
 
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&preview_rows));
+            
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
 
             Ok(PreviewResult {
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         file_parser::FileFormat::Excel => {
@@ -573,12 +579,16 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
 
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&preview_rows));
+            
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
 
             Ok(PreviewResult {
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         file_parser::FileFormat::Word => {
@@ -612,11 +622,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            
             Ok(PreviewResult {
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         file_parser::FileFormat::PowerPoint => {
@@ -650,11 +664,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            
             Ok(PreviewResult {
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         file_parser::FileFormat::Pdf => {
@@ -701,11 +719,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            
             Ok(PreviewResult {
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         file_parser::FileFormat::Markdown | file_parser::FileFormat::Text => {
@@ -739,11 +761,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             // Detect entities in original rows
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
+            // 转换映射为 MappingEntry 向量
+            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            
             Ok(PreviewResult {
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
                 detected_entities,
+                mapping: Some(mapping_entries),
             })
         }
         _ => Err("预览功能目前支持 CSV、Excel、Word、PowerPoint、PDF、Markdown 和 TXT 文件".to_string()),
@@ -957,15 +983,15 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         }
     }
     
-    // 创建空的映射文件（因为预览结果没有映射信息）
+    // 创建映射文件（使用传入的映射数据，如果没有则创建空映射）
     let mapping_path = format!("{}/masked_{}.cmap", options.output_dir, masked_file_name);
-    let empty_mapping: Vec<masking_engine::MappingEntry> = Vec::new();
+    let mapping_to_save = options.mapping.unwrap_or_default();
     
     if let Some(passphrase) = &options.passphrase {
-        crypto::save_encrypted_mapping(&mapping_path, &empty_mapping, passphrase)
+        crypto::save_encrypted_mapping(&mapping_path, &mapping_to_save, passphrase)
             .map_err(|e| format!("Failed to save encrypted mapping: {}", e))?;
     } else {
-        crypto::save_plain_mapping(&mapping_path, &empty_mapping)
+        crypto::save_plain_mapping(&mapping_path, &mapping_to_save)
             .map_err(|e| format!("Failed to save plain mapping: {}", e))?;
     }
     

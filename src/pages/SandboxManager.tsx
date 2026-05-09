@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,6 @@ import {
   AlertTriangle,
   XCircle
 } from "lucide-react";
-import { FileBayConfigManager } from "@/components/filebay/FileBayConfigManager";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
@@ -102,7 +101,7 @@ export default function SandboxManager() {
   }, []);
 
   // 加载沙箱文件列表（基于输出目录）
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     if (!locked && outputDir) {
       try {
         const fileList = await tauriCommands.listFilesInDirectory(outputDir);
@@ -114,11 +113,11 @@ export default function SandboxManager() {
     } else {
       setFiles([]);
     }
-  };
+  }, [locked, outputDir]);
 
   useEffect(() => {
-    loadFiles();
-  }, [locked, outputDir]);
+    void loadFiles();
+  }, [loadFiles]);
 
   // 检查是否已设置 PIN（DPAPI 持久化）
   useEffect(() => {
@@ -136,6 +135,7 @@ export default function SandboxManager() {
           // 有 PIN 且应用刚启动时，确保文件隐藏
           if (outputDir) {
             await tauriCommands.lockSandboxFiles(outputDir);
+            setLocked(true);
           }
         }
       } catch (error) {
@@ -398,9 +398,6 @@ export default function SandboxManager() {
               )}
             </CardContent>
           </Card>
-
-          {/* FileBay 配置管理 */}
-          {!locked && <FileBayConfigManager />}
 
           {/* 安全设置 */}
           <Card>

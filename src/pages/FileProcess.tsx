@@ -297,6 +297,7 @@ export default function FileProcess() {
             masked_rows: filePreview.preview.masked_rows,
             headers: filePreview.preview.headers,
             passphrase: passphrase || undefined,
+            mapping: filePreview.preview.mapping,
           });
           
           updateFile(file.id, { status: "completed" });

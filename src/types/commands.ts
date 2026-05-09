@@ -47,6 +47,12 @@ export interface PreviewResult {
   masked_rows: string[][];
   headers: string[];
   detected_entities?: RowEntities[];
+  mapping?: MappingEntry[];
+}
+
+export interface MappingEntry {
+  original: string;
+  masked: string;
 }
 
 export interface SavePreviewOptions {
@@ -55,6 +61,7 @@ export interface SavePreviewOptions {
   masked_rows: string[][];
   headers?: string[];
   passphrase?: string;
+  mapping?: MappingEntry[];
 }
 
 // Crypto commands
