@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   FileText,
   Settings2,
@@ -13,6 +14,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getBuildVersion, getAppVersion } from "@/lib/version";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -33,6 +35,21 @@ const navItems = [
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useAppStore();
   const location = useLocation();
+  const [appVersion, setAppVersion] = useState(`v${getBuildVersion()}`);
+
+  useEffect(() => {
+    let active = true;
+
+    void getAppVersion().then((version) => {
+      if (active) {
+        setAppVersion(`v${version}`);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <aside
@@ -109,7 +126,7 @@ export function Sidebar() {
               <div className="text-xs text-slate-400">系统状态</div>
             </div>
             <div className="text-xs text-slate-300">运行正常</div>
-            <div className="text-xs text-slate-500 mt-0.5">版本 v0.1.0</div>
+            <div className="text-xs text-slate-500 mt-0.5">版本 {appVersion}</div>
           </div>
         )}
         

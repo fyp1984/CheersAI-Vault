@@ -173,14 +173,14 @@ export default function FileUnmask() {
 
           {/* 成功提示 */}
           {result && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-green-900">反脱敏成功</p>
-                <p className="text-sm text-green-700 mt-1">
+                <p className="text-sm text-blue-700 mt-1">
                   已还原 {result.restored_count} 处敏感信息
                 </p>
-                <p className="text-xs text-green-600 mt-2 break-all">
+                <p className="text-xs text-blue-600 mt-2 break-all">
                   输出文件：{result.output_path}
                 </p>
               </div>

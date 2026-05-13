@@ -10,6 +10,7 @@ const CLOUD_HOST: &str = "uat-desktop.cheersai.cloud";
 
 // 全局导航锁，防止重复触发
 static NAVIGATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+#[cfg(not(target_os = "macos"))]
 static DESKTOP_CHILD_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // 编译时嵌入 64x64 缩略图
@@ -217,6 +218,7 @@ fn desktop_fab_script() -> String {
     "#, brand_hider_script = brand_hider_script)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn start_desktop_child_monitor(app: AppHandle) {
     if DESKTOP_CHILD_MONITOR_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -350,7 +352,6 @@ pub async fn open_webview_window(
     .map_err(|e| format!("Failed to create webview window: {}", e))?;
 
     // 注入浮动返回按钮
-    let return_url = "http://localhost:1420/process";
     let icon_b64 = base64::engine::general_purpose::STANDARD.encode(SAFER_ICON_BYTES);
     let icon_data_url = format!("data:image/png;base64,{}", icon_b64);
     
@@ -550,31 +551,77 @@ pub async fn ensure_desktop_child_webview(
     app: AppHandle,
 ) -> Result<(), String> {
     let main_window = app.get_window("main").ok_or("Main window not found".to_string())?;
-    let (position, size) = desktop_content_bounds(&main_window)?;
-    let desktop_url = DESKTOP_URL.parse().map_err(|e| format!("Invalid desktop URL: {}", e))?;
+    let (mut position, mut size) = desktop_content_bounds(&main_window)?;
+    let desktop_url = DESKTOP_URL
+        .parse::<tauri::Url>()
+        .map_err(|e| format!("Invalid desktop URL: {}", e))?;
 
     if let Some(webview) = app.get_webview(DESKTOP_CHILD_LABEL) {
         let _ = webview.set_position(position);
         let _ = webview.set_size(size);
         let _ = webview.show();
         let _ = webview.set_focus();
-        if let Ok(current_url) = webview.url() {
-            let current = current_url.to_string();
-            if !current.contains("uat-desktop.cheersai.cloud") && !current.contains("uat-sso.cheersai.cloud") {
-                let _ = webview.navigate(desktop_url);
+        #[cfg(target_os = "macos")]
+        {
+            let _ = webview.navigate(desktop_url.clone());
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            if let Ok(current_url) = webview.url() {
+                let current = current_url.to_string();
+                if !current.contains("uat-desktop.cheersai.cloud") && !current.contains("uat-sso.cheersai.cloud") {
+                    let _ = webview.navigate(desktop_url);
+                }
             }
         }
     } else {
-        let builder = WebviewBuilder::new(DESKTOP_CHILD_LABEL, WebviewUrl::External(desktop_url))
+        #[cfg(target_os = "macos")]
+        tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
+
+        let create_child = |position: LogicalPosition<f64>, size: LogicalSize<f64>| {
+            let builder = WebviewBuilder::new(
+                DESKTOP_CHILD_LABEL,
+                WebviewUrl::External(desktop_url.clone()),
+            )
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .auto_resize()
             .initialization_script(desktop_fab_script());
 
-        let webview = main_window
-            .add_child(builder, position, size)
-            .map_err(|e| format!("Failed to create desktop child webview: {}", e))?;
+            main_window
+                .add_child(builder, position, size)
+                .map_err(|e| format!("Failed to create desktop child webview: {}", e))
+        };
+
+        let webview = match create_child(position, size) {
+            Ok(webview) => webview,
+            Err(first_error) => {
+                #[cfg(target_os = "macos")]
+                {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    let updated_bounds = desktop_content_bounds(&main_window)?;
+                    position = updated_bounds.0;
+                    size = updated_bounds.1;
+
+                    create_child(position, size).map_err(|retry_error| {
+                        format!(
+                            "Failed to create desktop child webview after macOS retry: first attempt: {}; retry: {}",
+                            first_error, retry_error
+                        )
+                    })?
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return Err(first_error);
+                }
+            }
+        };
+
         let _ = webview.show();
         let _ = webview.set_focus();
+
+        #[cfg(not(target_os = "macos"))]
         start_desktop_child_monitor(app.clone());
     }
 

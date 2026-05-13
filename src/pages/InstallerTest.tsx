@@ -211,7 +211,7 @@ export function InstallerTest() {
         <div className="flex items-center gap-2">
           {pythonAvailable ? (
             <>
-              <CheckCircle className="w-5 h-5 text-green-500" />
+              <CheckCircle className="w-5 h-5 text-blue-500" />
               <span className="font-medium">Python 已安装</span>
             </>
           ) : (
@@ -231,7 +231,7 @@ export function InstallerTest() {
         <div
           className={`mb-6 p-4 border rounded-lg ${
             message.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-800'
+              ? 'bg-blue-50 border-blue-200 text-blue-800'
               : message.type === 'error'
               ? 'bg-red-50 border-red-200 text-red-800'
               : 'bg-blue-50 border-blue-200 text-blue-800'
@@ -261,7 +261,7 @@ export function InstallerTest() {
               </p>
             </div>
             {ocrInstalled ? (
-              <CheckCircle className="w-6 h-6 text-green-500" />
+              <CheckCircle className="w-6 h-6 text-blue-500" />
             ) : (
               <AlertCircle className="w-6 h-6 text-gray-400" />
             )}
@@ -333,7 +333,7 @@ export function InstallerTest() {
               </p>
             </div>
             {ollamaInstalled ? (
-              <CheckCircle className="w-6 h-6 text-green-500" />
+              <CheckCircle className="w-6 h-6 text-blue-500" />
             ) : (
               <AlertCircle className="w-6 h-6 text-gray-400" />
             )}

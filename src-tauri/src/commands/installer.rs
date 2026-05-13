@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader, Write};
-use tauri::{AppHandle, Manager, Emitter};
+use std::io::{BufRead, BufReader};
+use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-// 内嵌 Python 脚本
-const INSTALL_OCR_SCRIPT: &str = include_str!("../../../scripts/install_ocr.py");
+// 当前仓库仅保留 Ollama 安装脚本；OCR 已切换到现有原生安装链路。
 const INSTALL_OLLAMA_SCRIPT: &str = include_str!("../../../scripts/install_ollama.py");
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -23,8 +22,11 @@ fn get_python_exe() -> Result<String, String> {
     // 尝试查找系统 Python
     #[cfg(target_os = "windows")]
     {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         // 尝试 python3
         if let Ok(output) = Command::new("where")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("python3")
             .output()
         {
@@ -39,6 +41,7 @@ fn get_python_exe() -> Result<String, String> {
         
         // 尝试 python
         if let Ok(output) = Command::new("where")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("python")
             .output()
         {
@@ -53,6 +56,7 @@ fn get_python_exe() -> Result<String, String> {
         
         // 尝试 py launcher
         if let Ok(output) = Command::new("py")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("--version")
             .output()
         {
@@ -99,8 +103,10 @@ fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
 
     // 获取脚本内容
     let script_content = match script_name {
-        "install_ocr.py" => INSTALL_OCR_SCRIPT,
         "install_ollama.py" => INSTALL_OLLAMA_SCRIPT,
+        "install_ocr.py" => {
+            return Err("OCR 脚本安装入口已停用，请改用当前 OCR 原生安装链路。".to_string())
+        }
         _ => return Err(format!("Unknown script: {}", script_name)),
     };
     
@@ -295,15 +301,9 @@ pub async fn install_ocr_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Installing OCR using script ===");
-    
-    run_installer_script(
-        app,
-        window,
-        "install_ocr.py",
-        vec![],
-        "ocr-install-progress",
-    ).await
+    let _ = app;
+    let _ = window;
+    Err("OCR 脚本安装入口已停用，请改用当前 OCR 原生安装链路。".to_string())
 }
 
 /// 卸载 OCR 环境
@@ -312,15 +312,9 @@ pub async fn uninstall_ocr_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Uninstalling OCR using script ===");
-    
-    run_installer_script(
-        app,
-        window,
-        "install_ocr.py",
-        vec!["uninstall"],
-        "ocr-uninstall-progress",
-    ).await
+    let _ = app;
+    let _ = window;
+    Err("OCR 脚本卸载入口已停用，请改用当前 OCR 原生卸载链路。".to_string())
 }
 
 /// 安装 Ollama + AI 模型
@@ -368,4 +362,44 @@ pub async fn check_python_available() -> Result<bool, String> {
             Ok(false)
         }
     }
+}
+
+/// 获取 Ollama 安装程序路径（如果存在）
+#[tauri::command]
+pub async fn get_ollama_installer_path() -> Result<Option<String>, String> {
+    let temp_dir = std::env::temp_dir();
+    let installer_path = temp_dir.join("OllamaSetup.exe");
+    
+    if installer_path.exists() {
+        Ok(Some(installer_path.to_string_lossy().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 打开文件所在文件夹
+#[tauri::command]
+pub async fn open_installer_folder() -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        std::process::Command::new("explorer")
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg(temp_dir)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {}", e))?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("open")
+            .arg(temp_dir)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {}", e))?;
+    }
+    
+    Ok(())
 }

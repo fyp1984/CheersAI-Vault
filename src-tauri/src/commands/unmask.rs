@@ -132,6 +132,31 @@ pub async fn unmask_file(options: UnmaskFileOptions) -> Result<UnmaskResult, Str
             .map_err(|e| format!("Failed to rename file: {}", e))?;
     }
 
+    // 还原输出文件名中的脱敏标签
+    let output_path_obj = std::path::Path::new(&options.output_path);
+    let parent_dir = output_path_obj.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let filename = output_path_obj.file_name().unwrap_or_default().to_string_lossy();
+    
+    // 从文件名中分离扩展名
+    let filename_str = filename.as_ref();
+    let (name_part, ext_part) = if let Some(dot_pos) = filename_str.rfind('.') {
+        (&filename_str[..dot_pos], &filename_str[dot_pos..])
+    } else {
+        (filename_str, "")
+    };
+    
+    // 还原文件名中的脱敏标签
+    let restored_name = restore_filename(name_part, &mappings);
+    let final_filename = format!("{}{}", restored_name, ext_part);
+    let final_output_path = parent_dir.join(&final_filename).to_string_lossy().to_string();
+    
+    // 如果还原后的文件名不同，重命名文件
+    if final_output_path != options.output_path {
+        println!("Renaming file from {} to {}", options.output_path, final_output_path);
+        std::fs::rename(&options.output_path, &final_output_path)
+            .map_err(|e| format!("Failed to rename file: {}", e))?;
+    }
+
     Ok(UnmaskResult {
         output_path: final_output_path,
         restored_count,

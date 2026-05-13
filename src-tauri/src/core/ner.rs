@@ -19,6 +19,7 @@ pub struct RowEntities {
     pub entities: Vec<EntityMatch>,
 }
 
+#[derive(Clone)]
 pub struct NERDetector {
     patterns: Vec<(String, Regex)>,
     common_surnames: HashSet<String>,
@@ -572,6 +573,31 @@ impl NERDetector {
                     row_index,
                     entities,
                 });
+            }
+        }
+        
+        result
+    }
+    
+    /// 兼容方法：批量检测文本列表中的实体
+    /// 这是为了兼容旧代码而添加的包装方法
+    pub fn detect_entities_batch(&self, texts: &[String]) -> Vec<Vec<EntityMatch>> {
+        // 将文本列表转换为行格式（每个文本作为一行）
+        let rows: Vec<Vec<String>> = texts.iter()
+            .map(|text| vec![text.clone()])
+            .collect();
+        
+        // 调用 detect_in_rows
+        let row_entities = self.detect_in_rows(&rows);
+        
+        // 转换为旧格式：Vec<Vec<EntityMatch>>
+        // 初始化结果向量，所有位置都是空向量
+        let mut result = vec![Vec::new(); texts.len()];
+        
+        // 填充检测到的实体
+        for re in row_entities {
+            if re.row_index < result.len() {
+                result[re.row_index] = re.entities;
             }
         }
         

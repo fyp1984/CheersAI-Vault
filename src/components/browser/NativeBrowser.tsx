@@ -8,7 +8,9 @@ import {
   Loader2,
   AlertCircle,
   Globe,
-  Monitor
+  Monitor,
+  Rocket,
+  Lightbulb
 } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import { CLOUD_APP_URL, resolveCloudUrl } from "@/lib/cloud";
@@ -249,7 +251,7 @@ export default function NativeBrowser({
             title="注入自动跳转脚本"
             className="text-blue-600 border-blue-300 hover:bg-blue-50"
           >
-            🚀
+            <Rocket className="w-4 h-4" />
           </Button>
           <Button
             variant="outline"
@@ -265,7 +267,7 @@ export default function NativeBrowser({
       {/* 状态显示 */}
       <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b text-sm">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isWebviewReady ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+          <div className={`w-2 h-2 rounded-full ${isWebviewReady ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
           <span className="text-gray-700">
             {isWebviewReady ? '浏览器已就绪' : '正在初始化浏览器...'}
           </span>
@@ -315,11 +317,11 @@ export default function NativeBrowser({
               <span>支持完整的 JavaScript 执行</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <div className="w-1 h-1 bg-green-500 rounded-full"></div>
+              <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
               <span>自动处理 Cookie 和会话</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <div className="w-1 h-1 bg-purple-500 rounded-full"></div>
+              <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
               <span>原生性能，无代理延迟</span>
             </div>
           </div>
@@ -327,9 +329,14 @@ export default function NativeBrowser({
           {isWebviewReady && (
             <div className="mt-6 p-4 bg-white rounded-lg border border-blue-200">
               <div className="text-sm text-blue-800">
-                <div className="font-medium mb-1">💡 使用提示</div>
+                <div className="font-medium mb-1 flex items-center gap-1.5">
+                  <Lightbulb className="w-4 h-4" />
+                  使用提示
+                </div>
                 <div className="text-left space-y-1">
-                  <div>• 点击 🚀 按钮注入自动跳转脚本</div>
+                  <div className="flex items-center gap-1.5">
+                    • 点击 <Rocket className="w-3.5 h-3.5 inline" /> 按钮注入自动跳转脚本
+                  </div>
                   <div>• 使用地址栏直接导航到其他页面</div>
                   <div>• 浏览器窗口支持完整的网页功能</div>
                 </div>
