@@ -70,26 +70,21 @@ impl Database {
     pub async fn new() -> Result<Self> {
         let db_path = get_database_path()?;
         
-        println!("Initializing database at: {}", db_path.display());
         
         // 确保数据库目录存在
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
-            println!("Created database directory: {}", parent.display());
         }
         
         // 使用绝对路径并转义特殊字符
         let database_url = format!("sqlite:{}?mode=rwc", db_path.to_string_lossy());
-        println!("Database URL: {}", database_url);
-        
+
         let pool = SqlitePool::connect(&database_url).await
             .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))?;
-        println!("Database connection established");
-        
+
         let db = Database { pool };
         db.init_tables().await?;
-        println!("Database tables initialized");
-        
+
         Ok(db)
     }
     
@@ -236,8 +231,7 @@ impl Database {
     
     /// 添加日志条目
     pub async fn add_log(&self, entry: &LogEntry) -> Result<()> {
-        println!("Adding log to database: {} - {}", entry.level, entry.message);
-        
+
         let result = sqlx::query(
             r#"
             INSERT INTO logs (id, timestamp, level, message, details, file_path, operation_type, user_id)
@@ -257,11 +251,10 @@ impl Database {
         
         match result {
             Ok(result) => {
-                println!("Log added successfully, rows affected: {}", result.rows_affected());
                 Ok(())
             },
             Err(e) => {
-                println!("Failed to add log: {}", e);
+
                 Err(e.into())
             }
         }
@@ -694,32 +687,26 @@ impl Database {
     
     /// 获取敏感词统计
     pub async fn get_sensitive_terms_stats(&self) -> Result<serde_json::Value> {
-        println!("=== Getting sensitive terms stats ===");
-        
+
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms")
             .fetch_one(&self.pool)
             .await?;
-        println!("Total sensitive terms: {}", total);
-            
+
         let enabled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms WHERE enabled = 1")
             .fetch_one(&self.pool)
             .await?;
-        println!("Enabled sensitive terms: {}", enabled);
-            
+
         let categories: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT category) FROM sensitive_terms")
             .fetch_one(&self.pool)
             .await?;
-        println!("Categories: {}", categories);
-        
+
         let result = serde_json::json!({
             "total": total,
             "enabled": enabled,
             "disabled": total - enabled,
             "categories": categories
         });
-        
-        println!("Stats result: {}", result);
-        
+
         Ok(result)
     }
     
@@ -749,13 +736,11 @@ impl Database {
         repo: &str,
         enabled: bool,
     ) -> Result<()> {
-        println!("💾 保存 FileBay 配置到数据库...");
-        println!("  URL: {}", url);
-        println!("  Owner: {}", owner);
-        println!("  Repo: {}", repo);
-        println!("  Token 长度: {}", token.len());
-        println!("  Enabled: {}", enabled);
-        
+
+
+
+
+
         // 使用 UPSERT (INSERT OR REPLACE)
         sqlx::query(
             r#"
@@ -777,9 +762,7 @@ impl Database {
         .bind(enabled)
         .execute(&self.pool)
         .await?;
-        
-        println!("✅ FileBay 配置已保存到数据库");
-        
+
         Ok(())
     }
     
@@ -820,7 +803,6 @@ pub fn get_database_path() -> Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
     
-    println!("Using database path: {}", db_path.display());
     Ok(db_path)
 }
 
@@ -858,12 +840,9 @@ pub async fn migrate_from_old_database() -> Result<()> {
     let old_db_path = std::env::current_dir()?.join("cheersai-vault.db");
 
     if !old_db_path.exists() {
-        println!("No old database found at: {}", old_db_path.display());
         return Ok(());
     }
 
-    println!("Found old database at: {}", old_db_path.display());
-    println!("Starting data migration...");
 
     // 连接到旧数据库
     let old_db_url = format!("sqlite:{}?mode=ro", old_db_path.display());
@@ -882,10 +861,9 @@ pub async fn migrate_from_old_database() -> Result<()> {
     .fetch_all(&old_pool)
     .await?;
 
-    println!("Migrating {} log entries...", logs.len());
     for log in logs {
         if let Err(e) = new_db.add_log(&log).await {
-            eprintln!("Failed to migrate log entry {}: {}", log.id, e);
+
         }
     }
 
@@ -896,10 +874,9 @@ pub async fn migrate_from_old_database() -> Result<()> {
     .fetch_all(&old_pool)
     .await?;
 
-    println!("Migrating {} processing history entries...", histories.len());
     for history in histories {
         if let Err(e) = new_db.add_processing_history(&history).await {
-            eprintln!("Failed to migrate processing history {}: {}", history.id, e);
+
         }
     }
 
@@ -910,10 +887,9 @@ pub async fn migrate_from_old_database() -> Result<()> {
     .fetch_all(&old_pool)
     .await?;
 
-    println!("Migrating {} user settings...", settings.len());
     for setting in settings {
         if let Err(e) = new_db.save_setting(&setting.key, &setting.value).await {
-            eprintln!("Failed to migrate user setting {}: {}", setting.key, e);
+
         }
     }
 
@@ -922,11 +898,9 @@ pub async fn migrate_from_old_database() -> Result<()> {
     // 备份旧数据库文件
     let backup_path = old_db_path.with_extension("db.backup");
     if let Err(e) = std::fs::rename(&old_db_path, &backup_path) {
-        eprintln!("Failed to backup old database: {}", e);
+
     } else {
-        println!("Old database backed up to: {}", backup_path.display());
     }
 
-    println!("Data migration completed successfully!");
     Ok(())
 }

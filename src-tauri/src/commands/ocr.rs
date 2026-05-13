@@ -123,17 +123,14 @@ pub async fn download_ocr_package(
     window: tauri::Window,
     custom_path: Option<String>,
 ) -> Result<String, String> {
-    println!("Starting OCR package download and setup");
-    
+
     // 获取安装目录
     let ocr_dir = if let Some(path) = custom_path {
         PathBuf::from(path)
     } else {
         get_ocr_dir(&app)?
     };
-    
-    println!("OCR installation directory: {:?}", ocr_dir);
-    
+
     let temp_dir = ocr_dir.join("temp");
     
     // 创建目录
@@ -250,7 +247,6 @@ pub async fn download_ocr_package(
         status: "安装完成！".to_string(),
     });
     
-    println!("OCR package setup completed at: {}", ocr_dir.display());
     Ok(ocr_dir.to_string_lossy().to_string())
 }
 
@@ -309,27 +305,22 @@ async fn download_file(
 
 /// 启用 pip（仅 Windows 嵌入式 Python 使用）
 fn enable_pip(python_dir: &PathBuf) -> Result<(), String> {
-    println!("Enabling pip for embedded Python...");
-    
+
     let pth_file = python_dir.join("python311._pth");
-    
-    println!("  Looking for: {:?}", pth_file);
-    
+
     if !pth_file.exists() {
         return Err(format!("Python ._pth file not found at: {:?}", pth_file));
     }
     
     let content = fs::read_to_string(&pth_file)
         .map_err(|e| format!("Failed to read _pth file: {}", e))?;
-    
-    println!("  Current content:\n{}", content);
-    
+
     // 检查是否已经启用
     if content.lines().any(|line| {
         let trimmed = line.trim();
         trimmed == "import site" && !trimmed.starts_with('#')
     }) {
-        println!("  ✓ pip already enabled");
+
         return Ok(());
     }
     
@@ -352,13 +343,10 @@ fn enable_pip(python_dir: &PathBuf) -> Result<(), String> {
     }
     
     let new_content = new_lines.join("\n") + "\n";
-    
-    println!("  New content:\n{}", new_content);
-    
+
     fs::write(&pth_file, new_content)
         .map_err(|e| format!("Failed to write _pth file: {}", e))?;
-    
-    println!("  ✓ pip enabled successfully");
+
     Ok(())
 }
 
@@ -370,12 +358,10 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     
     let python_exe = resolve_python_executable(python_dir)?;
-    
-    println!("Installing pip...");
-    println!("  Python: {:?}", python_exe);
-    println!("  get-pip.py: {:?}", get_pip_path);
-    println!("  Working dir: {:?}", python_dir);
-    
+
+
+
+
     // 验证文件存在
     if !python_exe.exists() {
         return Err(format!("Python executable not found: {:?}", python_exe));
@@ -399,8 +385,7 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
             let stdout = String::from_utf8_lossy(&output.stdout);
             return Err(format!("pip 安装失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
         }
-        
-        println!("✓ pip installed successfully");
+
     }
     
     #[cfg(not(target_os = "windows"))]
@@ -416,8 +401,7 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
             let stdout = String::from_utf8_lossy(&output.stdout);
             return Err(format!("pip 安装失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
         }
-        
-        println!("✓ pip installed successfully");
+
     }
     
     Ok(())
@@ -429,9 +413,7 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     
     let python_exe = resolve_python_executable(python_dir)?;
-    
-    println!("Installing OCR dependencies...");
-    println!("  Python: {:?}", python_exe);
+
 
     #[cfg(not(target_os = "windows"))]
     ensure_python_packaging_toolchain(&python_exe, python_dir)?;
@@ -445,8 +427,7 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     ];
     
     for package in packages {
-        println!("  Installing {}...", package);
-        
+
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -464,29 +445,25 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
                 .map_err(|e| format!("Failed to install {}: {} (path may contain unsupported characters)", package, e))?;
             
             let elapsed = start.elapsed();
-            println!("  Installation took: {:?}", elapsed);
-            
+
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 return Err(format!("安装 {} 失败:\nSTDERR: {}\nSTDOUT: {}", package, stderr, stdout));
             }
-            
-            println!("  ✓ {} installed", package);
+
         }
         
         #[cfg(not(target_os = "windows"))]
         {
             install_package_with_fallbacks(&python_exe, python_dir, package)?;
-            println!("  ✓ {} installed", package);
+
         }
     }
-    
-    println!("✓ All OCR dependencies installed successfully");
-    println!("ℹ️  OCR runtime is configured for PDF text extraction via PyMuPDF.");
-    
+
+
     // 验证安装
-    println!("Verifying installation...");
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -499,14 +476,14 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
         
         match verify_output {
             Ok(output) if output.status.success() => {
-                println!("✓ Verification successful");
+
             },
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("⚠ Verification warning: {}", stderr);
+
             },
             Err(e) => {
-                println!("⚠ Verification failed: {}", e);
+
             }
         }
     }
@@ -567,8 +544,6 @@ fn get_python_version(python_exe: &PathBuf, python_dir: &PathBuf) -> Option<(u32
 fn ensure_python_packaging_toolchain(python_exe: &PathBuf, python_dir: &PathBuf) -> Result<(), String> {
     use std::process::Command;
 
-    println!("Ensuring pip/setuptools/wheel are available...");
-
     let ensurepip_output = Command::new(python_exe)
         .args(["-m", "ensurepip", "--upgrade"])
         .current_dir(python_dir)
@@ -577,10 +552,7 @@ fn ensure_python_packaging_toolchain(python_exe: &PathBuf, python_dir: &PathBuf)
         .map_err(|e| format!("修复 pip 运行时失败: {}", e))?;
 
     if !ensurepip_output.status.success() {
-        println!(
-            "⚠ ensurepip returned non-zero: {}",
-            String::from_utf8_lossy(&ensurepip_output.stderr)
-        );
+        // ensurepip returned non-zero, but continue anyway
     }
 
     let upgrade_output = Command::new(python_exe)
@@ -605,7 +577,6 @@ fn ensure_python_packaging_toolchain(python_exe: &PathBuf, python_dir: &PathBuf)
         return Err(format!("升级 pip 工具链失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
     }
 
-    println!("✓ pip/setuptools/wheel are ready");
     Ok(())
 }
 
@@ -664,7 +635,7 @@ fn install_package_with_fallbacks(
     let mut failure_logs = Vec::new();
 
     for args in attempts {
-        println!("  Running pip command: {:?}", args);
+
         let output = Command::new(python_exe)
             .args(args.iter().map(|s| s.as_str()))
             .current_dir(python_dir)
@@ -779,16 +750,12 @@ pub async fn uninstall_ocr_package(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     
     let ocr_dir = app_data_dir.join("ocr-package");
-    
-    println!("Uninstalling OCR package from: {:?}", ocr_dir);
-    
+
     if ocr_dir.exists() {
-        println!("OCR directory exists, removing...");
-        
+
         // 列出要删除的内容
         if let Ok(entries) = fs::read_dir(&ocr_dir) {
             for entry in entries.flatten() {
-                println!("  - Removing: {:?}", entry.path());
             }
         }
         
@@ -799,10 +766,9 @@ pub async fn uninstall_ocr_package(app: AppHandle) -> Result<(), String> {
         if ocr_dir.exists() {
             return Err("OCR directory still exists after removal".to_string());
         }
-        
-        println!("✓ OCR package uninstalled successfully");
+
     } else {
-        println!("OCR directory does not exist, nothing to uninstall");
+
     }
     
     Ok(())

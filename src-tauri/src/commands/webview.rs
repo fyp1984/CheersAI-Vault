@@ -252,8 +252,7 @@ fn start_desktop_child_monitor(app: AppHandle) {
 
 #[tauri::command]
 pub async fn navigate_to_local(app: AppHandle, return_url: String) -> Result<(), String> {
-    println!("🔙 Navigating back to local: {}", return_url);
-    
+
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = app.emit("navigate-to-process", ());
 
@@ -263,8 +262,7 @@ pub async fn navigate_to_local(app: AppHandle, return_url: String) -> Result<(),
         main_window
             .navigate(local_url)
             .map_err(|e| format!("Failed to navigate: {}", e))?;
-        
-        println!("✅ Navigation command sent");
+
         Ok(())
     } else {
         Err("Main window not found".to_string())
@@ -291,8 +289,6 @@ pub async fn open_webview_window(
     let width = options.width.unwrap_or(1200.0);
     let height = options.height.unwrap_or(800.0);
 
-    println!("Opening webview window: {} -> {}", window_label, options.url);
-
     // 创建新的 WebView 窗口，配置为全屏无边框模式
     let app_clone = app.clone();
     let webview_window = WebviewWindowBuilder::new(
@@ -317,7 +313,7 @@ pub async fn open_webview_window(
                 
                 // 确保 downloads 目录存在
                 if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
-                    eprintln!("Failed to create downloads directory: {}", e);
+
                     return false;
                 }
                 
@@ -332,14 +328,14 @@ pub async fn open_webview_window(
                         
                         let file_path = downloads_dir.join(file_name);
                         *destination = file_path.clone();
-                        println!("Download requested: {} -> {:?}", url, file_path);
+
                         true
                     }
                     tauri::webview::DownloadEvent::Finished { url, path, success } => {
                         if success {
-                            println!("Download finished: {} -> {:?}", url, path);
+
                         } else {
-                            eprintln!("Download failed: {}", url);
+
                         }
                         true
                     }
@@ -347,15 +343,13 @@ pub async fn open_webview_window(
                 }
             }
             Err(e) => {
-                eprintln!("Failed to get app data directory: {}", e);
+
                 false
             }
         }
     })
     .build()
     .map_err(|e| format!("Failed to create webview window: {}", e))?;
-
-    println!("Webview window created successfully: {}", window_label);
 
     // 注入浮动返回按钮
     let icon_b64 = base64::engine::general_purpose::STANDARD.encode(SAFER_ICON_BYTES);
@@ -528,22 +522,22 @@ pub async fn open_webview_window(
             };
 
             if count <= 5 {
-                println!("🔍 New window FAB inject check #{}: URL = {}", count, url_str);
+
             }
 
             // 只在外部页面注入
             if !url_str.contains("localhost") && !url_str.contains("tauri://") {
                 if window_clone.eval(&script_clone).is_ok() {
                     if count <= 3 {
-                        println!("✓ New window FAB inject #{}", count);
+
                     }
                 } else if count <= 3 {
-                    println!("⚠ New window FAB inject #{} failed", count);
+
                 }
             }
 
             if count > 200 {
-                println!("⚠ New window FAB inject loop timeout");
+
                 break;
             }
         }
@@ -697,7 +691,7 @@ pub async fn open_desktop_window_with_button(
                     
                     // 确保 downloads 目录存在
                     if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
-                        eprintln!("Failed to create downloads directory: {}", e);
+
                         return false;
                     }
                     
@@ -712,14 +706,14 @@ pub async fn open_desktop_window_with_button(
                             
                             let file_path = downloads_dir.join(file_name);
                             *destination = file_path.clone();
-                            println!("Download requested: {} -> {:?}", url, file_path);
+
                             true
                         }
                         tauri::webview::DownloadEvent::Finished { url, path, success } => {
                             if success {
-                                println!("Download finished: {} -> {:?}", url, path);
+
                             } else {
-                                eprintln!("Download failed: {}", url);
+
                             }
                             true
                         }
@@ -728,7 +722,7 @@ pub async fn open_desktop_window_with_button(
                     filename
                 }
                 Err(e) => {
-                    eprintln!("Failed to get app data directory: {}", e);
+
                     false
                 }
             }
@@ -1017,7 +1011,7 @@ pub async fn navigate_main_window_with_button(
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        println!("⚠ Navigation already in progress, skip duplicate request");
+
         return Ok(());
     }
 
@@ -1033,7 +1027,6 @@ pub async fn navigate_main_window_with_button(
     } else {
         return_url
     };
-    println!("📍 Return URL: {}", return_url);
 
     tokio::spawn(async {
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -1045,11 +1038,10 @@ pub async fn navigate_main_window_with_button(
     let icon_data_url = format!("data:image/png;base64,{}", icon_b64);
 
     // 导航到目标外部 URL
-    println!("🚀 Navigating to: {}", url);
+
     let parsed_url = url.parse().map_err(|e| format!("Invalid URL: {}", e))?;
     main_window.navigate(parsed_url)
         .map_err(|e| format!("Failed to navigate: {}", e))?;
-    println!("✓ Navigation command sent");
 
     // ===== 注入悬浮圆形按钮脚本 =====
     // 核心改变：按钮点击后由 JS 直接 window.location.href 导航，不再用 hash 信号
@@ -1262,38 +1254,36 @@ pub async fn navigate_main_window_with_button(
             };
             
             if count <= 10 {
-                println!("🔍 FAB inject check #{}: URL = {}", count, url_str);
+
             }
             // 检测是否在目标域名
             if url_str.contains(CLOUD_HOST) || url_str.contains("uat-sso.cheersai.cloud") {
                 found_target_domain = true;
                 if count <= 10 {
-                    println!("🎯 Target domain detected, injecting FAB...");
+
                 }
                 if window_for_inject.eval(&script_clone).is_ok() {
                     if count <= 5 {
-                        println!("✓ FAB inject #{}", count);
+
                     }
                 } else {
-                    println!("⚠ FAB inject #{} failed", count);
+
                 }
             } else if url_str.contains("localhost:1420") || url_str.contains("tauri://localhost") {
                 // 只有在之前找到过目标域名后，才在返回本地页面时停止
                 if found_target_domain {
-                    println!("✓ FAB inject stopped: back on local page");
+
                     break;
                 } else if count <= 10 {
-                    println!("⏳ Waiting for navigation to target domain... (current: {})", url_str);
                 }
             } else {
                 if count <= 10 {
-                    println!("⏳ Waiting for target domain... (current: {})", url_str);
                 }
             }
             
             // 10 分钟超时
             if count > 300 {
-                println!("⚠ FAB inject loop timeout");
+
                 break;
             }
         }
@@ -1316,7 +1306,7 @@ pub async fn navigate_main_window_with_button(
 
             // 外部页已收到“返回本地”点击信号，直接强制回本地
             if url_str.contains("#__cheersai_return__") {
-                println!("🔄 Return marker detected, navigating to {}", return_url_clone);
+
                 if let Ok(local_url) = return_url_clone.parse() {
                     let _ = window_clone.navigate(local_url);
                 }
@@ -1325,7 +1315,7 @@ pub async fn navigate_main_window_with_button(
 
             // 已经成功回到本地页面
             if url_str.contains("localhost:1420") || url_str.contains("tauri://localhost") {
-                println!("✓ Back on local page: {}", url_str);
+
                 break;
             }
 
@@ -1336,7 +1326,7 @@ pub async fn navigate_main_window_with_button(
                 || url_str.starts_with("http://uat-sso.cheersai.cloud") {
                 // 正常等待用户点击按钮
                 if ticks > 600 { // 5 分钟超时
-                    println!("⚠ Monitoring timeout");
+
                     break;
                 }
                 continue;
@@ -1344,7 +1334,7 @@ pub async fn navigate_main_window_with_button(
 
             // URL 既不是外部也不是本地（可能 JS 导航卡在中间状态）
             // 等 2 秒看是否自动恢复
-            println!("⚠ Unexpected URL: {}, retrying navigate...", url_str);
+
             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
             // 再检查一次
@@ -1354,19 +1344,19 @@ pub async fn navigate_main_window_with_button(
             };
 
             if url_now.contains("localhost:1420") || url_now.contains("tauri://localhost") {
-                println!("✓ Recovered, now on local: {}", url_now);
+
                 break;
             }
 
             // 仍然卡住，Rust 强制导航
-            println!("🔄 Force navigating to {}", return_url_clone);
+
             if let Ok(local_url) = return_url_clone.parse() {
                 let _ = window_clone.navigate(local_url);
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
             if let Ok(final_url) = window_clone.url() {
-                println!("📍 After force nav: {}", final_url);
+
             }
             break;
         }

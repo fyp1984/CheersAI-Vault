@@ -35,65 +35,52 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
 
   // 使用全局 listen API 监听文件拖放事件
   useEffect(() => {
-    console.log("DropZone: Setting up global Tauri file drop listeners...");
-    
     let unlistenEnter: (() => void) | null = null;
     let unlistenOver: (() => void) | null = null;
     let unlistenDrop: (() => void) | null = null;
     let unlistenLeave: (() => void) | null = null;
     
     // 监听文件进入窗口
-    listen<string[]>('tauri://drag-enter', (event) => {
-      console.log("=== DRAG ENTER ===", event);
+    listen<string[]>('tauri://drag-enter', () => {
       setIsDragActive(true);
     }).then(fn => { 
       unlistenEnter = fn;
-      console.log("Registered: tauri://drag-enter");
     }).catch(err => {
       console.error("Failed to register tauri://drag-enter:", err);
     });
     
     // 监听文件在窗口上方移动
-    listen<string[]>('tauri://drag-over', (event) => {
-      console.log("=== DRAG OVER ===", event);
+    listen<string[]>('tauri://drag-over', () => {
       setIsDragActive(true);
     }).then(fn => { 
       unlistenOver = fn;
-      console.log("Registered: tauri://drag-over");
     }).catch(err => {
       console.error("Failed to register tauri://drag-over:", err);
     });
     
     // 监听文件拖放
-    listen<string[]>('tauri://drag-drop', (event) => {
-      console.log("=== DRAG DROP ===", event);
+    listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', (event) => {
       setIsDragActive(false);
-      if (event.payload && event.payload.length > 0) {
-        console.log("Files dropped:", event.payload);
-        onFilesDropped(event.payload);
+      
+      if (event.payload.paths && event.payload.paths.length > 0) {
+        onFilesDropped(event.payload.paths);
       }
     }).then(fn => { 
       unlistenDrop = fn;
-      console.log("Registered: tauri://drag-drop");
     }).catch(err => {
       console.error("Failed to register tauri://drag-drop:", err);
     });
     
     // 监听拖放离开
-    listen('tauri://drag-leave', (event) => {
-      console.log("=== DRAG LEAVE ===", event);
+    listen('tauri://drag-leave', () => {
       setIsDragActive(false);
     }).then(fn => { 
       unlistenLeave = fn;
-      console.log("Registered: tauri://drag-leave");
     }).catch(err => {
       console.error("Failed to register tauri://drag-leave:", err);
     });
     
-    console.log("DropZone: All file drop listeners registered");
-    
     return () => {
-      console.log("DropZone: Cleaning up file drop listeners");
       if (unlistenEnter) unlistenEnter();
       if (unlistenOver) unlistenOver();
       if (unlistenDrop) unlistenDrop();

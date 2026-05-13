@@ -293,9 +293,7 @@ fn parse_text_file(path: &str) -> Result<String> {
     
     // 打印当前工作目录和文件路径信息
     let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    println!("Current working directory: {}", current_dir.display());
-    println!("Attempting to read file: {}", path);
-    
+
     // 标准化路径处理
     let file_path = Path::new(path);
     
@@ -311,9 +309,7 @@ fn parse_text_file(path: &str) -> Result<String> {
         
         let mut found_path = None;
         for candidate in &possible_paths {
-            println!("Trying path: {}", candidate.display());
             if candidate.exists() && candidate.is_file() {
-                println!("Found valid file at: {}", candidate.display());
                 found_path = Some(candidate.clone());
                 break;
             }
@@ -335,34 +331,31 @@ fn parse_text_file(path: &str) -> Result<String> {
         }
     };
 
-    println!("Using final path: {}", final_path.display());
 
     // 尝试读取文件，提供更详细的错误信息
     match std::fs::read_to_string(&final_path) {
         Ok(content) => {
-            println!("Successfully read file: {} ({} bytes)", final_path.display(), content.len());
             Ok(content)
         },
         Err(e) => {
-            println!("Failed to read file as UTF-8: {}, trying alternative encodings...", e);
+
             // 尝试以字节方式读取，然后转换为字符串
             match std::fs::read(&final_path) {
                 Ok(bytes) => {
-                    println!("Read {} bytes from file: {}", bytes.len(), final_path.display());
                     // 尝试不同的编码
                     if let Ok(content) = String::from_utf8(bytes.clone()) {
-                        println!("Successfully decoded as UTF-8");
+
                         Ok(content)
                     } else {
-                        println!("UTF-8 decode failed, trying GBK...");
+
                         // 尝试 GBK 编码（中文 Windows 常用）
                         match encoding_rs::GBK.decode(&bytes) {
                             (content, _, false) => {
-                                println!("Successfully decoded as GBK");
+
                                 Ok(content.into_owned())
                             },
                             _ => {
-                                println!("GBK decode failed, using lossy UTF-8...");
+
                                 // 如果都失败，使用 UTF-8 lossy 转换
                                 Ok(String::from_utf8_lossy(&bytes).into_owned())
                             }
@@ -384,9 +377,7 @@ fn parse_text_file(path: &str) -> Result<String> {
 pub fn parse_pdf(path: &str) -> Result<String> {
     use pdf_extract::extract_text;
     use std::panic;
-    
-    println!("Attempting to parse PDF: {}", path);
-    
+
     // 使用 catch_unwind 捕获 panic
     let result = panic::catch_unwind(|| {
         extract_text(path)
@@ -394,24 +385,22 @@ pub fn parse_pdf(path: &str) -> Result<String> {
     
     match result {
         Ok(Ok(text)) => {
-            println!("Successfully extracted {} characters from PDF", text.len());
             
             if text.trim().is_empty() {
-                println!("Warning: PDF contains no extractable text, trying OCR...");
+
                 // 文本为空，尝试 OCR
                 parse_pdf_with_python_ocr(path)
             } else {
-                println!("First 200 chars: {}", &text.chars().take(200).collect::<String>());
                 Ok(text)
             }
         }
         Ok(Err(e)) => {
-            println!("Failed to extract text from PDF: {:?}, trying OCR...", e);
+
             // 提取失败，尝试 OCR
             parse_pdf_with_python_ocr(path)
         }
         Err(panic_err) => {
-            println!("PDF parsing panicked: {:?}, trying OCR...", panic_err);
+
             // Panic 发生，尝试 OCR
             parse_pdf_with_python_ocr(path)
         }
@@ -420,9 +409,8 @@ pub fn parse_pdf(path: &str) -> Result<String> {
 
 // OCR-based PDF parsing using Python script or bundled executable
 fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
-    println!("Starting OCR processing for PDF: {}", path);
-    println!("Note: OCR processing may take 30-60 seconds");
-    
+
+
     // 获取应用目录
     let exe_dir = std::env::current_exe()
         .ok()
@@ -430,14 +418,13 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     if let Some((python_runtime, script_path)) = crate::commands::ocr::resolve_ocr_runtime_from_env() {
-        println!("Using OCR runtime: {}", python_runtime.display());
         return run_ocr_command(
             &python_runtime.to_string_lossy(),
             &[&script_path.to_string_lossy(), path],
             300  // 5 分钟超时
         );
     } else {
-        println!("✗ OCR runtime not found");
+
     }
 
     // 方案 2: 使用打包的 exe（仅 Windows）
@@ -445,7 +432,6 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     {
         let bundled_exe = exe_dir.join("pdf_ocr.exe");
         if bundled_exe.exists() {
-            println!("Using bundled OCR executable: {}", bundled_exe.display());
             return run_ocr_command(&bundled_exe.to_string_lossy(), &[path], 300);
         }
     }
@@ -458,18 +444,16 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     };
     
     if dev_script.exists() {
-        println!("Using development OCR script: {}", dev_script.display());
         
         // 尝试系统 Python
         let python_commands = vec!["python", "python3", "py"];
         
         for python_cmd in &python_commands {
-            println!("Trying Python command: {}", python_cmd);
-            
+
             match run_ocr_command(python_cmd, &[&dev_script.to_string_lossy(), path], 300) {  // 5 分钟超时
                 Ok(text) => return Ok(text),
                 Err(e) => {
-                    println!("Failed with {}: {}", python_cmd, e);
+
                 }
             }
         }
@@ -492,8 +476,7 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     }
     
     // 方案 4: 不使用系统 Python（已禁用，确保只使用下载的OCR包）
-    println!("System Python is disabled - only downloaded OCR package will be used");
-    
+
     // All methods failed - prompt to download
     Err(anyhow::anyhow!(
         "⚠️ OCR 功能未安装\n\n\
@@ -565,7 +548,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             thread::spawn(move || {
                 for line in reader.lines() {
                     if let Ok(line) = line {
-                        println!("OCR: {}", line);
+
                     }
                 }
             });
@@ -579,7 +562,6 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
                     if text.trim().is_empty() {
                         let _ = tx.send(Err(anyhow::anyhow!("OCR returned empty result")));
                     } else {
-                        println!("OCR completed: {} chars extracted", text.len());
                         let _ = tx.send(Ok(text));
                     }
                 } else {

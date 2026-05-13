@@ -18,14 +18,11 @@ pub struct ExtractedConfig {
 /// 从 Desktop WebView 中提取配置
 #[tauri::command]
 pub async fn extract_config_from_desktop_webview(app: AppHandle) -> Result<String, String> {
-    println!("=== Extracting config from Desktop WebView ===");
-    
+
     // 查找 Desktop 子 webview（使用 get_webview 而不是 get_webview_window）
     let webview = app.get_webview("desktop_child")
         .ok_or_else(|| "Desktop 窗口未打开，请先打开 CheersAI 页面".to_string())?;
-    
-    println!("✓ Found desktop_child webview");
-    
+
     // 注入 JavaScript 代码，让它通过 Tauri 事件发送配置
     let js_code = r#"
         (async function() {
@@ -124,9 +121,7 @@ pub async fn extract_config_from_desktop_webview(app: AppHandle) -> Result<Strin
             }
         })();
     "#;
-    
-    println!("Injecting JavaScript to extract and sync config...");
-    
+
     // 执行 JavaScript
     webview.eval(js_code)
         .map_err(|e| format!("执行 JavaScript 失败: {}", e))?;
@@ -140,15 +135,12 @@ pub async fn eval_js_in_desktop_webview(
     app: AppHandle,
     js_code: String,
 ) -> Result<String, String> {
-    println!("=== Evaluating JavaScript in Desktop WebView ===");
-    
+
     // 查找 Desktop 子 webview（使用 get_webview 而不是 get_webview_window）
     let webview = app.get_webview("desktop_child")
         .ok_or_else(|| "Desktop 窗口未打开，请先打开 CheersAI 页面".to_string())?;
-    
-    println!("✓ Found desktop_child webview");
-    println!("Executing JavaScript:\n{}", js_code);
-    
+
+
     // 执行 JavaScript
     webview.eval(&js_code)
         .map_err(|e| format!("执行 JavaScript 失败: {}", e))?;

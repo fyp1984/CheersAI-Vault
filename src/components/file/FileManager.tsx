@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useNavigate } from 'react-router-dom';
-import { uploadToGitea, getGiteaStatus } from '../../services/gitea';
+import { uploadToGitea, getGiteaStatus, deleteFromGitea } from '../../services/gitea';
 import { useFileStore } from '../../store/fileStore';
 import Toast from '../common/Toast';
 import { FolderOpen } from 'lucide-react';
@@ -42,7 +42,12 @@ export function FileManager() {
     title: string;
     description: string;
     onConfirm: () => void;
-  }>({ open: false, title: '', description: '', onConfirm: () => {} });
+    showCloudOption?: boolean;
+    deleteCloud?: boolean;
+  }>({ open: false, title: '', description: '', onConfirm: () => {}, showCloudOption: false, deleteCloud: false });
+  
+  // 使用 ref 来存储最新的 deleteCloud 值
+  const deleteCloudRef = useRef(false);
 
   useEffect(() => {
     if (outputDir) {
@@ -60,9 +65,14 @@ export function FileManager() {
 
     try {
       setLoading(true);
+      console.log('📂 正在读取目录:', outputDir);
       const result = await invoke<SandboxFile[]>('list_files_in_directory', { directory: outputDir });
+      console.log('📋 读取到的文件数量:', result.length);
+      console.log('📋 文件列表:', result);
+      
       // 过滤掉 .cmap 对照文件
       const filteredFiles = result.filter(file => !file.name.endsWith('.cmap'));
+      console.log('✅ 过滤后的文件数量:', filteredFiles.length);
       
       // 按修改时间降序排序（最新的文件在最上面）
       filteredFiles.sort((a, b) => {
@@ -73,7 +83,7 @@ export function FileManager() {
       
       setFiles(filteredFiles);
     } catch (error) {
-      console.error('Failed to load files:', error);
+      console.error('❌ 读取文件失败:', error);
       setFiles([]);
     } finally {
       setLoading(false);
@@ -101,22 +111,51 @@ export function FileManager() {
     setFiles(filtered);
   };
 
-  const handleDelete = (filePath: string) => {
-    const fileName = filePath.split(/[\\/]/).pop() || filePath;
+  const handleDelete = (filePath: string, fileName?: string) => {
+    const fileNameToUse = fileName || filePath.split(/[\\/]/).pop() || filePath;
+    
+    // 重置 ref
+    deleteCloudRef.current = false;
+    
+    // 创建一个执行删除的函数，它会在确认时被调用
+    const executeDelete = async () => {
+      try {
+        // 删除本地文件
+        await invoke<string>('delete_sandbox_file', { filePath });
+        
+        // 从 ref 读取最新的 deleteCloud 值
+        const shouldDeleteCloud = deleteCloudRef.current;
+        
+        // 如果选择了同时删除云端文件
+        if (shouldDeleteCloud && giteaEnabled) {
+          try {
+            const remotePath = `masked/${fileNameToUse}`;
+            await deleteFromGitea(remotePath, `删除文件: ${fileNameToUse}`);
+            setToast({ message: '本地和云端文件已删除', type: 'success' });
+          } catch (cloudError) {
+            console.error('Cloud delete failed:', cloudError);
+            setToast({ message: `本地文件已删除，但云端删除失败: ${cloudError}`, type: 'error' });
+          }
+        } else {
+          setToast({ message: '本地文件已删除', type: 'success' });
+        }
+        
+        loadFiles();
+      } catch (error) {
+        console.error('Delete failed:', error);
+        setToast({ message: '删除失败: ' + error, type: 'error' });
+      }
+    };
+    
     setConfirmDialog({
       open: true,
       title: '确认删除',
-      description: `确定要删除文件「${fileName}」吗？此操作不可撤销。`,
-      onConfirm: async () => {
+      description: `确定要删除文件「${fileNameToUse}」吗？此操作不可撤销。`,
+      showCloudOption: giteaEnabled,
+      deleteCloud: false,
+      onConfirm: () => {
         setConfirmDialog(prev => ({ ...prev, open: false }));
-        try {
-          await invoke<string>('delete_sandbox_file', { filePath });
-          loadFiles();
-          setToast({ message: '文件已删除', type: 'success' });
-        } catch (error) {
-          console.error('Delete failed:', error);
-          setToast({ message: '删除失败: ' + error, type: 'error' });
-        }
+        executeDelete();
       },
     });
   };
@@ -127,22 +166,66 @@ export function FileManager() {
       return;
     }
 
+    const filePaths = Array.from(selectedFiles);
+    
+    // 重置 ref
+    deleteCloudRef.current = false;
+    
+    // 创建一个执行批量删除的函数
+    const executeBatchDelete = async () => {
+      try {
+        // 删除本地文件
+        const result = await invoke<string>('delete_sandbox_files', { filePaths });
+        
+        // 从 ref 读取最新的 deleteCloud 值
+        const shouldDeleteCloud = deleteCloudRef.current;
+        
+        // 如果选择了同时删除云端文件
+        if (shouldDeleteCloud && giteaEnabled) {
+          let cloudSuccessCount = 0;
+          let cloudFailCount = 0;
+          
+          for (const filePath of filePaths) {
+            try {
+              const fileName = filePath.split(/[\\/]/).pop() || filePath;
+              const remotePath = `masked/${fileName}`;
+              await deleteFromGitea(remotePath, `批量删除: ${fileName}`);
+              cloudSuccessCount++;
+            } catch (cloudError) {
+              console.error('Cloud delete failed for:', filePath, cloudError);
+              cloudFailCount++;
+            }
+          }
+          
+          if (cloudFailCount === 0) {
+            setToast({ message: `${result}，云端文件也已删除`, type: 'success' });
+          } else {
+            setToast({ 
+              message: `${result}，云端删除: ${cloudSuccessCount} 成功，${cloudFailCount} 失败`, 
+              type: 'error' 
+            });
+          }
+        } else {
+          setToast({ message: result, type: 'success' });
+        }
+        
+        setSelectedFiles(new Set());
+        loadFiles();
+      } catch (error) {
+        console.error('Batch delete failed:', error);
+        setToast({ message: '批量删除失败: ' + error, type: 'error' });
+      }
+    };
+
     setConfirmDialog({
       open: true,
       title: '批量删除确认',
       description: `确定要删除选中的 ${selectedFiles.size} 个文件吗？此操作不可撤销。`,
-      onConfirm: async () => {
+      showCloudOption: giteaEnabled,
+      deleteCloud: false,
+      onConfirm: () => {
         setConfirmDialog(prev => ({ ...prev, open: false }));
-        try {
-          const filePaths = Array.from(selectedFiles);
-          const result = await invoke<string>('delete_sandbox_files', { filePaths });
-          setSelectedFiles(new Set());
-          loadFiles();
-          setToast({ message: result, type: 'success' });
-        } catch (error) {
-          console.error('Batch delete failed:', error);
-          setToast({ message: '批量删除失败: ' + error, type: 'error' });
-        }
+        executeBatchDelete();
       },
     });
   };
@@ -493,11 +576,36 @@ export function FileManager() {
 
       {/* 确认删除弹窗 */}
       <Dialog open={confirmDialog.open} onOpenChange={(open) => setConfirmDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-[400px]">
+        <DialogContent className="sm:max-w-[450px]">
           <DialogHeader>
             <DialogTitle>{confirmDialog.title}</DialogTitle>
             <DialogDescription>{confirmDialog.description}</DialogDescription>
           </DialogHeader>
+          
+          {/* 云端删除选项 */}
+          {confirmDialog.showCloudOption && (
+            <div className="py-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={confirmDialog.deleteCloud}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setConfirmDialog(prev => ({ ...prev, deleteCloud: checked }));
+                    deleteCloudRef.current = checked; // 同时更新 ref
+                  }}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-gray-900">同时删除 FileBay 云端文件</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    勾选此项将同时删除 FileBay 仓库中的对应文件
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
+          
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setConfirmDialog(prev => ({ ...prev, open: false }))}>
               取消

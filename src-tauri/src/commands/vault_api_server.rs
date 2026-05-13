@@ -104,8 +104,6 @@ impl VaultApiServer {
                 .or(health)
                 .with(cors)
                 .with(warp::log("vault_api"));
-
-            println!("🚀 Vault API Server starting on http://localhost:{}", port);
             
             warp::serve(routes)
                 .run(([127, 0, 0, 1], port))
@@ -142,12 +140,6 @@ async fn handle_save_config(
     payload: FileBayConfigPayload,
     app: AppHandle,
 ) -> Result<impl Reply, warp::Rejection> {
-    println!("📥 Received FileBay config from Desktop:");
-    println!("  URL: {}", payload.url);
-    println!("  Username: {}", payload.username);
-    println!("  Repo: {}", payload.repo_name);
-    println!("  Email: {}", payload.email);
-
     // 保存到数据库
     match save_filebay_config_to_db(&app, &payload).await {
         Ok(_) => {
@@ -241,7 +233,6 @@ async fn save_filebay_config_to_db(
         .await
         .map_err(|e| format!("Failed to save to database: {}", e))?;
 
-    println!("✅ FileBay config saved to Vault database");
     Ok(())
 }
 
@@ -280,7 +271,6 @@ async fn delete_filebay_config_from_db(app: &AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to delete from database: {}", e))?;
 
-    println!("✅ FileBay config deleted from Vault database");
     Ok(())
 }
 

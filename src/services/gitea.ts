@@ -53,3 +53,16 @@ export async function uploadBatchToGitea(
     message,
   });
 }
+
+/**
+ * 从 Gitea 删除文件
+ */
+export async function deleteFromGitea(
+  remotePath: string,
+  message?: string
+): Promise<string> {
+  return await invoke<string>('delete_from_gitea', {
+    remotePath,
+    message,
+  });
+}

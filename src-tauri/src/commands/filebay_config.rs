@@ -56,7 +56,7 @@ pub async fn read_filebay_config(app: AppHandle) -> Result<FileBayConfigStatus, 
         let browser_config_path = user_downloads.join("filebay-config.json");
         
         if browser_config_path.exists() {
-            println!("Found config in browser Downloads folder: {:?}", browser_config_path);
+
             browser_config_path
         } else {
             return Ok(FileBayConfigStatus {
@@ -126,24 +126,23 @@ pub async fn delete_filebay_config(app: AppHandle) -> Result<String, String> {
 /// 验证 FileBay 配置文件格式
 #[tauri::command]
 pub async fn validate_filebay_config_file(file_path: String) -> Result<FileBayConfig, String> {
-    println!("=== Validating FileBay config file ===");
-    println!("File path: {}", file_path);
-    
+
+
     let path = PathBuf::from(&file_path);
     
     if !path.exists() {
-        println!("Error: File does not exist");
+
         return Err("文件不存在".to_string());
     }
     
     // 检查文件扩展名
     if let Some(extension) = path.extension() {
         if extension != "json" {
-            println!("Error: Invalid extension: {:?}", extension);
+
             return Err("文件必须是 JSON 格式 (.json)".to_string());
         }
     } else {
-        println!("Error: No extension");
+
         return Err("文件必须有 .json 扩展名".to_string());
     }
     
@@ -151,36 +150,32 @@ pub async fn validate_filebay_config_file(file_path: String) -> Result<FileBayCo
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("读取文件失败: {}", e))?;
     
-    println!("File content length: {} bytes", content.len());
-    println!("File content:\n{}", content);
-    
+
     let config: FileBayConfig = serde_json::from_str(&content)
         .map_err(|e| {
-            println!("JSON parse error: {}", e);
+
             format!("JSON 格式错误: {}", e)
         })?;
     
     // 验证必需字段
     if config.url.is_empty() {
-        println!("Error: URL is empty");
+
         return Err("配置文件缺少 URL 字段".to_string());
     }
     
     if config.username.is_empty() {
-        println!("Error: Username is empty");
+
         return Err("配置文件缺少用户名字段".to_string());
     }
     
     if config.repo_name.is_empty() {
-        println!("Error: Repo name is empty");
+
         return Err("配置文件缺少仓库名字段".to_string());
     }
-    
-    println!("✓ Validation successful");
-    println!("  URL: {}", config.url);
-    println!("  Username: {}", config.username);
-    println!("  Repo: {}", config.repo_name);
-    
+
+
+
+
     Ok(config)
 }
 

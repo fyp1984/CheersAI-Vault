@@ -5,23 +5,8 @@ use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview,
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 设置 panic hook 来捕获崩溃信息
+    // 设置 panic hook 来捕获崩溃信息到文件
     std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("=== PANIC OCCURRED ===");
-        eprintln!("Panic info: {}", panic_info);
-        
-        if let Some(location) = panic_info.location() {
-            eprintln!("Panic location: {}:{}:{}", location.file(), location.line(), location.column());
-        }
-        
-        if let Some(payload) = panic_info.payload().downcast_ref::<&str>() {
-            eprintln!("Panic payload: {}", payload);
-        } else if let Some(payload) = panic_info.payload().downcast_ref::<String>() {
-            eprintln!("Panic payload: {}", payload);
-        }
-        
-        eprintln!("=== END PANIC INFO ===");
-        
         // 尝试写入崩溃日志文件
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
@@ -29,11 +14,12 @@ pub fn run() {
             .open("crash.log") 
         {
             use std::io::Write;
-            let _ = writeln!(file, "[{}] PANIC: {}", chrono::Utc::now(), panic_info);
+            let _ = writeln!(file, "PANIC: {}", panic_info);
+            if let Some(location) = panic_info.location() {
+                let _ = writeln!(file, "Location: {}:{}:{}", location.file(), location.line(), location.column());
+            }
         }
     }));
-
-    println!("=== CheersAI Vault Starting ===");
     
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -97,6 +83,7 @@ pub fn run() {
             gitea::create_gitea_repo,
             gitea::upload_to_gitea,
             gitea::upload_batch_to_gitea,
+            gitea::delete_from_gitea,
             gitea::sync_filebay_config_from_desktop,
             gitea::get_filebay_token,
             file_manager::add_managed_file,
@@ -172,25 +159,17 @@ pub fn run() {
             extract_config::eval_js_in_desktop_webview,
         ])
         .setup(|app| {
-            // 启动 Vault API 服务器
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                use crate::commands::vault_api_server::VaultApiServer;
-                let server = VaultApiServer::new(app_handle, 7788);
-                match server.start().await {
-                    Ok(_) => println!("✅ Vault API Server started successfully on port 7788"),
-                    Err(e) => eprintln!("❌ Failed to start Vault API server: {}", e),
-                }
-            });
+            // 暂时禁用 Vault API 服务器自动启动以排查崩溃问题
+            // 用户可以通过界面手动启动
+            let _ = app; // 避免未使用变量警告
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
     
     app.run(|_app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            // 可以在这里添加清理逻辑
-            api.prevent_exit();
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            // 允许程序正常退出
         }
     });
 }

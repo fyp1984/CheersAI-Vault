@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,11 +6,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb, ArrowUpDown } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import type { SensitiveTerm, AddSensitiveTermRequest } from "@/types/commands";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import Toast from "@/components/common/Toast";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ToastMessage {
   message: string;
@@ -27,6 +42,11 @@ export default function SensitiveTerms() {
   const [form, setForm] = useState<AddSensitiveTermRequest>({ term: "", category: "", description: "" });
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  
+  // 分页和排序状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [sortBy, setSortBy] = useState<'time' | 'alpha'>('time'); // time: 时间新旧, alpha: 首字母
 
   useEffect(() => {
     loadData();
@@ -144,6 +164,38 @@ export default function SensitiveTerms() {
     ? terms
     : terms.filter((t) => !selectedCategory || t.category === selectedCategory);
 
+  // 排序和分页逻辑
+  const sortedAndPagedTerms = useMemo(() => {
+    // 1. 排序
+    let sorted = [...filteredTerms];
+    if (sortBy === 'time') {
+      // 按时间排序（新的在前）
+      sorted.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+    } else {
+      // 按首字母排序
+      sorted.sort((a, b) => {
+        return a.term.localeCompare(b.term, 'zh-CN');
+      });
+    }
+    
+    // 2. 分页
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return sorted.slice(startIndex, endIndex);
+  }, [filteredTerms, sortBy, currentPage, pageSize]);
+
+  // 总页数
+  const totalPages = Math.ceil(filteredTerms.length / pageSize);
+
+  // 当筛选条件变化时，重置到第一页
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, searchQuery, pageSize]);
+
   return (
     <div className="flex flex-col h-full">
       <PageHeader title="敏感词库" description="管理脱敏时需要匹配的敏感信息" />
@@ -180,8 +232,8 @@ export default function SensitiveTerms() {
         {/* 操作栏 */}
         <Card>
           <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="flex-1 flex items-center gap-2">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex-1 flex items-center gap-2 min-w-[200px]">
                 <Input
                   placeholder="搜索敏感词..."
                   value={searchQuery}
@@ -204,6 +256,29 @@ export default function SensitiveTerms() {
                   <option key={cat} value={cat}>{cat}</option>
                 ))}
               </select>
+
+              {/* 排序选择 */}
+              <Select value={sortBy} onValueChange={(value: 'time' | 'alpha') => setSortBy(value)}>
+                <SelectTrigger className="w-[140px] h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="time">时间排序</SelectItem>
+                  <SelectItem value="alpha">首字母排序</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* 每页数量选择 */}
+              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                <SelectTrigger className="w-[120px] h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">每页 5 条</SelectItem>
+                  <SelectItem value="10">每页 10 条</SelectItem>
+                  <SelectItem value="20">每页 20 条</SelectItem>
+                </SelectContent>
+              </Select>
 
               <Button size="sm" variant="outline" onClick={handleExport}>
                 <Download className="w-4 h-4 mr-1" />
@@ -276,18 +351,25 @@ export default function SensitiveTerms() {
         {/* 词条列表 */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              敏感词列表 ({filteredTerms.length})
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">
+                敏感词列表 (共 {filteredTerms.length} 条)
+              </CardTitle>
+              <div className="text-sm text-gray-500">
+                第 {filteredTerms.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} - {Math.min(currentPage * pageSize, filteredTerms.length)} 条
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            {filteredTerms.length === 0 ? (
+            {sortedAndPagedTerms.length === 0 ? (
               <p className="text-sm text-gray-400 py-8 text-center">
-                暂无敏感词。点击「添加」按钮创建敏感词条。
+                {filteredTerms.length === 0 
+                  ? "暂无敏感词。点击「添加」按钮创建敏感词条。"
+                  : "当前页无数据"}
               </p>
             ) : (
               <div className="space-y-1">
-                {filteredTerms.map((term) => (
+                {sortedAndPagedTerms.map((term) => (
                   <div
                     key={term.id}
                     className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
@@ -320,6 +402,57 @@ export default function SensitiveTerms() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+            
+            {/* 分页组件 */}
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-center">
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious 
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        className={currentPage === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                    
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                      // 只显示当前页附近的页码
+                      if (
+                        page === 1 ||
+                        page === totalPages ||
+                        (page >= currentPage - 1 && page <= currentPage + 1)
+                      ) {
+                        return (
+                          <PaginationItem key={page}>
+                            <PaginationLink
+                              onClick={() => setCurrentPage(page)}
+                              isActive={currentPage === page}
+                              className="cursor-pointer"
+                            >
+                              {page}
+                            </PaginationLink>
+                          </PaginationItem>
+                        );
+                      } else if (page === currentPage - 2 || page === currentPage + 2) {
+                        return (
+                          <PaginationItem key={page}>
+                            <span className="px-2">...</span>
+                          </PaginationItem>
+                        );
+                      }
+                      return null;
+                    })}
+                    
+                    <PaginationItem>
+                      <PaginationNext 
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        className={currentPage === totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
               </div>
             )}
           </CardContent>

@@ -105,7 +105,7 @@ pub async fn delete_managed_files(ids: Vec<String>, delete_physical: bool) -> Re
                 let path = Path::new(&file.file_path);
                 if path.exists() {
                     if let Err(e) = std::fs::remove_file(path) {
-                        eprintln!("Failed to delete file {}: {}", file.file_path, e);
+
                     }
                 }
             }

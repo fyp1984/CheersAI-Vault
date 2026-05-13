@@ -29,20 +29,18 @@ fn get_vault_db_path() -> PathBuf {
 #[tauri::command]
 pub async fn list_vault_configs() -> Result<Vec<VaultFileBayConfig>, String> {
     use crate::core::database::Database;
-    
-    println!("🔍 list_vault_configs: 开始查询配置...");
-    
+
     // 首先尝试从本地数据库读取（Vault API Server 同步的配置）
     match Database::new().await {
         Ok(db) => {
-            println!("✅ 成功连接到本地数据库");
+
             match db.get_setting("filebay_config").await {
                 Ok(Some(config_json)) => {
-                    println!("✅ 从数据库读取到配置: {}", config_json);
+
                     // 解析配置
                     match serde_json::from_str::<serde_json::Value>(&config_json) {
                         Ok(config_value) => {
-                            println!("✅ 成功解析配置 JSON");
+
                             // 构建 VaultFileBayConfig
                             let config = VaultFileBayConfig {
                                 user_id: config_value.get("user_id")
@@ -74,30 +72,27 @@ pub async fn list_vault_configs() -> Result<Vec<VaultFileBayConfig>, String> {
                                     .unwrap_or("")
                                     .to_string(),
                             };
-                            
-                            println!("✅ 从本地数据库读取到自动同步的配置: username={}, email={}", config.username, config.email);
+
                             return Ok(vec![config]);
                         }
                         Err(e) => {
-                            println!("⚠️ 解析本地配置失败: {}", e);
+
                         }
                     }
                 }
                 Ok(None) => {
-                    println!("⚠️ 本地数据库中没有 filebay_config 键");
+
                 }
                 Err(e) => {
-                    println!("⚠️ 读取本地配置失败: {}", e);
+
                 }
             }
         }
         Err(e) => {
-            println!("⚠️ 无法连接到本地数据库: {}", e);
+
         }
     }
-    
-    println!("⚠️ 本地数据库没有配置，尝试从 Vault Bridge 数据库读取...");
-    
+
     // 如果本地数据库没有配置，尝试从 Vault Bridge 数据库读取
     use sqlx::sqlite::SqlitePool;
     

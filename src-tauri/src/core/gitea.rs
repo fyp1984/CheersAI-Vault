@@ -147,7 +147,6 @@ impl GiteaClient {
         let is_update = existing_file.is_some();
         
         let operation = if is_update { "更新" } else { "创建" };
-        println!("文件{}，将执行{}操作: {}", if is_update { "已存在" } else { "不存在" }, operation, remote_path);
 
         let url = format!(
             "{}/api/v1/repos/{}/{}/contents/{}",
@@ -162,7 +161,7 @@ impl GiteaClient {
         // 如果文件已存在，需要提供 SHA 来更新
         if let Some(existing) = existing_file {
             body["sha"] = serde_json::json!(existing.sha);
-            println!("使用 SHA 进行更新: {}", existing.sha);
+
         }
 
         let response = self
@@ -177,9 +176,7 @@ impl GiteaClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            
-            println!("上传失败 - 状态码: {}, 响应: {}", status, error_text);
-            
+
             // 将技术错误转换为用户友好的消息
             let user_message = if error_text.contains("already exists") {
                 // 这个错误不应该发生，因为我们已经检查并提供了 SHA
@@ -196,7 +193,7 @@ impl GiteaClient {
         }
 
         let file_response: GiteaFileResponse = response.json().await?;
-        println!("文件上传成功: {}", remote_path);
+
         Ok(file_response)
     }
 
@@ -216,17 +213,68 @@ impl GiteaClient {
                     if let Some(content) = response.content {
                         let url = content.html_url.clone();
                         uploaded_urls.push(content.html_url);
-                        println!("Uploaded: {} -> {}", local_path.display(), url);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to upload {}: {}", local_path.display(), e);
                     return Err(e);
                 }
             }
         }
 
         Ok(uploaded_urls)
+    }
+
+    /// 删除文件
+    pub async fn delete_file(
+        &self,
+        remote_path: &str,
+        message: &str,
+    ) -> Result<()> {
+        // 先获取文件的 SHA
+        let file_content = self.get_file(remote_path).await?;
+        
+        let sha = match file_content {
+            Some(content) => content.sha,
+            None => return Err(anyhow::anyhow!("文件不存在: {}", remote_path)),
+        };
+
+        let url = format!(
+            "{}/api/v1/repos/{}/{}/contents/{}",
+            self.config.url, self.config.owner, self.config.repo, remote_path
+        );
+
+        let body = serde_json::json!({
+            "sha": sha,
+            "message": message,
+        });
+
+        let response = self
+            .client
+            .request(reqwest::Method::DELETE, &url)
+            .header("Authorization", format!("token {}", self.config.token))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+
+            let user_message = if status == 401 || error_text.contains("unauthorized") {
+                format!("认证失败，请检查 Token 配置")
+            } else if status == 404 {
+                format!("文件不存在: {}", remote_path)
+            } else if status == 422 {
+                format!("删除失败：文件版本冲突，请刷新后重试")
+            } else {
+                format!("删除失败：{}", error_text)
+            };
+            
+            return Err(anyhow::anyhow!("{}", user_message));
+        }
+
+        Ok(())
     }
 
     /// 获取文件的下载 URL
@@ -256,6 +304,6 @@ mod tests {
         
         // 测试检查仓库
         let exists = client.check_repo_exists().await.unwrap();
-        println!("Repo exists: {}", exists);
+
     }
 }

@@ -69,13 +69,10 @@ pub struct PreviewResult {
 
 #[tauri::command]
 pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
-    println!("=== MASK_FILE START ===");
-    println!("File path: {}", options.file_path);
-    println!("Output path: {}", options.output_path);
-    println!("Rule IDs: {:?}", options.rule_ids);
+    // 开始计时
+    let start_time = std::time::Instant::now();
     
     let format = file_parser::detect_format(&options.file_path);
-    println!("Detected format: {:?}", format);
     
     let mut mapping = std::collections::HashMap::new();
     let mut counter = 0usize;
@@ -85,7 +82,6 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
     let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
         // 加载敏感词库
         let sensitive_terms = load_sensitive_terms().await?;
-        println!("Loaded {} sensitive terms from database", sensitive_terms.len());
         
         // 将敏感词转换为脱敏规则
         sensitive_terms
@@ -114,11 +110,9 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             })
             .collect()
     } else {
-        println!("Sensitive terms disabled by user");
         Vec::new()
     };
     
-    println!("Converted {} sensitive terms to masking rules", sensitive_term_rules.len());
 
     // 2. 合并 builtin + custom + sensitive_term 规则
     let builtin = masking_engine::get_builtin_rules();
@@ -155,19 +149,12 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
         .collect();
     
-    println!("=== Masking Debug Info ===");
-    println!("Total available rules: {}", all_combined.len());
-    println!("Requested rule IDs: {:?}", options.rule_ids);
-    println!("Active rules count: {}", active_rules.len());
     for rule in &active_rules {
-        println!("  - {} ({}): pattern={}", rule.name, rule.id, rule.pattern);
     }
-    println!("========================");
     
     // 创建 NER 检测器（根据选项决定是否启用 AI 检测）
     let use_ai = options.use_ai_validation.unwrap_or(false);
     let ner_detector = if use_ai {
-        println!("AI detection enabled for multi-method entity detection");
         ner::NERDetector::new_with_ai_detection(true)
     } else {
         ner::NERDetector::new()
@@ -193,6 +180,15 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         &mut counter
     );
     
+    // 如果文件名被完全脱敏（只剩下占位符），添加原始文件名的部分信息以便识别
+    let final_file_name = if masked_file_name.is_empty() || 
+                             masked_file_name.chars().all(|c| c == '*' || c.is_numeric()) {
+        // 文件名被完全脱敏，使用通用名称
+        format!("masked_file_{}", counter)
+    } else {
+        masked_file_name
+    };
+    
     // 构建新的输出路径（使用脱敏后的文件名）
     let output_dir = std::path::Path::new(&options.output_path)
         .parent()
@@ -200,28 +196,22 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         .unwrap_or(".");
     
     let final_output_path = if file_extension.is_empty() {
-        format!("{}/{}", output_dir, masked_file_name)
+        format!("{}/{}", output_dir, final_file_name)
     } else {
-        format!("{}/{}.{}", output_dir, masked_file_name, file_extension)
+        format!("{}/{}.{}", output_dir, final_file_name, file_extension)
     };
     
-    println!("Original file name: {}", original_file_name);
-    println!("Masked file name: {}", masked_file_name);
-    println!("Final output path: {}", final_output_path);
     
     // 无论有无 passphrase 都生成 .cmap 路径
     let mapping_path = Some(format!("{}.cmap", final_output_path));
 
     match format {
         file_parser::FileFormat::Csv => {
-            println!("Processing CSV file...");
             let (headers, rows) = file_parser::parse_csv(&options.file_path)
                 .map_err(|e| {
-                    println!("CSV parse error: {}", e);
                     format!("Failed to parse CSV: {}", e)
                 })?;
 
-            println!("CSV parsed successfully. Headers: {:?}, Rows: {}", headers, rows.len());
 
             // 批量处理：收集所有单元格
             let all_cells: Vec<String> = rows.iter()
@@ -229,18 +219,15 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                 .cloned()
                 .collect();
             
-            println!("Collected {} cells for batch processing", all_cells.len());
             
             // 批量检测实体
             let batch_entities = ner_detector.detect_entities_batch(&all_cells);
-            println!("Batch detection completed");
             
             // 应用脱敏
             let mut masked_rows = Vec::new();
             let mut cell_idx = 0;
             
             for (row_idx, row) in rows.iter().enumerate() {
-                println!("Processing row {}/{}", row_idx + 1, rows.len());
                 let mut masked_row = Vec::new();
                 
                 for cell in row {
@@ -262,31 +249,25 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                 masked_rows.push(masked_row);
             }
 
-            println!("Writing CSV output...");
             file_parser::write_csv(&final_output_path, &headers, &masked_rows)
                 .map_err(|e| {
-                    println!("CSV write error: {}", e);
                     format!("Failed to write CSV: {}", e)
                 })?;
 
             if let Some(ref map_path) = mapping_path {
                 let mappings: Vec<_> = mapping.values().cloned().collect();
                 if let Some(passphrase) = &options.passphrase {
-                    println!("Saving encrypted mapping to: {}", map_path);
                     crypto::save_encrypted_mapping(map_path, &mappings, passphrase)
-                        .map_err(|e| { println!("Mapping save error: {}", e); format!("Failed to save mapping: {}", e) })?;
+                        .map_err(|e| format!("Failed to save mapping: {}", e))?;
                 } else {
-                    println!("Saving plain JSON mapping to: {}", map_path);
                     crypto::save_plain_mapping(map_path, &mappings)
-                        .map_err(|e| { println!("Mapping save error: {}", e); format!("Failed to save mapping: {}", e) })?;
+                        .map_err(|e| format!("Failed to save mapping: {}", e))?;
                 }
             }
         }
         file_parser::FileFormat::Word => {
-            println!("Processing Word file...");
             let content = file_parser::parse_word(&options.file_path)
                 .map_err(|e| {
-                    println!("Word parse error: {}", e);
                     format!("Failed to parse Word: {}", e)
                 })?;
 
@@ -294,10 +275,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
 
             // Output as .txt file instead of .docx for simplicity
             let txt_output = final_output_path.replace(".docx", ".txt").replace(".doc", ".txt");
-            println!("Writing Word output to: {}", txt_output);
             file_parser::write_markdown(&txt_output, &masked_content)
                 .map_err(|e| {
-                    println!("Word write error: {}", e);
                     format!("Failed to write Word: {}", e)
                 })?;
 
@@ -313,10 +292,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::PowerPoint => {
-            println!("Processing PowerPoint file...");
             let content = file_parser::parse_powerpoint(&options.file_path)
                 .map_err(|e| {
-                    println!("PowerPoint parse error: {}", e);
                     format!("Failed to parse PowerPoint: {}", e)
                 })?;
 
@@ -324,10 +301,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
 
             // Output as .txt file instead of .pptx for simplicity
             let txt_output = final_output_path.replace(".pptx", ".txt").replace(".ppt", ".txt");
-            println!("Writing PowerPoint output to: {}", txt_output);
             file_parser::write_markdown(&txt_output, &masked_content)
                 .map_err(|e| {
-                    println!("PowerPoint write error: {}", e);
                     format!("Failed to write PowerPoint: {}", e)
                 })?;
 
@@ -343,10 +318,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::Pdf => {
-            println!("Processing PDF file with batch detection...");
             let content = file_parser::parse_pdf(&options.file_path)
                 .map_err(|e| {
-                    println!("PDF parse error: {}", e);
                     format!("Failed to parse PDF: {}", e)
                 })?;
 
@@ -355,11 +328,9 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                 .map(|s| s.to_string())
                 .collect();
             
-            println!("PDF parsed into {} lines", lines.len());
             
             // 批量检测所有行
             let batch_entities = ner_detector.detect_entities_batch(&lines);
-            println!("Batch detection completed for {} lines", lines.len());
             
             // 对每行应用脱敏
             let masked_lines: Vec<String> = lines
@@ -380,10 +351,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             
             // Output as .txt file instead of .pdf for simplicity
             let txt_output = final_output_path.replace(".pdf", ".txt");
-            println!("Writing PDF output to: {}", txt_output);
             file_parser::write_markdown(&txt_output, &masked_content)
                 .map_err(|e| {
-                    println!("PDF write error: {}", e);
                     format!("Failed to write PDF: {}", e)
                 })?;
 
@@ -399,19 +368,15 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::Markdown | file_parser::FileFormat::Text => {
-            println!("Processing Markdown/Text file...");
             let content = file_parser::parse_markdown(&options.file_path)
                 .map_err(|e| {
-                    println!("Markdown/Text parse error: {}", e);
                     format!("Failed to read file: {}", e)
                 })?;
 
             let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
 
-            println!("Writing Markdown/Text output...");
             file_parser::write_markdown(&final_output_path, &masked_content)
                 .map_err(|e| {
-                    println!("Markdown/Text write error: {}", e);
                     format!("Failed to write file: {}", e)
                 })?;
 
@@ -427,14 +392,31 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         _ => {
-            println!("Unsupported file format: {:?}", format);
             return Err("Unsupported file format".to_string());
         }
     }
 
-    println!("=== MASK_FILE SUCCESS ===");
-    println!("Masked count: {}", counter);
-    println!("Output path: {}", final_output_path);
+    // 记录处理历史到数据库
+    let processing_time_ms = start_time.elapsed().as_millis() as i64;
+    let history = database::ProcessingHistory {
+        id: Uuid::new_v4().to_string(),
+        file_path: options.file_path.clone(),
+        output_path: final_output_path.clone(),
+        rule_ids: "[]".to_string(), // 空的规则ID数组
+        file_size: std::fs::metadata(&options.file_path)
+            .map(|m| m.len() as i64)
+            .unwrap_or(0),
+        masked_count: counter as i32,
+        processing_time_ms,
+        status: "success".to_string(),
+        error_message: None,
+        created_at: chrono::Utc::now(),
+    };
+    
+    // 异步记录到数据库（不阻塞主流程）
+    if let Ok(db) = database::Database::new().await {
+        let _ = db.add_processing_history(&history).await;
+    }
 
     Ok(MaskResult {
         output_path: final_output_path,
@@ -450,10 +432,10 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     
     // 1. 检查是否启用敏感词库
     let use_sensitive_terms = options.rule_ids.contains(&"use_sensitive_terms".to_string());
+    
     let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
         // 加载敏感词库
         let sensitive_terms = load_sensitive_terms().await?;
-        println!("Loaded {} sensitive terms for preview", sensitive_terms.len());
         
         // 将敏感词转换为脱敏规则
         sensitive_terms
@@ -481,7 +463,6 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             })
             .collect()
     } else {
-        println!("Sensitive terms disabled by user for preview");
         Vec::new()
     };
     
@@ -522,7 +503,6 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     // Create NER detector (with AI detection if enabled)
     let use_ai = options.use_ai_validation.unwrap_or(false);
     let ner_detector = if use_ai {
-        println!("AI detection enabled for multi-method entity detection (preview)");
         ner::NERDetector::new_with_ai_detection(true)
     } else {
         ner::NERDetector::new()
@@ -685,14 +665,12 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            println!("PDF parsed into {} lines", lines.len());
             
             let mut mapping = std::collections::HashMap::new();
             let mut counter = 0usize;
             
             // 批量检测所有行
             let batch_entities = ner_detector.detect_entities_batch(&lines);
-            println!("Batch detection completed for PDF lines");
             
             // 对每行应用脱敏
             let masked_lines: Vec<String> = lines
@@ -780,10 +758,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
 
 #[tauri::command]
 pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResult, String> {
-    println!("=== SAVE_PREVIEW_RESULT START ===");
-    println!("File path: {}", options.file_path);
-    println!("Output dir: {}", options.output_dir);
-    println!("Rows to save: {}", options.masked_rows.len());
+    // 开始计时
+    let start_time = std::time::Instant::now();
     
     let format = file_parser::detect_format(&options.file_path);
     let original_file_name = std::path::Path::new(&options.file_path)
@@ -791,32 +767,29 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         .and_then(|s| s.to_str())
         .unwrap_or("masked");
     
-    // 对文件名进行脱敏（替换敏感词为分类标签，保留其他内容）
+    // 对文件名进行脱敏（使用敏感词库）
     let masked_file_name = if original_file_name.chars().any(|c| c >= '\u{4E00}' && c <= '\u{9FA5}') {
         // 包含中文，尝试匹配敏感词库
         let sensitive_terms = load_sensitive_terms().await.unwrap_or_default();
         
         let mut result = original_file_name.to_string();
-        let mut has_sensitive_term = false;
         
         // 按照敏感词长度从长到短排序，优先匹配长词
         let mut sorted_terms = sensitive_terms.clone();
         sorted_terms.sort_by(|a, b| b.term.len().cmp(&a.term.len()));
         
         for term in &sorted_terms {
-            if result.contains(&term.term) {
+            if term.enabled && result.contains(&term.term) {
                 // 找到匹配的敏感词，替换为分类标签
                 result = result.replace(&term.term, &format!("[{}]", term.category));
-                has_sensitive_term = true;
             }
         }
         
-        if has_sensitive_term {
-            // 有敏感词被替换，使用替换后的文件名
-            result
+        // 如果文件名被完全替换成标签，保留一些原始信息
+        if result.is_empty() || result.chars().all(|c| c == '[' || c == ']' || c.is_alphabetic()) {
+            format!("masked_{}", original_file_name.chars().take(5).collect::<String>())
         } else {
-            // 没有匹配到敏感词，使用通用标签
-            "文件".to_string()
+            result
         }
     } else {
         // 不包含中文，保留原文件名
@@ -827,16 +800,13 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         file_parser::FileFormat::Csv => "csv",
         file_parser::FileFormat::Excel => "xlsx",
         file_parser::FileFormat::Word => "docx",
-        file_parser::FileFormat::Pdf => "pdf",
+        file_parser::FileFormat::Pdf => "txt",  // PDF 保存为文本格式
         file_parser::FileFormat::Markdown => "md",
         file_parser::FileFormat::Text => "txt",
         _ => "txt",
     };
     
     let output_path = format!("{}/{}.{}", options.output_dir, masked_file_name, extension);
-    println!("Original file name: {}", original_file_name);
-    println!("Masked file name: {}", masked_file_name);
-    println!("Output path: {}", output_path);
     
     // 保存文件
     match format {
@@ -864,7 +834,6 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
             // Excel 文件保存为 CSV 格式（因为没有 Excel 写入库）
             // 用户可以用 Excel 打开 CSV 文件
             let csv_output_path = format!("{}/{}.csv", options.output_dir, masked_file_name);
-            println!("Excel file will be saved as CSV: {}", csv_output_path);
             
             let mut wtr = csv::Writer::from_path(&csv_output_path)
                 .map_err(|e| format!("Failed to create CSV writer: {}", e))?;
@@ -884,11 +853,33 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
             wtr.flush()
                 .map_err(|e| format!("Failed to flush CSV: {}", e))?;
             
+            // 记录处理历史到数据库
+            let processing_time_ms = start_time.elapsed().as_millis() as i64;
+            let history = database::ProcessingHistory {
+                id: Uuid::new_v4().to_string(),
+                file_path: options.file_path.clone(),
+                output_path: csv_output_path.clone(),
+                rule_ids: "[]".to_string(),
+                file_size: std::fs::metadata(&options.file_path)
+                    .map(|m| m.len() as i64)
+                    .unwrap_or(0),
+                masked_count: options.masked_rows.len() as i32,
+                processing_time_ms,
+                status: "success".to_string(),
+                error_message: None,
+                created_at: chrono::Utc::now(),
+            };
+            
+            // 异步记录到数据库（不阻塞主流程）
+            if let Ok(db) = database::Database::new().await {
+                let _ = db.add_processing_history(&history).await;
+            }
+            
             // 更新输出路径为 CSV
             return Ok(MaskResult {
                 output_path: csv_output_path.clone(),
                 masked_count: options.masked_rows.len(),
-                mapping_path: Some(format!("{}/masked_{}.cmap", options.output_dir, masked_file_name)),
+                mapping_path: Some(format!("{}.cmap", csv_output_path)),
             });
         }
         file_parser::FileFormat::Word => {
@@ -942,8 +933,8 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
             doc.build().pack(file)
                 .map_err(|e| format!("Failed to write Word file: {}", e))?;
         }
-        file_parser::FileFormat::Text | file_parser::FileFormat::Markdown => {
-            // 保存为纯文本或 Markdown
+        file_parser::FileFormat::Text | file_parser::FileFormat::Markdown | file_parser::FileFormat::Pdf => {
+            // 保存为纯文本或 Markdown（PDF 也保存为文本格式）
             let mut content = String::new();
             
             // 写入表头
@@ -984,7 +975,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
     }
     
     // 创建映射文件（使用传入的映射数据，如果没有则创建空映射）
-    let mapping_path = format!("{}/masked_{}.cmap", options.output_dir, masked_file_name);
+    let mapping_path = format!("{}.cmap", output_path);
     let mapping_to_save = options.mapping.unwrap_or_default();
     
     if let Some(passphrase) = &options.passphrase {
@@ -995,7 +986,27 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
             .map_err(|e| format!("Failed to save plain mapping: {}", e))?;
     }
     
-    println!("=== SAVE_PREVIEW_RESULT END ===");
+    // 记录处理历史到数据库
+    let processing_time_ms = start_time.elapsed().as_millis() as i64;
+    let history = database::ProcessingHistory {
+        id: Uuid::new_v4().to_string(),
+        file_path: options.file_path.clone(),
+        output_path: output_path.clone(),
+        rule_ids: "[]".to_string(),
+        file_size: std::fs::metadata(&options.file_path)
+            .map(|m| m.len() as i64)
+            .unwrap_or(0),
+        masked_count: options.masked_rows.len() as i32,
+        processing_time_ms,
+        status: "success".to_string(),
+        error_message: None,
+        created_at: chrono::Utc::now(),
+    };
+    
+    // 异步记录到数据库（不阻塞主流程）
+    if let Ok(db) = database::Database::new().await {
+        let _ = db.add_processing_history(&history).await;
+    }
     
     Ok(MaskResult {
         output_path,

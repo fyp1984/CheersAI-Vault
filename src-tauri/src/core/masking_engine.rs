@@ -112,7 +112,6 @@ pub fn mask_value_with_ner(
     let entities = ner_detector.detect_entities(value);
     
     if !entities.is_empty() {
-        println!("NER detected {} entities in original text", entities.len());
         
         // 创建规则 ID 集合，用于快速查找
         let enabled_rule_ids: std::collections::HashSet<&str> = rules.iter()
@@ -127,13 +126,13 @@ pub fn mask_value_with_ner(
             // 检查这个实体是否还在结果中（如果不在，说明已经被规则脱敏了）
             if !result.contains(&original) {
                 // 已经被规则脱敏了，跳过
-                println!("NER entity already masked by rules: {}", original);
+
                 continue;
             }
             
             // 检查是否已经有映射
             if let Some(entry) = mapping.values().find(|e| e.original == original) {
-                println!("NER entity found in existing mapping: {} -> {}", original, entry.masked);
+
                 result = result.replace(&original, &entry.masked);
                 continue;
             }
@@ -146,7 +145,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***IDCARD{}***", counter), "id_card_ner".to_string(), true)
                     } else {
-                        println!("NER detected 身份证号 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -156,7 +155,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***PHONE{}***", counter), "phone_ner".to_string(), true)
                     } else {
-                        println!("NER detected 手机号 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -166,7 +165,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***EMAIL{}***", counter), "email_ner".to_string(), true)
                     } else {
-                        println!("NER detected 邮箱 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -176,7 +175,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string(), true)
                     } else {
-                        println!("NER detected 银行卡号 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -186,7 +185,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***IP{}***", counter), "ipv4_ner".to_string(), true)
                     } else {
-                        println!("NER detected IP地址 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -196,7 +195,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("***PASSPORT{}***", counter), "passport_ner".to_string(), true)
                     } else {
-                        println!("NER detected 护照号 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -206,7 +205,7 @@ pub fn mask_value_with_ner(
                         *counter += 1;
                         (format!("姓名{}", counter), "chinese_name_ner".to_string(), true)
                     } else {
-                        println!("NER detected 姓名 '{}' but rule is disabled, skipping", original);
+
                         (String::new(), String::new(), false)
                     }
                 },
@@ -231,7 +230,6 @@ pub fn mask_value_with_ner(
                     (format!("***ORG{}***", counter), "organization_ner".to_string(), true)
                 },
                 _ => {
-                    println!("NER detected unknown entity type: {} ({}), using generic masking", entity.entity_type, original);
                     *counter += 1;
                     (format!("***SENSITIVE{}***", counter), "unknown_ner".to_string(), true)
                 }
@@ -242,7 +240,6 @@ pub fn mask_value_with_ner(
                 continue;
             }
             
-            println!("NER masking entity: {} -> {} (type: {})", original, masked, entity.entity_type);
             
             // 保存映射
             let map_key = format!("{}-{}", rule_id, counter);
@@ -261,9 +258,7 @@ pub fn mask_value_with_ner(
     }
     
     if original_value != result {
-        println!("mask_value_with_ner: content changed from {} chars to {} chars", original_value.len(), result.len());
     } else {
-        println!("mask_value_with_ner: NO changes made (input {} chars)", original_value.len());
     }
     
     result
@@ -359,26 +354,23 @@ pub fn mask_value(
     let original_value = value.to_string();
     
     if value.len() > 0 && value.len() < 200 {
-        println!("mask_value input: '{}'", value);
+
     } else if value.len() > 0 {
-        println!("mask_value input: {} chars (too long to display)", value.len());
     }
     
-    println!("mask_value: Processing with {} rules", rules.len());
     if rules.is_empty() {
-        println!("WARNING: No rules provided to mask_value!");
+
     }
 
     for rule in rules {
         if !rule.enabled {
-            println!("Skipping disabled rule: {}", rule.id);
+
             continue;
         }
-        println!("Trying rule: {} (pattern: {})", rule.id, rule.pattern);
         let re = match Regex::new(&rule.pattern) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Invalid regex pattern for rule {}: {}", rule.id, e);
+
                 continue;
             }
         };
@@ -396,7 +388,6 @@ pub fn mask_value(
                 } else {
                     rule.replacement_template.clone()
                 };
-                println!("New mapping: {} -> {} (rule: {})", original, masked, rule.id);
                 let map_key = if rule.use_counter {
                     format!("{}-{}", rule.id, counter)
                 } else {
@@ -415,14 +406,12 @@ pub fn mask_value(
             .to_string();
         
         if before != result {
-            println!("Rule {} matched and replaced content", rule.id);
+
         }
     }
 
     if original_value != result {
-        println!("mask_value: content changed from {} chars to {} chars", original_value.len(), result.len());
     } else {
-        println!("mask_value: NO changes made (input {} chars)", original_value.len());
     }
 
     result

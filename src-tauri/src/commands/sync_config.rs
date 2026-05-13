@@ -30,18 +30,15 @@ pub async fn sync_config_from_desktop(
     config: SyncConfigRequest,
 ) -> Result<String, String> {
     use sqlx::sqlite::SqlitePool;
-    
-    println!("=== Syncing config from Desktop ===");
-    println!("URL: {}", config.url);
-    println!("Username: {}", config.username);
-    println!("Email: {}", config.email);
-    println!("Repo: {}", config.repo_name);
-    
+
+
+
+
+
     // 1. 更新 Vault Bridge 数据库
     let vault_db_path = get_vault_db_path();
     if vault_db_path.exists() {
-        println!("Updating Vault database: {:?}", vault_db_path);
-        
+
         let db_url = format!("sqlite://{}", vault_db_path.to_string_lossy());
         let pool = SqlitePool::connect(&db_url)
             .await
@@ -59,7 +56,7 @@ pub async fn sync_config_from_desktop(
         
         if let Some((user_id,)) = existing {
             // 更新现有配置
-            println!("Updating existing config for user_id: {}", user_id);
+
             sqlx::query(
                 "UPDATE filebay_configs 
                  SET url = ?, username = ?, repo_name = ?, email = ?, token = ?, updated_at = datetime('now')
@@ -77,7 +74,7 @@ pub async fn sync_config_from_desktop(
         } else {
             // 插入新配置
             let user_id = config.user_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            println!("Inserting new config with user_id: {}", user_id);
+
             sqlx::query(
                 "INSERT INTO filebay_configs (user_id, url, username, repo_name, email, token, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
@@ -94,9 +91,9 @@ pub async fn sync_config_from_desktop(
         }
         
         pool.close().await;
-        println!("✓ Vault database updated");
+
     } else {
-        println!("⚠ Vault database does not exist, skipping");
+
     }
     
     // 2. 更新 Gitea 配置文件
@@ -111,8 +108,7 @@ pub async fn sync_config_from_desktop(
     
     std::fs::write(&gitea_config_path, serde_json::to_string_pretty(&gitea_config).unwrap())
         .map_err(|e| format!("写入 Gitea 配置失败: {}", e))?;
-    println!("✓ Gitea config updated: {:?}", gitea_config_path);
-    
+
     // 3. 更新 FileBay 配置文件
     let filebay_config_path = get_filebay_config_path(&app)?;
     let filebay_config = serde_json::json!({
@@ -133,8 +129,7 @@ pub async fn sync_config_from_desktop(
     
     std::fs::write(&filebay_config_path, serde_json::to_string_pretty(&filebay_config).unwrap())
         .map_err(|e| format!("写入 FileBay 配置失败: {}", e))?;
-    println!("✓ FileBay config updated: {:?}", filebay_config_path);
-    
+
     Ok(format!(
         "配置同步成功！\n\n用户: {} ({})\n仓库: {}\n服务器: {}",
         config.username, config.email, config.repo_name, config.url

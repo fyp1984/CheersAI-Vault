@@ -288,9 +288,9 @@ fn get_ollama_path(app: &AppHandle) -> Result<PathBuf, String> {
 /// 注意：由于路径编码问题，建议用户手动安装 Ollama
 #[tauri::command]
 pub async fn download_ollama(app: AppHandle, custom_path: Option<String>) -> Result<String, String> {
-    println!("=== Starting Ollama download ===");
+
     if let Some(ref path) = custom_path {
-        println!("Custom installation path: {}", path);
+
     }
     
     // 检查系统是否已安装 Ollama
@@ -312,14 +312,14 @@ pub async fn download_ollama(app: AppHandle, custom_path: Option<String>) -> Res
 /// 检查 Ollama 是否已安装
 #[tauri::command]
 pub async fn check_ollama_installed(app: AppHandle) -> Result<bool, String> {
-    println!("=== Checking Ollama installation ===");
+
     match get_ollama_path(&app) {
         Ok(path) => {
-            println!("✓ Ollama found at: {:?}", path);
+
             Ok(true)
         },
         Err(e) => {
-            println!("✗ Ollama not found: {}", e);
+
             Ok(false)
         },
     }
@@ -338,15 +338,13 @@ pub async fn check_ollama_service_running() -> Result<bool, String> {
 /// 启动 Ollama 服务
 #[tauri::command]
 pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
-    println!("=== Starting Ollama service ===");
 
     if is_ollama_service_running().await {
         return Ok("Ollama 服务已在运行".to_string());
     }
     
     let ollama_path = get_ollama_path(&app)?;
-    println!("Using Ollama at: {:?}", ollama_path);
-    
+
     // 启动 Ollama 服务（后台运行）
     #[cfg(target_os = "windows")]
     {
@@ -356,11 +354,11 @@ pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
             .spawn()
         {
             Ok(_) => {
-                println!("✓ Ollama service started");
+
                 Ok("Ollama 服务已启动".to_string())
             },
             Err(e) => {
-                println!("✗ Failed to start Ollama: {}", e);
+
                 Err(format!("启动 Ollama 失败: {}", e))
             }
         }
@@ -389,11 +387,11 @@ pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
             .spawn()
         {
             Ok(_) => {
-                println!("✓ Ollama service started");
+
                 Ok("Ollama 服务启动命令已发出，请稍等几秒后重新扫描".to_string())
             },
             Err(e) => {
-                println!("✗ Failed to start Ollama: {}", e);
+
                 Err(format!("启动 Ollama 失败: {}", e))
             }
         }
@@ -404,25 +402,23 @@ pub async fn start_ollama_service(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
     let config = AiModelConfig::default();
-    
-    println!("=== Checking AI model installation ===");
-    println!("  Model name: {}", config.model_name);
-    
+
+
     // 检查 Ollama 是否安装
     let ollama_path = match get_ollama_path(&app) {
         Ok(path) => {
-            println!("✓ Ollama found at: {:?}", path);
-            println!("  Checking for model: {}", config.model_name);
+
+
             path
         },
         Err(e) => {
-            println!("✗ Ollama not found: {}", e);
+
             return Ok(false);
         }
     };
 
     if !is_ollama_service_running().await {
-        println!("✗ Ollama binary exists but service is not running");
+
         return Ok(false);
     }
     
@@ -439,7 +435,7 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
         {
             Ok(output) => output,
             Err(e) => {
-                println!("✗ Failed to execute ollama list: {}", e);
+
                 return Ok(false);
             }
         }
@@ -452,18 +448,17 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
     {
         Ok(output) => output,
         Err(e) => {
-            println!("✗ Failed to execute ollama list: {}", e);
+
             return Ok(false);
         }
     };
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("✗ ollama list command failed: {}", stderr);
-        
+
         // 检查是否是因为服务未运行
         if stderr.contains("connect") || stderr.contains("refused") || stderr.contains("dial") {
-            println!("  Reason: Ollama service is not running");
+
         }
         
         return Ok(false);
@@ -473,10 +468,10 @@ pub async fn check_ai_model_installed(app: AppHandle) -> Result<bool, String> {
     let found = output_str.contains(&config.model_name);
     
     if found {
-        println!("✓ AI model {} is installed", config.model_name);
+
     } else {
-        println!("✗ AI model {} not found", config.model_name);
-        println!("  Available models:\n{}", output_str);
+
+
     }
     
     Ok(found)
@@ -494,11 +489,9 @@ pub async fn install_ai_model(app: AppHandle) -> Result<String, String> {
     let model_dir = get_ai_model_dir(&app)?;
     std::fs::create_dir_all(&model_dir)
         .map_err(|e| format!("Failed to create model directory: {}", e))?;
-    
-    println!("Installing AI model: {}", config.model_name);
-    println!("  Ollama path: {:?}", ollama_path);
-    println!("  Model directory: {:?}", model_dir);
-    
+
+
+
     // 验证 Ollama 可执行文件存在
     if !ollama_path.exists() {
         return Err(format!("Ollama executable not found: {:?}", ollama_path));
@@ -535,8 +528,7 @@ pub async fn install_ai_model(app: AppHandle) -> Result<String, String> {
         let stdout_msg = String::from_utf8_lossy(&output.stdout);
         return Err(format!("Failed to install model:\nSTDERR: {}\nSTDOUT: {}", error_msg, stdout_msg));
     }
-    
-    println!("✓ AI model {} installed successfully", config.model_name);
+
     Ok(format!("AI 模型 {} 安装成功", config.model_name))
 }
 
@@ -547,9 +539,7 @@ pub async fn uninstall_ai_model(app: AppHandle) -> Result<String, String> {
     
     // 检查 Ollama 是否安装
     let ollama_path = get_ollama_path(&app)?;
-    
-    println!("Uninstalling AI model: {}", config.model_name);
-    
+
     // 使用 ollama rm 命令删除模型
     #[cfg(target_os = "windows")]
     let output = {
@@ -588,9 +578,7 @@ pub async fn call_ai_model(app: AppHandle, prompt: String) -> Result<String, Str
     let ollama_path = get_ollama_path(&app)?;
 
     ensure_ollama_service_ready().await?;
-    
-    println!("Calling AI model with prompt: {}", prompt);
-    
+
     // 使用 ollama run 命令调用模型
     #[cfg(target_os = "windows")]
     let output = {
@@ -662,19 +650,18 @@ pub async fn get_ai_model_info(app: AppHandle) -> Result<serde_json::Value, Stri
 /// 检查 AI 检测是否可用（Ollama 已安装且模型已安装）
 #[tauri::command]
 pub async fn check_ai_detection_available(app: AppHandle) -> Result<bool, String> {
-    println!("=== Checking AI detection availability ===");
-    
+
     // 检查 Ollama 是否安装
     let ollama_installed = match check_ollama_installed(app.clone()).await {
         Ok(installed) => installed,
         Err(e) => {
-            println!("✗ Failed to check Ollama: {}", e);
+
             return Ok(false);
         }
     };
     
     if !ollama_installed {
-        println!("✗ Ollama not installed");
+
         return Ok(false);
     }
     
@@ -682,16 +669,15 @@ pub async fn check_ai_detection_available(app: AppHandle) -> Result<bool, String
     let model_installed = match check_ai_model_installed(app.clone()).await {
         Ok(installed) => installed,
         Err(e) => {
-            println!("✗ Failed to check AI model: {}", e);
+
             return Ok(false);
         }
     };
     
     if !model_installed {
-        println!("✗ AI model not installed");
+
         return Ok(false);
     }
-    
-    println!("✓ AI detection is available");
+
     Ok(true)
 }

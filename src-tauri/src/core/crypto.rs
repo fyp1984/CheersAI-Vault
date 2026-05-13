@@ -163,7 +163,7 @@ pub fn save_encrypted_mapping(
             .args(["-h", "-s", &win_path])
             .output();
         if let Err(e) = result {
-            eprintln!("Warning: Failed to set file attributes for {}: {}", win_path, e);
+
         }
     }
 
