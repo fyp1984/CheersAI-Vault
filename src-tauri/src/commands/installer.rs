@@ -96,8 +96,7 @@ fn get_python_exe() -> Result<String, String> {
 
 /// 获取或创建安装脚本
 fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
-    println!("Getting script: {}", script_name);
-    
+
     // 获取脚本内容
     let script_content = match script_name {
         "install_ocr.py" => INSTALL_OCR_SCRIPT,
@@ -114,8 +113,7 @@ fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
     let script_path = temp_dir.join(script_name);
     std::fs::write(&script_path, script_content)
         .map_err(|e| format!("Failed to write script: {}", e))?;
-    
-    println!("  ✓ Script created at: {:?}", script_path);
+
     Ok(script_path)
 }
 
@@ -129,12 +127,10 @@ async fn run_installer_script(
 ) -> Result<String, String> {
     let python_exe = get_python_exe()?;
     let script_path = get_or_create_script(script_name)?;
-    
-    println!("Running installer script:");
-    println!("  Python: {}", python_exe);
-    println!("  Script: {:?}", script_path);
-    println!("  Args: {:?}", args);
-    
+
+
+
+
     // 构建命令
     #[cfg(target_os = "windows")]
     let mut cmd = {
@@ -173,8 +169,7 @@ async fn run_installer_script(
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(line) = line {
-                println!("{}", line);
-                
+
                 // 解析进度信息
                 let progress = parse_installer_log(&line);
                 let _ = window_clone.emit(&event_name_clone, progress);
@@ -188,7 +183,7 @@ async fn run_installer_script(
         let mut stderr_lines = Vec::new();
         for line in reader.lines() {
             if let Ok(line) = line {
-                eprintln!("{}", line);
+
                 stderr_lines.push(line);
             }
         }
@@ -334,8 +329,7 @@ pub async fn install_ollama_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Installing Ollama using script ===");
-    
+
     run_installer_script(
         app,
         window,
@@ -351,8 +345,7 @@ pub async fn uninstall_ollama_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-    println!("=== Uninstalling Ollama using script ===");
-    
+
     run_installer_script(
         app,
         window,
@@ -367,11 +360,11 @@ pub async fn uninstall_ollama_with_script(
 pub async fn check_python_available() -> Result<bool, String> {
     match get_python_exe() {
         Ok(python) => {
-            println!("✓ Python found: {}", python);
+
             Ok(true)
         },
         Err(e) => {
-            println!("✗ Python not found: {}", e);
+
             Ok(false)
         }
     }

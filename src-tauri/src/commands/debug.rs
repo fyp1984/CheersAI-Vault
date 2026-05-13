@@ -12,7 +12,6 @@ pub async fn get_working_directory() -> Result<String, String> {
 #[tauri::command]
 pub async fn check_file_exists(path: String) -> Result<bool, String> {
     let file_path = PathBuf::from(&path);
-    println!("Checking file existence: {}", path);
-    println!("Absolute path: {}", file_path.canonicalize().unwrap_or(file_path.clone()).display());
+
     Ok(file_path.exists())
 }

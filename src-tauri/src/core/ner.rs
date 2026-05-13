@@ -134,23 +134,18 @@ impl NERDetector {
     pub fn detect_entities(&self, text: &str) -> Vec<EntityMatch> {
         if self.use_ai_detection {
             // AI 模式：使用四种方法
-            println!("=== Starting multi-method entity detection (AI mode) ===");
             
             // 1. 正则表达式检测
             let regex_entities = self.detect_with_regex(text);
-            println!("Regex detected {} entities", regex_entities.len());
             
             // 2. NER 智能检测
             let ner_entities = self.detect_with_ner(text);
-            println!("NER detected {} entities", ner_entities.len());
             
             // 3. AI 模型检测
             let ai_entities = self.detect_with_ai(text);
-            println!("AI detected {} entities", ai_entities.len());
             
             // 4. 字符串搜索匹配
             let search_entities = self.detect_with_search(text);
-            println!("Search detected {} entities", search_entities.len());
             
             // 合并结果：姓名取交集，其他取并集
             let merged = self.merge_detections(
@@ -160,14 +155,11 @@ impl NERDetector {
                 search_entities,
             );
             
-            println!("Final merged: {} entities", merged.len());
             merged
         } else {
             // 传统模式：只使用正则表达式检测
-            println!("=== Using regex-only detection (traditional mode) ===");
             
             let regex_entities = self.detect_with_regex(text);
-            println!("Regex detected {} entities", regex_entities.len());
             
             regex_entities
         }
@@ -224,12 +216,9 @@ impl NERDetector {
             提取结果（每行一个，必须在原文中出现）：",
             text
         );
-        
-        println!("Calling AI model for comprehensive entity detection...");
-        
+
         match Self::call_ollama_with_timeout(&prompt, 15) {
             Ok(response) => {
-                println!("AI full response:\n{}", response.trim());
                 
                 // 解析 AI 响应 - 支持两种格式
                 for line in response.lines() {
@@ -249,7 +238,6 @@ impl NERDetector {
                                 // 标准化实体类型
                                 let normalized_type = Self::normalize_entity_type(entity_type);
                                 
-                                println!("AI found: {} = '{}' at position {} (normalized: {})", entity_type, value, start, normalized_type);
                                 entities.push(EntityMatch {
                                     text: value.to_string(),
                                     entity_type: normalized_type,
@@ -259,7 +247,6 @@ impl NERDetector {
                                     source: "ai".to_string(),
                                 });
                             } else {
-                                println!("AI found '{}' (type: {}) but not in original text", value, entity_type);
                             }
                         }
                     }
@@ -275,7 +262,6 @@ impl NERDetector {
                             if let Some(start) = text.find(value) {
                                 let normalized_type = Self::normalize_entity_type(entity_type);
                                 
-                                println!("AI found: {} = '{}' at position {} (normalized: {})", entity_type, value, start, normalized_type);
                                 entities.push(EntityMatch {
                                     text: value.to_string(),
                                     entity_type: normalized_type,
@@ -285,16 +271,14 @@ impl NERDetector {
                                     source: "ai".to_string(),
                                 });
                             } else {
-                                println!("AI found '{}' (type: {}) but not in original text", value, entity_type);
                             }
                         }
                     }
                 }
                 
-                println!("AI detection extracted {} entities", entities.len());
             },
             Err(e) => {
-                println!("AI detection failed or timed out: {}", e);
+
             }
         }
         
@@ -449,7 +433,6 @@ impl NERDetector {
                 };
                 
                 if confirmed {
-                    println!("Name '{}' confirmed by {} detectors: {:?}", group[0].text, sources.len(), sources);
                     result.push(EntityMatch {
                         text: group[0].text.clone(),
                         entity_type: "姓名".to_string(), // 统一为"姓名"
@@ -459,7 +442,6 @@ impl NERDetector {
                         source: format!("confirmed_by_{}", sources.len()),
                     });
                 } else {
-                    println!("Name '{}' not confirmed (only {} detectors: {:?}), skipping", group[0].text, sources.len(), sources);
                 }
             } else {
                 // 其他类型：任一检测器识别即可（并集）
@@ -468,7 +450,6 @@ impl NERDetector {
                     a.confidence.partial_cmp(&b.confidence).unwrap()
                 }).unwrap();
                 
-                println!("Entity '{}' (type: {}) detected by {} methods", best.text, best.entity_type, group.len());
                 
                 result.push(EntityMatch {
                     text: best.text.clone(),

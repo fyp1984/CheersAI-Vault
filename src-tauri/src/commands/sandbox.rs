@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+// 文件管理相关命令 - 支持删除文件及其对照文件
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SandboxFile {
     pub name: String,
@@ -104,13 +105,18 @@ pub async fn list_sandbox_files() -> Result<Vec<SandboxFile>, String> {
 
 #[tauri::command]
 pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFile>, String> {
+    println!("📂 [list_files_in_directory] 读取目录: {}", directory);
+    println!("📂 [list_files_in_directory] 目录字节: {:?}", directory.as_bytes());
+    
     let dir_path = Path::new(&directory);
     
     if !dir_path.exists() {
+        println!("⚠️ [list_files_in_directory] 目录不存在: {}", directory);
         return Ok(vec![]);
     }
     
     if !dir_path.is_dir() {
+        println!("❌ [list_files_in_directory] 路径不是目录: {}", directory);
         return Err("Path is not a directory".to_string());
     }
     
@@ -118,11 +124,17 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
     
     match std::fs::read_dir(dir_path) {
         Ok(entries) => {
+            let mut entry_count = 0;
             for entry in entries {
+                entry_count += 1;
                 match entry {
                     Ok(entry) => {
                         let path = entry.path();
-                        if path.is_file() {
+                        let is_file = path.is_file();
+                        let is_dir = path.is_dir();
+                        println!("  📄 发现条目: {:?}, 是文件: {}, 是目录: {}", path, is_file, is_dir);
+                        
+                        if is_file {
                             let name = path.file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("unknown")
@@ -130,7 +142,10 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                             
                             let size = match entry.metadata() {
                                 Ok(metadata) => metadata.len(),
-                                Err(_) => 0,
+                                Err(e) => {
+                                    println!("  ⚠️ 无法读取文件元数据: {}", e);
+                                    0
+                                }
                             };
                             
                             let modified = match entry.metadata()
@@ -147,6 +162,7 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                                 Err(_) => "Unknown".to_string(),
                             };
                             
+                            println!("  ✅ 添加文件: {} ({}字节)", name, size);
                             files.push(SandboxFile {
                                 name,
                                 path: path.to_string_lossy().to_string(),
@@ -155,16 +171,24 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                             });
                         }
                     },
-                    Err(_) => continue,
+                    Err(e) => {
+                        println!("  ⚠️ 读取条目失败: {}", e);
+                        continue;
+                    }
                 }
             }
+            println!("📊 [list_files_in_directory] 总共发现 {} 个条目，其中 {} 个文件", entry_count, files.len());
         },
-        Err(e) => return Err(format!("Failed to read directory: {}", e)),
+        Err(e) => {
+            println!("❌ [list_files_in_directory] 读取目录失败: {}", e);
+            return Err(format!("Failed to read directory: {}", e));
+        }
     }
     
     // 按名称排序
     files.sort_by(|a, b| a.name.cmp(&b.name));
     
+    println!("✅ [list_files_in_directory] 返回 {} 个文件", files.len());
     Ok(files)
 }
 
@@ -183,10 +207,46 @@ pub async fn import_sandbox(_src_path: String, _passphrase: String) -> Result<Sa
 /// 删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
+
+
     let path = Path::new(&file_path);
     
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| format!("删除文件失败: {}", e))?;
+
+        // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
+        let file_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let parent_dir = path.parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".");
+        
+        // 模式1: {file_path}.cmap (mask_file 创建的)
+        let cmap_path1 = format!("{}.cmap", file_path);
+
+        if Path::new(&cmap_path1).exists() {
+            match std::fs::remove_file(&cmap_path1) {
+                Ok(_) => {},
+                Err(_e) => {},
+            }
+        } else {
+            
+            // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
+            let file_stem = path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
+
+            if Path::new(&cmap_path2).exists() {
+                match std::fs::remove_file(&cmap_path2) {
+                    Ok(_) => {},
+                    Err(_e) => {},
+                }
+            } else {
+            }
+        }
+        
         Ok("文件已删除".to_string())
     } else {
         Err("文件不存在".to_string())
@@ -196,17 +256,59 @@ pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
 /// 批量删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_files(file_paths: Vec<String>) -> Result<String, String> {
+    
     let mut deleted_count = 0;
     let mut errors = Vec::new();
     
     for file_path in file_paths {
+
         let path = Path::new(&file_path);
         
         if path.exists() {
             match std::fs::remove_file(path) {
-                Ok(_) => deleted_count += 1,
-                Err(e) => errors.push(format!("删除失败: {}", e)),
+                Ok(_) => {
+                    deleted_count += 1;
+
+                    // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
+                    let file_name = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    let parent_dir = path.parent()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or(".");
+                    
+                    // 模式1: {file_path}.cmap (mask_file 创建的)
+                    let cmap_path1 = format!("{}.cmap", file_path);
+
+                    if Path::new(&cmap_path1).exists() {
+                        match std::fs::remove_file(&cmap_path1) {
+                            Ok(_) => {},
+                            Err(_e) => {},
+                        }
+                    } else {
+                        
+                        // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
+                        let file_stem = path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
+
+                        if Path::new(&cmap_path2).exists() {
+                            match std::fs::remove_file(&cmap_path2) {
+                                Ok(_) => {},
+                                Err(_e) => {},
+                            }
+                        } else {
+                        }
+                    }
+                },
+                Err(e) => {
+
+                    errors.push(format!("删除失败: {}", e));
+                },
             }
+        } else {
+
         }
     }
     

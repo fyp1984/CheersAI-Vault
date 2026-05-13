@@ -165,11 +165,9 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             use_ai_validation: options.use_ai_validation,
         };
 
-        println!("Starting to process file: {}", file_path);
-        println!("File size: {} bytes", file_size);
-        println!("Output path: {}", output_path);
-        println!("Selected rules: {:?}", options.rule_ids);
-        
+
+
+
         match mask_file(mask_options).await {
             Ok(result) => {
                 let processing_time = file_start_time.elapsed().as_millis() as i64;
@@ -178,9 +176,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
                 update_job(&job_id, |job| {
                     job.completed += 1;
                 });
-                
-                println!("Successfully processed file: {} -> {}", file_path, result.output_path);
-                
+
                 // 记录成功日志和处理历史
                 if let Ok(db) = Database::new().await {
                     // 添加日志
@@ -220,9 +216,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
                     job.failed += 1;
                     job.error = Some(format!("处理文件 {} 失败: {}", file_path, e));
                 });
-                
-                eprintln!("Failed to process file {}: {}", file_path, e);
-                
+
                 // 记录失败日志和处理历史
                 if let Ok(db) = Database::new().await {
                     // 添加日志

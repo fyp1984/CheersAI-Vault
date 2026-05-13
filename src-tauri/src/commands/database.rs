@@ -195,7 +195,7 @@ pub async fn get_database_info() -> Result<serde_json::Value, String> {
     let log_count = match db.get_logs_count(None).await {
         Ok(count) => count,
         Err(e) => {
-            eprintln!("Error getting log count: {}", e);
+
             -1
         }
     };

@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CheersAI Desktop",
-  "version": "0.1.15",
+  "version": "0.1.34",
   "identifier": "com.cheersai.vault",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
@@ -23,6 +23,12 @@
     ],
     "security": {
       "csp": null
+    },
+    "withGlobalTauri": true
+  },
+  "plugins": {
+    "shell": {
+      "open": true
     }
   },
   "bundle": {
@@ -40,7 +46,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../scripts/install_ocr.py",
       "../scripts/install_ollama.py"
     ],
     "publisher": "CheersAI Team",

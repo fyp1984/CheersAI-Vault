@@ -293,9 +293,7 @@ fn parse_text_file(path: &str) -> Result<String> {
     
     // 打印当前工作目录和文件路径信息
     let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    println!("Current working directory: {}", current_dir.display());
-    println!("Attempting to read file: {}", path);
-    
+
     // 标准化路径处理
     let file_path = Path::new(path);
     
@@ -311,9 +309,7 @@ fn parse_text_file(path: &str) -> Result<String> {
         
         let mut found_path = None;
         for candidate in &possible_paths {
-            println!("Trying path: {}", candidate.display());
             if candidate.exists() && candidate.is_file() {
-                println!("Found valid file at: {}", candidate.display());
                 found_path = Some(candidate.clone());
                 break;
             }
@@ -335,34 +331,31 @@ fn parse_text_file(path: &str) -> Result<String> {
         }
     };
 
-    println!("Using final path: {}", final_path.display());
 
     // 尝试读取文件，提供更详细的错误信息
     match std::fs::read_to_string(&final_path) {
         Ok(content) => {
-            println!("Successfully read file: {} ({} bytes)", final_path.display(), content.len());
             Ok(content)
         },
         Err(e) => {
-            println!("Failed to read file as UTF-8: {}, trying alternative encodings...", e);
+
             // 尝试以字节方式读取，然后转换为字符串
             match std::fs::read(&final_path) {
                 Ok(bytes) => {
-                    println!("Read {} bytes from file: {}", bytes.len(), final_path.display());
                     // 尝试不同的编码
                     if let Ok(content) = String::from_utf8(bytes.clone()) {
-                        println!("Successfully decoded as UTF-8");
+
                         Ok(content)
                     } else {
-                        println!("UTF-8 decode failed, trying GBK...");
+
                         // 尝试 GBK 编码（中文 Windows 常用）
                         match encoding_rs::GBK.decode(&bytes) {
                             (content, _, false) => {
-                                println!("Successfully decoded as GBK");
+
                                 Ok(content.into_owned())
                             },
                             _ => {
-                                println!("GBK decode failed, using lossy UTF-8...");
+
                                 // 如果都失败，使用 UTF-8 lossy 转换
                                 Ok(String::from_utf8_lossy(&bytes).into_owned())
                             }
@@ -384,9 +377,7 @@ fn parse_text_file(path: &str) -> Result<String> {
 pub fn parse_pdf(path: &str) -> Result<String> {
     use pdf_extract::extract_text;
     use std::panic;
-    
-    println!("Attempting to parse PDF: {}", path);
-    
+
     // 使用 catch_unwind 捕获 panic
     let result = panic::catch_unwind(|| {
         extract_text(path)
@@ -394,24 +385,22 @@ pub fn parse_pdf(path: &str) -> Result<String> {
     
     match result {
         Ok(Ok(text)) => {
-            println!("Successfully extracted {} characters from PDF", text.len());
             
             if text.trim().is_empty() {
-                println!("Warning: PDF contains no extractable text, trying OCR...");
+
                 // 文本为空，尝试 OCR
                 parse_pdf_with_python_ocr(path)
             } else {
-                println!("First 200 chars: {}", &text.chars().take(200).collect::<String>());
                 Ok(text)
             }
         }
         Ok(Err(e)) => {
-            println!("Failed to extract text from PDF: {:?}, trying OCR...", e);
+
             // 提取失败，尝试 OCR
             parse_pdf_with_python_ocr(path)
         }
         Err(panic_err) => {
-            println!("PDF parsing panicked: {:?}, trying OCR...", panic_err);
+
             // Panic 发生，尝试 OCR
             parse_pdf_with_python_ocr(path)
         }
@@ -420,22 +409,22 @@ pub fn parse_pdf(path: &str) -> Result<String> {
 
 // OCR-based PDF parsing using Python script or bundled executable
 fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
-    println!("Starting OCR processing for PDF: {}", path);
-    println!("Note: OCR processing may take 30-60 seconds");
-    
-    // 获取应用目录和应用数据目录
+
+
+    // 获取应用目录
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     if let Some((python_runtime, script_path)) = crate::commands::ocr::resolve_ocr_runtime_from_env() {
-        println!("Using OCR runtime: {}", python_runtime.display());
         return run_ocr_command(
             &python_runtime.to_string_lossy(),
             &[&script_path.to_string_lossy(), path],
             300  // 5 分钟超时
         );
+    } else {
+
     }
 
     // 方案 2: 使用打包的 exe（仅 Windows）
@@ -443,7 +432,6 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     {
         let bundled_exe = exe_dir.join("pdf_ocr.exe");
         if bundled_exe.exists() {
-            println!("Using bundled OCR executable: {}", bundled_exe.display());
             return run_ocr_command(&bundled_exe.to_string_lossy(), &[path], 300);
         }
     }
@@ -456,18 +444,16 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     };
     
     if dev_script.exists() {
-        println!("Using development OCR script: {}", dev_script.display());
         
         // 尝试系统 Python
         let python_commands = vec!["python", "python3", "py"];
         
         for python_cmd in &python_commands {
-            println!("Trying Python command: {}", python_cmd);
-            
+
             match run_ocr_command(python_cmd, &[&dev_script.to_string_lossy(), path], 300) {  // 5 分钟超时
                 Ok(text) => return Ok(text),
                 Err(e) => {
-                    println!("Failed with {}: {}", python_cmd, e);
+
                 }
             }
         }
@@ -489,7 +475,9 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
         ));
     }
     
-    // 所有方案都不可用 - 提示下载
+    // 方案 4: 不使用系统 Python（已禁用，确保只使用下载的OCR包）
+
+    // All methods failed - prompt to download
     Err(anyhow::anyhow!(
         "⚠️ OCR 功能未安装\n\n\
         检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
@@ -506,7 +494,7 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     ))
 }
 
-// 运行 OCR 命令，支持实时输出和超时控制
+// Run OCR command with real-time output and timeout control
 fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<String> {
     use std::process::{Command, Stdio};
     use std::time::Duration;
@@ -518,8 +506,29 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
     let command_clone = command.to_string();
     let args_clone: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     
-    // 在新线程中执行命令
+    // Execute command in a new thread
     thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        let mut child = {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            
+            match Command::new(&command_clone)
+                .args(&args_clone)
+                .creation_flags(CREATE_NO_WINDOW)  // 隐藏 CMD 窗口
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("Failed to spawn process: {}", e)));
+                    return;
+                }
+            }
+        };
+        
+        #[cfg(not(target_os = "windows"))]
         let mut child = match Command::new(&command_clone)
             .args(&args_clone)
             .stdout(Stdio::piped())
@@ -533,19 +542,19 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             }
         };
         
-        // 读取 stderr（进度信息）
+        // Read stderr for progress information
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             thread::spawn(move || {
                 for line in reader.lines() {
                     if let Ok(line) = line {
-                        println!("OCR: {}", line);
+
                     }
                 }
             });
         }
         
-        // 等待进程完成
+        // Wait for process to complete
         match child.wait_with_output() {
             Ok(output) => {
                 if output.status.success() {
@@ -553,7 +562,6 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
                     if text.trim().is_empty() {
                         let _ = tx.send(Err(anyhow::anyhow!("OCR returned empty result")));
                     } else {
-                        println!("OCR completed: {} characters extracted", text.len());
                         let _ = tx.send(Ok(text));
                     }
                 } else {
@@ -567,9 +575,9 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
         }
     });
     
-    // 等待结果，带超时
+    // Wait for result with timeout
     match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
         Ok(result) => result,
-        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} seconds", timeout_secs)),
+        Err(_) => Err(anyhow::anyhow!("OCR processing timed out after {} secs", timeout_secs)),
     }
 }

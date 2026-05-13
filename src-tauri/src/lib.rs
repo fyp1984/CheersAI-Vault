@@ -1,27 +1,12 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, ai_model, platform, sensitive_terms, installer};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, vault_api_server, vault, ai_model, platform, installer, sensitive_terms, sync_config, extract_config};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 设置 panic hook 来捕获崩溃信息
+    // 设置 panic hook 来捕获崩溃信息到文件
     std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("=== PANIC OCCURRED ===");
-        eprintln!("Panic info: {}", panic_info);
-        
-        if let Some(location) = panic_info.location() {
-            eprintln!("Panic location: {}:{}:{}", location.file(), location.line(), location.column());
-        }
-        
-        if let Some(payload) = panic_info.payload().downcast_ref::<&str>() {
-            eprintln!("Panic payload: {}", payload);
-        } else if let Some(payload) = panic_info.payload().downcast_ref::<String>() {
-            eprintln!("Panic payload: {}", payload);
-        }
-        
-        eprintln!("=== END PANIC INFO ===");
-        
         // 尝试写入崩溃日志文件
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
@@ -29,13 +14,14 @@ pub fn run() {
             .open("crash.log") 
         {
             use std::io::Write;
-            let _ = writeln!(file, "[{}] PANIC: {}", chrono::Utc::now(), panic_info);
+            let _ = writeln!(file, "PANIC: {}", panic_info);
+            if let Some(location) = panic_info.location() {
+                let _ = writeln!(file, "Location: {}:{}:{}", location.file(), location.line(), location.column());
+            }
         }
     }));
-
-    println!("=== CheersAI Vault Starting ===");
     
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -97,6 +83,9 @@ pub fn run() {
             gitea::create_gitea_repo,
             gitea::upload_to_gitea,
             gitea::upload_batch_to_gitea,
+            gitea::delete_from_gitea,
+            gitea::sync_filebay_config_from_desktop,
+            gitea::get_filebay_token,
             file_manager::add_managed_file,
             file_manager::get_managed_files,
             file_manager::get_managed_file,
@@ -151,7 +140,36 @@ pub fn run() {
             installer::install_ollama_with_script,
             installer::uninstall_ollama_with_script,
             installer::check_python_available,
+            installer::get_ollama_installer_path,
+            installer::open_installer_folder,
+            vault_api_server::start_vault_api_server,
+            vault_api_server::stop_vault_api_server,
+            vault_api_server::check_vault_api_server_status,
+            vault_api_server::save_filebay_config_via_api,
+            vault_api_server::get_filebay_config_via_api,
+            vault_api_server::delete_filebay_config_via_api,
+            vault::list_vault_configs,
+            vault::get_vault_config_by_user_id,
+            vault::get_vault_config_by_email,
+            vault::check_vault_db_exists,
+            vault::get_vault_db_path_string,
+            vault::get_vault_db_stats,
+            sync_config::sync_config_from_desktop,
+            extract_config::extract_config_from_desktop_webview,
+            extract_config::eval_js_in_desktop_webview,
         ])
-        .run(tauri::generate_context!())
+        .setup(|app| {
+            // 暂时禁用 Vault API 服务器自动启动以排查崩溃问题
+            // 用户可以通过界面手动启动
+            let _ = app; // 避免未使用变量警告
+            Ok(())
+        })
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            // 允许程序正常退出
+        }
+    });
 }

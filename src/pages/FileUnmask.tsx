@@ -15,7 +15,7 @@ export default function FileUnmask() {
     const selected = await open({
       multiple: false,
       filters: [
-        { name: "支持的文件", extensions: ["txt", "md", "csv"] },
+        { name: "支持的文件", extensions: ["txt", "md", "csv", "xlsx", "docx", "pdf", "pptx"] },
         { name: "所有文件", extensions: ["*"] },
       ],
     });
@@ -52,11 +52,20 @@ export default function FileUnmask() {
     setResult(null);
 
     try {
-      // 选择输出路径
+      // 选择输出路径 - 生成一个明显不同的默认文件名，避免覆盖原文件
+      const originalFileName = maskedFile.split(/[\\/]/).pop() || "file";
+      const fileNameWithoutExt = originalFileName.replace(/\.[^.]+$/, "");
+      const fileExt = originalFileName.match(/\.[^.]+$/)?.[0] || ".txt";
+      
+      // 默认文件名添加 "_已还原" 后缀，避免与原文件冲突
+      const defaultFileName = `${fileNameWithoutExt}_已还原${fileExt}`;
+      const defaultDir = maskedFile.substring(0, maskedFile.lastIndexOf(/[\\/]/.test(maskedFile) ? maskedFile.match(/[\\/][^\\/]*$/)?.[0] || "" : ""));
+      const defaultPath = defaultDir ? `${defaultDir}/${defaultFileName}` : defaultFileName;
+      
       const outputPath = await save({
-        defaultPath: maskedFile.replace(/\.(txt|md|csv)$/, "_restored.$1"),
+        defaultPath: defaultPath,
         filters: [
-          { name: "文本文件", extensions: ["txt", "md", "csv"] },
+          { name: "支持的文件", extensions: ["txt", "md", "csv", "xlsx", "docx", "pdf", "pptx"] },
         ],
       });
 
@@ -202,7 +211,7 @@ export default function FileUnmask() {
           <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
             <h3 className="text-sm font-semibold text-blue-900 mb-3">使用说明</h3>
             <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
-              <li>选择需要还原的已脱敏文件（支持 TXT、MD、CSV 格式）</li>
+              <li>选择需要还原的已脱敏文件（支持 TXT、MD、CSV、XLSX、DOCX、PDF、PPTX 格式）</li>
               <li>选择对应的对照文件（.cmap 文件）</li>
               <li>输入创建对照文件时使用的加密口令</li>
               <li>点击"开始反脱敏"按钮，选择输出路径</li>
