@@ -91,12 +91,14 @@ export function MaskingPreviewDialog({
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
   const [modifiedPreviews, setModifiedPreviews] = useState(previews);
   const [manualReplacements, setManualReplacements] = useState<ManualReplacement[]>([]);
+  const [removedEntities, setRemovedEntities] = useState<Set<string>>(new Set());
 
   // 同步 previews 状态
   useEffect(() => {
     setModifiedPreviews(previews);
     setManualReplacements([]);
     setCurrentFileIndex(0);
+    setRemovedEntities(new Set());
   }, [previews]);
 
   if (!previews || previews.length === 0) {
@@ -166,7 +168,13 @@ export function MaskingPreviewDialog({
   };
 
   // 收集所有检测到的实体
-  const allEntities = preview.detected_entities?.flatMap(row => row.entities) || [];
+  const allEntities = (preview.detected_entities?.flatMap(row => row.entities) || [])
+    .filter(entity => !removedEntities.has(entity.text));
+
+  // 处理删除实体
+  const handleRemoveEntity = (text: string) => {
+    setRemovedEntities(prev => new Set([...prev, text]));
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -284,6 +292,7 @@ export function MaskingPreviewDialog({
         onOpenChange={setFindReplaceOpen}
         onReplace={handleReplace}
         detectedEntities={allEntities}
+        onRemoveEntity={handleRemoveEntity}
       />
     </Dialog>
   );

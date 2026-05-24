@@ -452,7 +452,7 @@ export function EnhancedServices() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 w-full max-w-6xl mx-auto">
       <div className="mb-6">
         <div className="flex items-center justify-between">
           <div>

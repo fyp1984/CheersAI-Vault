@@ -156,6 +156,8 @@ export default function FileProcess() {
     const queued = await Promise.all(
       paths.map(async (p) => {
         let size = 0;
+        let totalPages: number | undefined = undefined;
+        
         try {
           console.log(`Checking file: ${p}`);
           const fileExists = await exists(p);
@@ -165,6 +167,15 @@ export default function FileProcess() {
             const info = await stat(p);
             size = info.size ?? 0;
             console.log(`File size: ${size} bytes`);
+            
+            // 尝试获取页数（仅对支持分页的文件）
+            try {
+              totalPages = await tauriCommands.getFilePageCount(p);
+              console.log(`📄 Total pages: ${totalPages}`);
+            } catch (error) {
+              console.log(`ℹ️ File does not support pagination or failed to get page count:`, error);
+              // 不支持分页的文件，忽略错误
+            }
           } else {
             console.warn(`File does not exist: ${p}`);
             size = -1;
@@ -184,6 +195,7 @@ export default function FileProcess() {
           size,
           status: "pending" as const,
           addedAt: Date.now(),
+          totalPages,
         };
       })
     );
@@ -242,11 +254,13 @@ export default function FileProcess() {
 
       const previews = await Promise.all(
         pendingFiles.map(async (file) => {
+          console.log('🔍 Processing file:', file.name, 'pageRange:', file.pageRange);
           const preview = await tauriCommands.previewMasking({
             file_path: file.path,
             rule_ids: selectedRules,
             custom_rules: customRules.length > 0 ? customRules : undefined,
             use_ai_validation: useAiValidation,
+            page_range: file.pageRange,
           });
           return {
             fileName: file.name,
@@ -282,6 +296,17 @@ export default function FileProcess() {
       // 直接保存预览结果，不重新处理
       const pendingFiles = files.filter(f => f.status === "pending");
       
+      // 准备自定义规则
+      const customRules = rules
+        .filter((r) => !r.builtin && r.enabled && selectedRules.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          pattern: r.pattern,
+          replacement_template: r.replacement_template,
+          use_counter: r.use_counter,
+        }));
+      
       for (let i = 0; i < pendingFiles.length; i++) {
         const file = pendingFiles[i];
         const filePreview = previewData[i];
@@ -298,6 +323,9 @@ export default function FileProcess() {
             headers: filePreview.preview.headers,
             passphrase: passphrase || undefined,
             mapping: filePreview.preview.mapping,
+            rule_ids: selectedRules,
+            custom_rules: customRules.length > 0 ? customRules : undefined,
+            page_range: file.pageRange,
           });
           
           updateFile(file.id, { status: "completed" });
@@ -550,7 +578,14 @@ export default function FileProcess() {
                   文件队列 ({files.length})
                 </p>
                 {files.map((f) => (
-                  <FileQueueItem key={f.id} file={f} onRemove={removeFile} />
+                  <FileQueueItem 
+                    key={f.id} 
+                    file={f} 
+                    onRemove={removeFile}
+                    onPageRangeChange={(fileId, range) => {
+                      updateFile(fileId, { pageRange: range });
+                    }}
+                  />
                 ))}
               </div>
             )}

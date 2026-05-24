@@ -130,6 +130,11 @@ pub fn write_csv(path: &str, headers: &[String], rows: &[Vec<String>]) -> Result
 // Word document parsing (DOCX) - simplified version
 // Extracts text content from DOCX using zip + XML parsing
 pub fn parse_word(path: &str) -> Result<String> {
+    parse_word_with_range(path, None)
+}
+
+// Word document parsing with page range support
+pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     use zip::ZipArchive;
     use quick_xml::Reader;
     use quick_xml::events::Event;
@@ -151,38 +156,51 @@ pub fn parse_word(path: &str) -> Result<String> {
     let mut archive = ZipArchive::new(file)
         .with_context(|| format!("无法读取 DOCX 文件，可能文件已损坏或不是有效的 DOCX 格式: {}", path))?;
 
-    let mut text = String::new();
-
     // Try to read document.xml which contains the main content
+    let mut content = String::new();
     match archive.by_name("word/document.xml") {
         Ok(mut doc_file) => {
-            let mut content = String::new();
             doc_file.read_to_string(&mut content)
                 .context("无法读取文档内容")?;
-
-            // Parse XML and extract text
-            let mut reader = Reader::from_str(&content);
-            reader.trim_text(true);
-
-            let mut buf = Vec::new();
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Text(e)) => {
-                        if let Ok(txt) = e.unescape() {
-                            text.push_str(&txt);
-                            text.push('\n');
-                        }
-                    }
-                    Ok(Event::Eof) => break,
-                    Err(e) => return Err(anyhow::anyhow!("XML 解析错误: {}", e)),
-                    _ => {}
-                }
-                buf.clear();
-            }
         }
         Err(e) => {
             return Err(anyhow::anyhow!("DOCX 文件结构异常，找不到 word/document.xml: {}", e));
         }
+    }
+
+    // 如果没有指定页码范围，提取全文
+    if page_range.is_none() {
+        return extract_word_text_simple(&content);
+    }
+
+    // 指定了页码范围，按分页符分割
+    let (start_page, end_page) = page_range.unwrap();
+    extract_word_text_by_pages(&content, start_page, end_page)
+}
+
+// 简单提取 Word 文本（不考虑分页）
+fn extract_word_text_simple(xml_content: &str) -> Result<String> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut text = String::new();
+    let mut reader = Reader::from_str(xml_content);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Text(e)) => {
+                if let Ok(txt) = e.unescape() {
+                    text.push_str(&txt);
+                    text.push('\n');
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(anyhow::anyhow!("XML 解析错误: {}", e)),
+            _ => {}
+        }
+        buf.clear();
     }
 
     if text.is_empty() {
@@ -190,6 +208,110 @@ pub fn parse_word(path: &str) -> Result<String> {
     }
 
     Ok(text)
+}
+
+// 按分页符提取 Word 文本
+fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: usize) -> Result<String> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    // 验证页码范围
+    if start_page < 1 {
+        return Err(anyhow::anyhow!("起始页必须 >= 1"));
+    }
+    
+    if start_page > end_page {
+        return Err(anyhow::anyhow!("起始页不能大于结束页"));
+    }
+
+    let mut reader = Reader::from_str(xml_content);
+    reader.trim_text(true);
+
+    let mut pages: Vec<String> = vec![String::new()]; // 第一页
+    let mut current_page_text = String::new();
+    let mut buf = Vec::new();
+    let mut in_break = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                // 检测分页符：<w:br w:type="page"/>
+                if e.name().as_ref() == b"w:br" {
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                in_break = true;
+                                // 保存当前页内容
+                                if !current_page_text.trim().is_empty() {
+                                    pages.push(current_page_text.clone());
+                                    current_page_text.clear();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if !in_break {
+                    if let Ok(txt) = e.unescape() {
+                        current_page_text.push_str(&txt);
+                        current_page_text.push('\n');
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"w:br" {
+                    in_break = false;
+                }
+            }
+            Ok(Event::Eof) => {
+                // 保存最后一页
+                if !current_page_text.trim().is_empty() {
+                    pages.push(current_page_text);
+                }
+                break;
+            }
+            Err(e) => return Err(anyhow::anyhow!("XML 解析错误: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // 如果没有检测到分页符，将整个文档作为一页
+    if pages.len() == 1 && pages[0].is_empty() {
+        return extract_word_text_simple(xml_content);
+    }
+
+    let total_pages = pages.len();
+    
+    // 调整页码范围
+    let actual_end = end_page.min(total_pages);
+    
+    if start_page > total_pages {
+        return Err(anyhow::anyhow!(
+            "起始页 {} 超出文档总页数 {}",
+            start_page,
+            total_pages
+        ));
+    }
+
+    // 提取指定页码范围的内容
+    let mut result = String::new();
+    for page_num in start_page..=actual_end {
+        let page_index = page_num - 1; // 转换为 0 索引
+        if let Some(page_content) = pages.get(page_index) {
+            result.push_str(&format!("--- 第 {} 页 ---\n", page_num));
+            result.push_str(page_content);
+            result.push('\n');
+        }
+    }
+
+    if result.is_empty() {
+        result = "（指定页码范围内无内容）".to_string();
+    }
+
+    Ok(result)
 }
 
 pub fn write_word(path: &str, content: &str) -> Result<()> {
@@ -201,6 +323,11 @@ pub fn write_word(path: &str, content: &str) -> Result<()> {
 
 // PowerPoint parsing (PPTX)
 pub fn parse_powerpoint(path: &str) -> Result<String> {
+    parse_powerpoint_with_range(path, None)
+}
+
+// PowerPoint parsing with page range support (slides)
+pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     use zip::ZipArchive;
     use quick_xml::Reader;
     use quick_xml::events::Event;
@@ -222,23 +349,27 @@ pub fn parse_powerpoint(path: &str) -> Result<String> {
     let mut archive = ZipArchive::new(file)
         .with_context(|| format!("无法读取 PPTX 文件，可能文件已损坏或不是有效的 PPTX 格式: {}", path))?;
 
-    let mut text = String::new();
-    let mut slide_count = 0;
-
-    // Iterate through all slides
+    // 收集所有幻灯片
+    let mut slides: Vec<(usize, String)> = Vec::new();
+    
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let name = file.name().to_string();
 
-        // Only process slide XML files
+        // 只处理幻灯片 XML 文件
         if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
-            slide_count += 1;
-            text.push_str(&format!("--- 幻灯片 {} ---\n", slide_count));
+            // 提取幻灯片编号
+            let slide_num = name
+                .trim_start_matches("ppt/slides/slide")
+                .trim_end_matches(".xml")
+                .parse::<usize>()
+                .unwrap_or(0);
             
             let mut content = String::new();
             file.read_to_string(&mut content)?;
 
-            // Parse XML and extract text
+            // 解析 XML 并提取文本
+            let mut slide_text = String::new();
             let mut reader = Reader::from_str(&content);
             reader.trim_text(true);
 
@@ -249,8 +380,8 @@ pub fn parse_powerpoint(path: &str) -> Result<String> {
                         if let Ok(txt) = e.unescape() {
                             let trimmed = txt.trim();
                             if !trimmed.is_empty() {
-                                text.push_str(trimmed);
-                                text.push('\n');
+                                slide_text.push_str(trimmed);
+                                slide_text.push('\n');
                             }
                         }
                     }
@@ -260,12 +391,64 @@ pub fn parse_powerpoint(path: &str) -> Result<String> {
                 }
                 buf.clear();
             }
+            
+            slides.push((slide_num, slide_text));
+        }
+    }
+
+    // 按幻灯片编号排序
+    slides.sort_by_key(|(num, _)| *num);
+
+    if slides.is_empty() {
+        return Ok("（演示文稿为空或无法提取文本内容）".to_string());
+    }
+
+    // 如果没有指定页码范围，返回所有幻灯片
+    if page_range.is_none() {
+        let mut text = String::new();
+        for (slide_num, slide_text) in slides {
+            text.push_str(&format!("--- 幻灯片 {} ---\n", slide_num));
+            text.push_str(&slide_text);
+            text.push('\n');
+        }
+        return Ok(text);
+    }
+
+    // 指定了页码范围，提取指定幻灯片
+    let (start_page, end_page) = page_range.unwrap();
+    
+    // 验证页码范围
+    if start_page < 1 {
+        return Err(anyhow::anyhow!("起始页必须 >= 1"));
+    }
+    
+    if start_page > end_page {
+        return Err(anyhow::anyhow!("起始页不能大于结束页"));
+    }
+
+    let total_slides = slides.len();
+    let actual_end = end_page.min(total_slides);
+    
+    if start_page > total_slides {
+        return Err(anyhow::anyhow!(
+            "起始页 {} 超出演示文稿总页数 {}",
+            start_page,
+            total_slides
+        ));
+    }
+
+    // 提取指定范围的幻灯片
+    let mut text = String::new();
+    for i in (start_page - 1)..actual_end {
+        if let Some((slide_num, slide_text)) = slides.get(i) {
+            text.push_str(&format!("--- 幻灯片 {} ---\n", slide_num));
+            text.push_str(slide_text);
             text.push('\n');
         }
     }
 
     if text.is_empty() {
-        text = "（演示文稿为空或无法提取文本内容）".to_string();
+        text = "（指定页码范围内无内容）".to_string();
     }
 
     Ok(text)
@@ -375,9 +558,135 @@ fn parse_text_file(path: &str) -> Result<String> {
 
 // PDF parsing with OCR fallback
 pub fn parse_pdf(path: &str) -> Result<String> {
+    parse_pdf_with_range(path, None)
+}
+
+// 获取文件的总页数
+pub fn get_page_count(path: &str) -> Result<usize> {
+    let format = detect_format(path);
+    
+    match format {
+        FileFormat::Pdf => {
+            use lopdf::Document;
+            
+            match Document::load(path) {
+                Ok(doc) => {
+                    let page_count = doc.get_pages().len();
+                    Ok(page_count)
+                }
+                Err(e) => {
+                    // 如果 lopdf 失败，尝试使用 pdf-extract
+                    Err(anyhow::anyhow!("无法读取 PDF 页数: {}", e))
+                }
+            }
+        }
+        FileFormat::Word => {
+            use zip::ZipArchive;
+            use quick_xml::Reader;
+            use quick_xml::events::Event;
+
+            let file = fs::File::open(path)
+                .context("无法打开 Word 文件")?;
+            
+            let mut archive = ZipArchive::new(file)
+                .context("无法读取 DOCX 文件")?;
+
+            let mut content = String::new();
+            match archive.by_name("word/document.xml") {
+                Ok(mut doc_file) => {
+                    doc_file.read_to_string(&mut content)
+                        .context("无法读取文档内容")?;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("DOCX 文件结构异常: {}", e));
+                }
+            }
+
+            // 计算分页符数量
+            let mut reader = Reader::from_str(&content);
+            reader.trim_text(true);
+            
+            let mut page_count = 1; // 至少有一页
+            let mut buf = Vec::new();
+            
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(e)) => {
+                        if e.name().as_ref() == b"w:br" {
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                        page_count += 1;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::Eof) => break,
+                    Err(e) => return Err(anyhow::anyhow!("XML 解析错误: {}", e)),
+                    _ => {}
+                }
+                buf.clear();
+            }
+            
+            Ok(page_count)
+        }
+        FileFormat::PowerPoint => {
+            use zip::ZipArchive;
+
+            let file = fs::File::open(path)
+                .context("无法打开 PowerPoint 文件")?;
+            
+            let mut archive = ZipArchive::new(file)
+                .context("无法读取 PPTX 文件")?;
+
+            let mut slide_count = 0;
+            
+            for i in 0..archive.len() {
+                let file = archive.by_index(i)?;
+                let name = file.name();
+                
+                if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
+                    slide_count += 1;
+                }
+            }
+            
+            Ok(slide_count)
+        }
+        _ => {
+            // 不支持分页的格式
+            Err(anyhow::anyhow!("该文件格式不支持分页"))
+        }
+    }
+}
+
+// PDF parsing with page range support
+pub fn parse_pdf_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     use pdf_extract::extract_text;
     use std::panic;
 
+    // 调试日志
+    eprintln!("🔍 parse_pdf_with_range called with page_range: {:?}", page_range);
+
+    // 如果指定了页码范围，优先使用 Python/PyMuPDF 提取。
+    // lopdf 在部分中文 PDF 字体编码上可能触发原生访问违规，导致整个 Tauri 进程崩溃。
+    if let Some((start_page, end_page)) = page_range {
+        if start_page < 1 {
+            return Err(anyhow::anyhow!("起始页必须 >= 1"));
+        }
+
+        if start_page > end_page {
+            return Err(anyhow::anyhow!("起始页不能大于结束页"));
+        }
+
+        eprintln!("✅ Using PyMuPDF for page range: {}-{}", start_page, end_page);
+        return parse_pdf_with_python_ocr_range(path, Some((start_page, end_page)));
+    }
+    
+    eprintln!("⚠️ No page range specified, extracting full document");
+    
+    // 没有指定页码范围，提取全文
     // 使用 catch_unwind 捕获 panic
     let result = panic::catch_unwind(|| {
         extract_text(path)
@@ -407,8 +716,80 @@ pub fn parse_pdf(path: &str) -> Result<String> {
     }
 }
 
+// 使用 lopdf 按页提取 PDF 内容
+fn parse_pdf_pages_with_lopdf(path: &str, start_page: usize, end_page: usize) -> Result<String> {
+    use lopdf::Document;
+    
+    // 加载 PDF 文档
+    let doc = Document::load(path)
+        .context("无法加载 PDF 文档")?;
+    
+    // 获取页数
+    let page_count = doc.get_pages().len();
+    
+    // 验证页码范围
+    if start_page < 1 {
+        return Err(anyhow::anyhow!("起始页必须 >= 1"));
+    }
+    
+    if start_page > end_page {
+        return Err(anyhow::anyhow!("起始页不能大于结束页"));
+    }
+    
+    // 调整页码范围（如果超出实际页数）
+    let actual_end = end_page.min(page_count);
+    
+    if start_page > page_count {
+        return Err(anyhow::anyhow!(
+            "起始页 {} 超出文档总页数 {}",
+            start_page,
+            page_count
+        ));
+    }
+    
+    
+    // 提取指定页码范围的文本
+    let mut content = String::new();
+    let mut has_content = false;
+    
+    for page_num in start_page..=actual_end {
+        // lopdf 的页码从 1 开始
+        match doc.extract_text(&[page_num as u32]) {
+            Ok(text) => {
+                let trimmed = text.trim();
+                // 检查是否包含 "Unimplemented" 错误
+                if !trimmed.is_empty() && !trimmed.contains("Unimplemented") {
+                    content.push_str(&format!("--- 第 {} 页 ---\n", page_num));
+                    content.push_str(&text);
+                    content.push('\n');
+                    has_content = true;
+                } else {
+                    eprintln!("⚠️ 第 {} 页提取失败或包含不支持的编码", page_num);
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ 无法提取第 {} 页的文本: {}", page_num, e);
+                // 继续处理其他页
+            }
+        }
+    }
+    
+    // 如果没有提取到有效内容，返回错误让系统尝试其他方法
+    if !has_content {
+        eprintln!("⚠️ lopdf 无法提取有效内容（可能是中文编码问题）");
+        return Err(anyhow::anyhow!("lopdf 无法提取有效内容，可能包含不支持的字体编码"));
+    }
+    
+    Ok(content)
+}
+
 // OCR-based PDF parsing using Python script or bundled executable
 fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
+    parse_pdf_with_python_ocr_range(path, None)
+}
+
+// OCR-based PDF parsing with page range support
+fn parse_pdf_with_python_ocr_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
 
 
     // 获取应用目录
@@ -418,13 +799,32 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     if let Some((python_runtime, script_path)) = crate::commands::ocr::resolve_ocr_runtime_from_env() {
-        return run_ocr_command(
+        // 构建参数列表
+        let mut args = vec![script_path.to_string_lossy().to_string(), path.to_string()];
+        
+        // 如果有页码范围，添加参数
+        if let Some((start, end)) = page_range {
+            args.push(start.to_string());
+            args.push(end.to_string());
+            eprintln!("🔍 OCR with page range: {}-{}", start, end);
+        }
+        
+        eprintln!("🔍 OCR command: {} {:?}", python_runtime.display(), args);
+        
+        // 转换为字符串切片
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        
+        let result = run_ocr_command(
             &python_runtime.to_string_lossy(),
-            &[&script_path.to_string_lossy(), path],
+            &args_refs,
             300  // 5 分钟超时
         );
+        
+        eprintln!("🔍 OCR result: {:?}", result.as_ref().map(|s| format!("Success: {} chars", s.len())).map_err(|e| e.to_string()));
+        
+        return result;
     } else {
-
+        eprintln!("⚠️ OCR runtime not found from env");
     }
 
     // 方案 2: 使用打包的 exe（仅 Windows）
@@ -432,28 +832,60 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
     {
         let bundled_exe = exe_dir.join("pdf_ocr.exe");
         if bundled_exe.exists() {
-            return run_ocr_command(&bundled_exe.to_string_lossy(), &[path], 300);
+            // 构建参数列表
+            let mut args = vec![path];
+            let start_str;
+            let end_str;
+            
+            if let Some((start, end)) = page_range {
+                start_str = start.to_string();
+                end_str = end.to_string();
+                args.push(&start_str);
+                args.push(&end_str);
+                eprintln!("🔍 OCR with page range: {}-{}", start, end);
+            }
+            
+            return run_ocr_command(&bundled_exe.to_string_lossy(), &args, 300);
         }
     }
 
     // 方案 3: 开发环境，使用项目中的脚本
     let dev_script = if cfg!(debug_assertions) {
-        std::path::PathBuf::from("scripts/pdf_ocr.py")
+        std::path::PathBuf::from("src-tauri/scripts/pdf_ocr.py")
     } else {
         exe_dir.join("scripts").join("pdf_ocr.py")
     };
     
     if dev_script.exists() {
+        eprintln!("🔍 Found dev script: {}", dev_script.display());
         
         // 尝试系统 Python
         let python_commands = vec!["python", "python3", "py"];
         
         for python_cmd in &python_commands {
+            eprintln!("🔍 Trying python command: {}", python_cmd);
 
-            match run_ocr_command(python_cmd, &[&dev_script.to_string_lossy(), path], 300) {  // 5 分钟超时
-                Ok(text) => return Ok(text),
+            // 构建参数列表
+            let mut args = vec![dev_script.to_string_lossy().to_string(), path.to_string()];
+            
+            if let Some((start, end)) = page_range {
+                args.push(start.to_string());
+                args.push(end.to_string());
+                eprintln!("🔍 OCR with page range: {}-{}", start, end);
+            }
+            
+            eprintln!("🔍 OCR command: {} {:?}", python_cmd, args);
+            
+            // 转换为字符串切片
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            
+            match run_ocr_command(python_cmd, &args_refs, 300) {  // 5 分钟超时
+                Ok(text) => {
+                    eprintln!("✅ OCR succeeded with {}: {} chars", python_cmd, text.len());
+                    return Ok(text);
+                }
                 Err(e) => {
-
+                    eprintln!("❌ OCR failed with {}: {}", python_cmd, e);
                 }
             }
         }
@@ -499,7 +931,7 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
     use std::process::{Command, Stdio};
     use std::time::Duration;
     use std::thread;
-    use std::sync::mpsc;
+    use std::sync::{mpsc, Arc, Mutex};
     use std::io::{BufRead, BufReader};
     
     let (tx, rx) = mpsc::channel();
@@ -542,21 +974,32 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
             }
         };
         
-        // Read stderr for progress information
-        if let Some(stderr) = child.stderr.take() {
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
+        let stderr_thread = if let Some(stderr) = child.stderr.take() {
+            let stderr_buffer = Arc::clone(&stderr_buffer);
             let reader = BufReader::new(stderr);
-            thread::spawn(move || {
+            Some(thread::spawn(move || {
                 for line in reader.lines() {
                     if let Ok(line) = line {
-
+                        eprintln!("🔍 OCR stderr: {}", line);
+                        if let Ok(mut buffer) = stderr_buffer.lock() {
+                            buffer.push_str(&line);
+                            buffer.push('\n');
+                        }
                     }
                 }
-            });
-        }
+            }))
+        } else {
+            None
+        };
         
         // Wait for process to complete
         match child.wait_with_output() {
             Ok(output) => {
+                if let Some(stderr_thread) = stderr_thread {
+                    let _ = stderr_thread.join();
+                }
+
                 if output.status.success() {
                     let text = String::from_utf8_lossy(&output.stdout).to_string();
                     if text.trim().is_empty() {
@@ -565,11 +1008,28 @@ fn run_ocr_command(command: &str, args: &[&str], timeout_secs: u64) -> Result<St
                         let _ = tx.send(Ok(text));
                     }
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let _ = tx.send(Err(anyhow::anyhow!("OCR failed: {}", stderr)));
+                    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    if stderr.trim().is_empty() {
+                        stderr = stderr_buffer
+                            .lock()
+                            .map(|buffer| buffer.clone())
+                            .unwrap_or_default();
+                    }
+
+                    if stderr.trim().is_empty() {
+                        let _ = tx.send(Err(anyhow::anyhow!(
+                            "OCR failed with status: {}",
+                            output.status
+                        )));
+                    } else {
+                        let _ = tx.send(Err(anyhow::anyhow!("OCR failed: {}", stderr.trim())));
+                    }
                 }
             }
             Err(e) => {
+                if let Some(stderr_thread) = stderr_thread {
+                    let _ = stderr_thread.join();
+                }
                 let _ = tx.send(Err(anyhow::anyhow!("Failed to wait for process: {}", e)));
             }
         }

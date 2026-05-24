@@ -314,7 +314,7 @@ export function GiteaSettings() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="p-6">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded-lg w-1/4"></div>
           <div className="h-4 bg-gray-100 rounded w-1/2"></div>
@@ -329,7 +329,7 @@ export function GiteaSettings() {
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-6 w-full max-w-6xl mx-auto">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">FileBay 配置</h2>
         <p className="text-base text-gray-600">

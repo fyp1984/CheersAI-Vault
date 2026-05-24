@@ -20,8 +20,13 @@ export default function CheersAICloudBrowser() {
   );
   const [mountError, setMountError] = useState<string | null>(null);
   const mountStateRef = useRef<CloudMountState>(isMacOS ? "waiting" : "mounting");
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
   const mountedRef = useRef(false);
   const mountAttemptRef = useRef(0);
+
+  useEffect(() => {
+    sidebarCollapsedRef.current = sidebarCollapsed;
+  }, [sidebarCollapsed]);
 
   const setMountStateSafe = useCallback((nextState: CloudMountState) => {
     mountStateRef.current = nextState;
@@ -35,12 +40,12 @@ export default function CheersAICloudBrowser() {
     setMountStateSafe("mounting");
 
     try {
-      await tauriCommands.ensureDesktopChildWebview();
+      await tauriCommands.ensureDesktopChildWebview(sidebarCollapsedRef.current);
       if (!mountedRef.current || attemptId !== mountAttemptRef.current) {
         return;
       }
 
-      await tauriCommands.updateDesktopChildWebviewBounds();
+      await tauriCommands.updateDesktopChildWebviewBounds(sidebarCollapsedRef.current);
       if (!mountedRef.current || attemptId !== mountAttemptRef.current) {
         return;
       }
@@ -285,7 +290,7 @@ export default function CheersAICloudBrowser() {
 
     const handleResize = () => {
       if (mountStateRef.current === "embedded") {
-        void tauriCommands.updateDesktopChildWebviewBounds();
+        void tauriCommands.updateDesktopChildWebviewBounds(sidebarCollapsedRef.current);
       }
     };
 
@@ -303,7 +308,7 @@ export default function CheersAICloudBrowser() {
 
   useEffect(() => {
     if (mountState === "embedded") {
-      void tauriCommands.updateDesktopChildWebviewBounds();
+      void tauriCommands.updateDesktopChildWebviewBounds(sidebarCollapsed);
     }
   }, [mountState, sidebarCollapsed]);
 

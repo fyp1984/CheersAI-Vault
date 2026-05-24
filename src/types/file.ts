@@ -15,4 +15,6 @@ export interface QueuedFile {
   maskedCount?: number;
   error?: string;
   addedAt: number;
+  pageRange?: [number, number]; // 页码范围 [起始页, 结束页]
+  totalPages?: number; // 文件总页数
 }

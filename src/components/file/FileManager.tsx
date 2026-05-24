@@ -499,7 +499,7 @@ export function FileManager() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left">
+              <th className="px-4 py-3 text-left w-12">
                 <input
                   type="checkbox"
                   checked={selectedFiles.size === files.length && files.length > 0}
@@ -507,13 +507,13 @@ export function FileManager() {
                   className="rounded border-gray-300"
                 />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-auto">
                 文件名
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                 大小
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                 操作
               </th>
             </tr>
@@ -537,19 +537,24 @@ export function FileManager() {
                     />
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    <div className="flex items-center gap-2">
-                      <span>{file.name}</span>
-                      {file.name.includes('masked') && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                          已脱敏
+                    <div className="flex items-center gap-2 min-w-0">
+                      {(file.name.includes('masked') || file.name.includes('_脱敏')) && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 flex-shrink-0">
+                          脱敏
                         </span>
                       )}
+                      <span 
+                        className="truncate max-w-xl" 
+                        title={file.name}
+                      >
+                        {file.name}
+                      </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
+                  <td className="px-4 py-3 text-sm text-gray-500 w-32">
                     {formatFileSize(file.size)}
                   </td>
-                  <td className="px-4 py-3 text-sm">
+                  <td className="px-4 py-3 text-sm w-32">
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleUploadToGitea(file)}

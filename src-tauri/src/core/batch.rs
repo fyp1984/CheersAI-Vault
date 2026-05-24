@@ -142,11 +142,10 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         
-        // 清理文件名，确保跨平台兼容
-        let safe_file_name = sanitize_filename(&format!("masked_{}", file_name));
-        
-        let output_path = Path::new(&options.output_dir)
-            .join(safe_file_name)
+        // 不再在这里确定最终文件名，让 mask_file 函数根据脱敏规则决定
+        // 这里只生成一个临时的输出路径，mask_file 会根据脱敏后的文件名重新生成
+        let temp_output_path = Path::new(&options.output_dir)
+            .join(file_name)  // 使用原始文件名作为临时路径
             .to_string_lossy()
             .to_string();
 
@@ -158,11 +157,12 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
         // 处理单个文件
         let mask_options = MaskFileOptions {
             file_path: file_path.clone(),
-            output_path: output_path.clone(),
+            output_path: temp_output_path.clone(),  // 使用临时路径，mask_file 会根据脱敏规则重新生成最终路径
             rule_ids: options.rule_ids.clone(),
             passphrase: options.passphrase.clone(),
             custom_rules: options.custom_rules.clone(),
             use_ai_validation: options.use_ai_validation,
+            page_range: None, // 批处理暂不支持页码范围
         };
 
 

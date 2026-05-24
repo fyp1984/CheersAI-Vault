@@ -73,6 +73,9 @@ pub(crate) fn resolve_ocr_runtime_from_env() -> Option<(PathBuf, PathBuf)> {
 
     if let Some(python) = find_existing_ocr_python(&ocr_dir) {
         if script_path.exists() {
+            if let Err(e) = ensure_ocr_script_current(&script_path) {
+                eprintln!("⚠️ Failed to refresh OCR script: {}", e);
+            }
             return Some((python, script_path));
         }
     }
@@ -493,13 +496,26 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
 
 /// 复制 OCR 脚本
 fn copy_ocr_script(ocr_dir: &PathBuf) -> Result<(), String> {
-    // 从应用资源或嵌入的脚本复制
+    ensure_ocr_script_current(&ocr_dir.join("pdf_ocr.py"))
+}
+
+fn ensure_ocr_script_current(script_path: &PathBuf) -> Result<(), String> {
     let script_content = include_str!("../../scripts/pdf_ocr.py");
-    let script_path = ocr_dir.join("pdf_ocr.py");
-    
-    fs::write(&script_path, script_content)
+
+    if let Ok(existing_content) = fs::read_to_string(script_path) {
+        if existing_content == script_content {
+            return Ok(());
+        }
+    }
+
+    if let Some(parent) = script_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create OCR script directory: {}", e))?;
+    }
+
+    fs::write(script_path, script_content)
         .map_err(|e| format!("Failed to write OCR script: {}", e))?;
-    
+
     Ok(())
 }
 

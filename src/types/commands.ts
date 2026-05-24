@@ -14,6 +14,7 @@ export interface MaskFileOptions {
   rule_ids: string[];
   passphrase?: string;
   custom_rules?: CustomRule[];
+  page_range?: [number, number]; // 页码范围 [起始页, 结束页]，从 1 开始
 }
 
 export interface MaskResult {
@@ -28,6 +29,7 @@ export interface PreviewOptions {
   max_rows?: number;
   custom_rules?: CustomRule[];
   use_ai_validation?: boolean;
+  page_range?: [number, number]; // 页码范围 [起始页, 结束页]，从 1 开始
 }
 
 export interface EntityMatch {
@@ -62,6 +64,14 @@ export interface SavePreviewOptions {
   headers?: string[];
   passphrase?: string;
   mapping?: MappingEntry[];
+  rule_ids?: string[];
+  custom_rules?: CustomRule[];
+  page_range?: [number, number]; // 页码范围 [起始页, 结束页]，从 1 开始
+}
+
+// 获取文件页数
+export interface GetFilePageCountOptions {
+  file_path: string;
 }
 
 // Crypto commands

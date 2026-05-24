@@ -23,6 +23,33 @@ async fn get_database() -> Result<Database, String> {
     }
 }
 
+fn normalize_term_key(value: &str) -> String {
+    value.trim().to_string()
+}
+
+fn duplicate_sensitive_term_message(category: &str, term: &str) -> String {
+    format!("敏感词「{}」已存在于分类「{}」，请勿重复添加", term, category)
+}
+
+fn ensure_no_duplicate_sensitive_term(
+    terms: &[SensitiveTerm],
+    term: &str,
+    exclude_id: Option<&str>,
+) -> Result<(), String> {
+    let term = normalize_term_key(term);
+
+    let duplicate = terms.iter().find(|existing| {
+        exclude_id.is_none_or(|id| existing.id != id)
+            && normalize_term_key(&existing.term) == term
+    });
+
+    if let Some(existing) = duplicate {
+        Err(duplicate_sensitive_term_message(&normalize_term_key(&existing.category), &term))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AddSensitiveTermRequest {
     pub term: String,
@@ -50,12 +77,23 @@ pub async fn add_sensitive_term(
     request: AddSensitiveTermRequest,
 ) -> Result<SensitiveTerm, String> {
     let db = get_database().await?;
+    let request_term = normalize_term_key(&request.term);
+    let request_category = normalize_term_key(&request.category);
+
+    if request_term.is_empty() || request_category.is_empty() {
+        return Err("请填写敏感词和分类".to_string());
+    }
+
+    let existing_terms = db.get_sensitive_terms(None, false).await
+        .map_err(|e| format!("Failed to get sensitive terms: {}", e))?;
+    ensure_no_duplicate_sensitive_term(&existing_terms, &request_term, None)?;
+
     let now = Utc::now();
     let term = SensitiveTerm {
         id: Uuid::new_v4().to_string(),
-        term: request.term,
-        category: request.category,
-        description: request.description,
+        term: request_term,
+        category: request_category,
+        description: request.description.map(|description| description.trim().to_string()),
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -74,18 +112,36 @@ pub async fn add_sensitive_terms_batch(
     requests: Vec<AddSensitiveTermRequest>,
 ) -> Result<Vec<SensitiveTerm>, String> {
     let db = get_database().await?;
+    let existing_terms = db.get_sensitive_terms(None, false).await
+        .map_err(|e| format!("Failed to get sensitive terms: {}", e))?;
+    let mut seen_keys = std::collections::HashSet::new();
     let now = Utc::now();
-    let terms: Vec<SensitiveTerm> = requests.into_iter().map(|req| {
-        SensitiveTerm {
+    let mut terms = Vec::new();
+
+    for req in requests {
+        let request_term = normalize_term_key(&req.term);
+        let request_category = normalize_term_key(&req.category);
+
+        if request_term.is_empty() || request_category.is_empty() {
+            continue;
+        }
+
+        ensure_no_duplicate_sensitive_term(&existing_terms, &request_term, None)?;
+        let key = request_term.clone();
+        if !seen_keys.insert(key) {
+            return Err(duplicate_sensitive_term_message(&request_category, &request_term));
+        }
+
+        terms.push(SensitiveTerm {
             id: Uuid::new_v4().to_string(),
-            term: req.term,
-            category: req.category,
-            description: req.description,
+            term: request_term,
+            category: request_category,
+            description: req.description.map(|description| description.trim().to_string()),
             enabled: true,
             created_at: now,
             updated_at: now,
-        }
-    }).collect();
+        });
+    }
     
     db.add_sensitive_terms_batch(&terms)
         .await
@@ -109,10 +165,22 @@ pub async fn update_sensitive_term(
         .ok_or_else(|| "Sensitive term not found".to_string())?;
     
     // 使用新值或保留旧值
-    let term = request.term.unwrap_or_else(|| existing.term.clone());
-    let category = request.category.unwrap_or_else(|| existing.category.clone());
-    let description = request.description.or_else(|| existing.description.clone());
+    let term = request.term
+        .map(|value| normalize_term_key(&value))
+        .unwrap_or_else(|| existing.term.clone());
+    let category = request.category
+        .map(|value| normalize_term_key(&value))
+        .unwrap_or_else(|| existing.category.clone());
+    let description = request.description
+        .map(|value| value.trim().to_string())
+        .or_else(|| existing.description.clone());
     let enabled = request.enabled.unwrap_or(existing.enabled);
+
+    if term.is_empty() || category.is_empty() {
+        return Err("请填写敏感词和分类".to_string());
+    }
+
+    ensure_no_duplicate_sensitive_term(&terms, &term, Some(&request.id))?;
     
     db.update_sensitive_term(
         &request.id,
@@ -229,6 +297,9 @@ pub async fn import_sensitive_terms_csv(
     file_path: String,
 ) -> Result<usize, String> {
     let db = get_database().await?;
+    let existing_terms = db.get_sensitive_terms(None, false).await
+        .map_err(|e| format!("Failed to get sensitive terms: {}", e))?;
+    let mut seen_keys = std::collections::HashSet::new();
     
     // 读取文件
     let csv_content = std::fs::read_to_string(&file_path)
@@ -248,8 +319,8 @@ pub async fn import_sensitive_terms_csv(
             continue;
         }
         
-        let category = parts[0].trim().to_string();
-        let term = parts[1].trim().to_string();
+        let category = normalize_term_key(parts[0]);
+        let term = normalize_term_key(parts[1]);
         let description = if parts.len() > 2 && !parts[2].trim().is_empty() {
             Some(parts[2].trim().to_string())
         } else {
@@ -262,6 +333,12 @@ pub async fn import_sensitive_terms_csv(
         };
         
         if !term.is_empty() && !category.is_empty() {
+            ensure_no_duplicate_sensitive_term(&existing_terms, &term, None)?;
+            let key = term.clone();
+            if !seen_keys.insert(key) {
+                return Err(duplicate_sensitive_term_message(&category, &term));
+            }
+
             terms.push(SensitiveTerm {
                 id: Uuid::new_v4().to_string(),
                 term,

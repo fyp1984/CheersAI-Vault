@@ -1,13 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Search, Plus, Trash2, X, CheckCheck, Lightbulb, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Trash2, X, CheckCheck, Lightbulb, AlertTriangle, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ReplaceEntry { id: number; find: string; replace: string; }
 
@@ -16,6 +15,7 @@ interface FindReplaceDialogProps {
   onOpenChange: (open: boolean) => void;
   onReplace: (findText: string, replaceText: string) => number;
   detectedEntities?: Array<{ text: string; entity_type: string }>;
+  onRemoveEntity?: (text: string) => void;
 }
 
 const TYPE_DEFAULTS: Record<string, string> = {
@@ -39,15 +39,48 @@ export function FindReplaceDialog({
   onOpenChange,
   onReplace,
   detectedEntities = [],
+  onRemoveEntity,
 }: FindReplaceDialogProps) {
   const [entries, setEntries] = useState<ReplaceEntry[]>([
     { id: uid(), find: '', replace: '' },
   ]);
   const [feedback, setFeedback] = useState<{ total: number; notFound: string[] } | null>(null);
+  const [localEntities, setLocalEntities] = useState(detectedEntities);
+  
+  // 用于滚动到最新添加的条目
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const lastEntryRef = useRef<HTMLDivElement>(null);
+
+  // 当 detectedEntities 变化时更新本地状态
+  useEffect(() => {
+    setLocalEntities(detectedEntities);
+  }, [detectedEntities]);
+
+  // 当条目数量变化时，滚动到最新添加的条目
+  useEffect(() => {
+    if (lastEntryRef.current && scrollContainerRef.current) {
+      lastEntryRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [entries.length]);
 
   const uniqueEntities = Array.from(
-    new Map(detectedEntities.map(e => [e.text, e])).values()
+    new Map(localEntities.map(e => [e.text, e])).values()
   );
+
+  const handleRemoveEntity = (text: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止冒泡，避免触发点击添加
+    setLocalEntities(prev => prev.filter(entity => entity.text !== text));
+    if (onRemoveEntity) {
+      onRemoveEntity(text);
+    }
+  };
+
+  const handleQuickAdd = (text: string, type: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止冒泡
+    handleQuickSelect(text, type);
+    // 添加后从识别列表中移除
+    setLocalEntities(prev => prev.filter(entity => entity.text !== text));
+  };
 
   const updateEntry = (id: number, field: 'find' | 'replace', value: string) => {
     setFeedback(null);
@@ -71,6 +104,8 @@ export function FindReplaceDialog({
     } else {
       setEntries(prev => [...prev, { id: uid(), find: text, replace: TYPE_DEFAULTS[type] || '***MASKED***' }]);
     }
+    // 添加后从识别列表中移除
+    setLocalEntities(prev => prev.filter(entity => entity.text !== text));
   };
 
   const handleApplyAll = () => {
@@ -117,11 +152,25 @@ export function FindReplaceDialog({
                   <Badge
                     key={idx}
                     variant="outline"
-                    className="cursor-pointer hover:bg-blue-100 border-blue-200 transition-colors text-xs"
+                    className="cursor-pointer hover:bg-blue-100 border-blue-200 transition-colors text-xs relative group pr-6 pl-6"
                     onClick={() => handleQuickSelect(entity.text, entity.entity_type)}
                   >
+                    <button
+                      onClick={(e) => handleQuickAdd(entity.text, entity.entity_type, e)}
+                      className="absolute -top-1 -left-1 w-4 h-4 bg-green-500 hover:bg-green-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="添加到替换列表"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
                     <span className="text-orange-700 font-medium mr-1">{entity.entity_type}:</span>
                     <span className="text-gray-700">{entity.text}</span>
+                    <button
+                      onClick={(e) => handleRemoveEntity(entity.text, e)}
+                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="删除此识别结果"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
                   </Badge>
                 ))}
               </div>
@@ -135,17 +184,21 @@ export function FindReplaceDialog({
           )}
 
           {/* 替换条目列表 */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
+          <div className="space-y-1.5 flex-1 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between flex-shrink-0">
               <Label className="text-xs">替换列表</Label>
               <Button size="sm" variant="ghost" onClick={addEntry} className="text-xs h-6 px-2 gap-1">
                 <Plus className="w-3 h-3" /> 添加条目
               </Button>
             </div>
-            <ScrollArea className="max-h-52">
-              <div className="space-y-2 pr-1">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto pr-2">
+              <div className="space-y-2">
                 {entries.map((entry, idx) => (
-                  <div key={entry.id} className="flex items-center gap-2">
+                  <div 
+                    key={entry.id} 
+                    ref={idx === entries.length - 1 ? lastEntryRef : null}
+                    className="flex items-center gap-2"
+                  >
                     <span className="text-xs text-gray-400 w-4 text-right shrink-0">{idx + 1}</span>
                     <Input
                       placeholder="查找内容…"
@@ -171,7 +224,7 @@ export function FindReplaceDialog({
                   </div>
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
           {/* 预览摘要 */}
