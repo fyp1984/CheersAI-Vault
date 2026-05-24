@@ -25,7 +25,7 @@ const navItems = [
   { to: "/files", icon: FolderOpen, label: "文件管理", description: "管理脱敏后的文件" },
   { to: "/gitea", icon: Upload, label: "FileBay 设置", description: "配置 FileBay 上传" },
   { to: "/enhanced", icon: Sparkles, label: "增强服务", description: "安装 OCR 等增强功能" },
-  { to: "/rules", icon: Settings2, label: "规则配置" },
+  { to: "/sensitive-terms", icon: Settings2, label: "规则配置" },
   { to: "/sandbox", icon: Lock, label: "沙箱管理" },
   { to: "/log", icon: ClipboardList, label: "操作日志" },
 ];
@@ -36,6 +36,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useAppStore();
   const location = useLocation();
   const [appVersion, setAppVersion] = useState(`v${getBuildVersion()}`);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -50,6 +51,10 @@ export function Sidebar() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setHoveredItem(null);
+  }, [sidebarCollapsed]);
 
   return (
     <aside
@@ -74,25 +79,38 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 overflow-y-auto">
+      <nav className={cn("flex-1 overflow-y-auto", sidebarCollapsed ? "px-2 py-3" : "px-3 py-2")}>
         {navItems.map(({ to, icon: Icon, label, description }) => {
           const isActive = location.pathname === to || location.pathname.startsWith(to + '/');
           return (
-          <Tooltip key={to} delayDuration={0}>
+          <Tooltip
+            key={to}
+            delayDuration={100}
+            open={sidebarCollapsed && hoveredItem === to}
+          >
             <TooltipTrigger asChild>
               <NavLink
                 to={to}
+                onMouseEnter={() => setHoveredItem(to)}
+                onMouseLeave={() => setHoveredItem(null)}
+                onFocus={() => setHoveredItem(to)}
+                onBlur={() => setHoveredItem(null)}
                 className={cn(
-                  "flex items-center gap-3 h-12 px-4 mb-1 text-sm rounded-lg transition-all",
+                  "mb-1 flex items-center text-sm transition-all active:scale-95",
+                  sidebarCollapsed
+                    ? "mx-auto h-11 w-11 justify-center rounded-xl px-0"
+                    : "h-12 gap-3 rounded-lg px-4",
                   isActive
-                    ? "bg-[#3b82f6] text-white font-medium"
-                    : "text-[#d1d5db] hover:bg-white/5"
+                    ? sidebarCollapsed
+                      ? "bg-[#3b82f6] text-white shadow-lg shadow-blue-950/20"
+                      : "bg-[#3b82f6] text-white font-medium"
+                    : "text-[#d1d5db] hover:bg-white/5 hover:text-white"
                 )}
                 style={{
                   transitionDuration: '200ms'
                 }}
               >
-                <Icon className="w-5 h-5 shrink-0" />
+                <Icon className={cn("shrink-0", sidebarCollapsed ? "h-5.5 w-5.5" : "h-5 w-5")} />
                 {!sidebarCollapsed && (
                   <span>{label}</span>
                 )}
@@ -103,6 +121,7 @@ export function Sidebar() {
                 side="right" 
                 className="bg-slate-800 text-white border-slate-700 shadow-xl"
                 sideOffset={10}
+                onPointerDownOutside={() => setHoveredItem(null)}
               >
                 <div className="flex flex-col">
                   <span className="font-medium">{label}</span>
@@ -118,7 +137,7 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-4">
+      <div className={cn("py-4", sidebarCollapsed ? "px-2" : "px-3")}>
         {!sidebarCollapsed && (
           <div className="px-3 py-2 mb-3">
             <div className="flex items-center gap-2 mb-1">
@@ -134,7 +153,8 @@ export function Sidebar() {
         <button
           onClick={toggleSidebar}
           className={cn(
-            "flex items-center justify-center w-full h-9 rounded-lg transition-all duration-200",
+            "flex items-center justify-center rounded-xl transition-all duration-200",
+            sidebarCollapsed ? "mx-auto h-11 w-11" : "h-9 w-full",
             "text-slate-400 hover:text-white hover:bg-slate-600/20",
             "active:scale-95"
           )}

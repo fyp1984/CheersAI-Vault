@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,6 @@ import {
 import { 
   Lock, 
   Unlock, 
-  FileText, 
   FolderOpen, 
   Shield, 
   Eye,
@@ -31,13 +30,12 @@ import {
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
-import { formatBytes } from "@/lib/utils";
 import { getDisplayPath, validatePath, getDefaultDocumentsPath } from "@/lib/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { PlatformContext } from "@/types/commands";
 
 export default function SandboxManager() {
-  const { locked, files, setLocked, setFiles } = useSandboxStore();
+  const { locked, setLocked } = useSandboxStore();
   const { passphrase, outputDir, rememberPassphrase, setPassphrase, setOutputDir, setRememberPassphrase } = useFileStore();
   
   // 本地状态
@@ -100,25 +98,6 @@ export default function SandboxManager() {
     loadPlatformContext();
   }, []);
 
-  // 加载沙箱文件列表（基于输出目录）
-  const loadFiles = useCallback(async () => {
-    if (!locked && outputDir) {
-      try {
-        const fileList = await tauriCommands.listFilesInDirectory(outputDir);
-        setFiles(fileList);
-      } catch (error) {
-        console.error("Failed to load sandbox files:", error);
-        setFiles([]); // 如果失败，设置为空数组
-      }
-    } else {
-      setFiles([]);
-    }
-  }, [locked, outputDir]);
-
-  useEffect(() => {
-    void loadFiles();
-  }, [loadFiles]);
-
   // 检查是否已设置 PIN（DPAPI 持久化）
   useEffect(() => {
     const checkPin = async () => {
@@ -179,7 +158,6 @@ export default function SandboxManager() {
         }
         setLocked(false);
         setPin("");
-        await loadFiles();
       } else {
         setToast({ message: 'PIN 错误，请重试', type: 'error' });
       }
@@ -324,7 +302,7 @@ export default function SandboxManager() {
       />
 
       <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-4xl mx-auto space-y-6">
+        <div className="w-full max-w-6xl mx-auto space-y-6">
           
           {/* 沙箱状态卡片 */}
           <Card>
@@ -391,9 +369,6 @@ export default function SandboxManager() {
                     <CheckCircle2 className="w-4 h-4" />
                     沙箱已解锁，可以访问安全文件
                   </p>
-                  <div className="text-sm text-gray-600">
-                    文件数量: {files.length} 个
-                  </div>
                 </div>
               )}
             </CardContent>
@@ -565,60 +540,6 @@ export default function SandboxManager() {
             </CardContent>
           </Card>
 
-          {/* 沙箱文件列表 */}
-          {!locked && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-gray-500" />
-                  输出目录文件
-                </CardTitle>
-                {outputDir && (
-                  <p className="text-xs text-gray-500">
-                    位置: {getDisplayPath(outputDir, 50)}
-                  </p>
-                )}
-              </CardHeader>
-              <CardContent>
-                {!outputDir ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <FolderOpen className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">请先设置文件输出路径</p>
-                  </div>
-                ) : files.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">输出目录为空</p>
-                    <p className="text-xs mt-1">处理文件后，脱敏文件和映射文件将显示在这里</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {files.map((file) => (
-                      <div
-                        key={file.name}
-                        className="flex items-center gap-3 p-3 rounded-lg border hover:bg-gray-50"
-                      >
-                        <FileText className="w-5 h-5 text-gray-400" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">
-                            {file.name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatBytes(file.size)} · {file.modified}
-                          </p>
-                        </div>
-                        {file.name.endsWith('.cmap') && (
-                          <div className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
-                            映射文件
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
 

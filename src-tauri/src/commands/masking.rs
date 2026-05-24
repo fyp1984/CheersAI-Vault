@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 use crate::core::{masking_engine, file_parser, ner, crypto, database};
 use uuid::Uuid;
 
+/// 获取文件的总页数
+#[tauri::command]
+pub async fn get_file_page_count(file_path: String) -> Result<usize, String> {
+    file_parser::get_page_count(&file_path)
+        .map_err(|e| format!("Failed to get page count: {}", e))
+}
+
 /// 从数据库加载启用的敏感词
 async fn load_sensitive_terms() -> Result<Vec<database::SensitiveTerm>, String> {
     let db = database::Database::new().await
@@ -30,6 +37,7 @@ pub struct MaskFileOptions {
     pub passphrase: Option<String>,
     pub custom_rules: Option<Vec<CustomRule>>,
     pub use_ai_validation: Option<bool>, // 是否使用 AI 验证姓名
+    pub page_range: Option<(usize, usize)>, // 页码范围 (起始页, 结束页)，从 1 开始
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +54,7 @@ pub struct PreviewOptions {
     pub max_rows: Option<usize>,
     pub custom_rules: Option<Vec<CustomRule>>,
     pub use_ai_validation: Option<bool>,
+    pub page_range: Option<(usize, usize)>, // 页码范围 (起始页, 结束页)，从 1 开始
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +65,47 @@ pub struct SavePreviewOptions {
     pub headers: Option<Vec<String>>,
     pub passphrase: Option<String>,
     pub mapping: Option<Vec<masking_engine::MappingEntry>>,
+    pub rule_ids: Option<Vec<String>>,
+    pub custom_rules: Option<Vec<CustomRule>>,
+    pub page_range: Option<(usize, usize)>, // 页码范围 (起始页, 结束页)，从 1 开始
+}
+
+fn sanitize_output_file_stem(file_stem: &str) -> String {
+    let mut sanitized: String = file_stem
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect();
+
+    sanitized = sanitized.trim_matches([' ', '.']).to_string();
+
+    if sanitized.is_empty() {
+        return "masked_file".to_string();
+    }
+
+    let reserved_names = [
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let base_name = sanitized
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+
+    if reserved_names.contains(&base_name.as_str()) {
+        sanitized = format!("_{}", sanitized);
+    }
+
+    sanitized
+}
+
+fn format_output_create_error(path: &str, error: impl std::fmt::Display) -> String {
+    format!("创建输出文件失败：{}。请检查输出目录是否存在、文件名是否合法，以及文件是否正在被其他程序占用。原始错误：{}", path, error)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -180,14 +230,24 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         &mut counter
     );
     
-    // 如果文件名被完全脱敏（只剩下占位符），添加原始文件名的部分信息以便识别
+    // 构建最终文件名：脱敏后的文件名 + "_脱敏" 后缀 + 页码标识（如果有）
     let final_file_name = if masked_file_name.is_empty() || 
                              masked_file_name.chars().all(|c| c == '*' || c.is_numeric()) {
-        // 文件名被完全脱敏，使用通用名称
-        format!("masked_file_{}", counter)
+        // 文件名被完全脱敏（只剩占位符），使用占位符加后缀
+        if let Some((start, end)) = options.page_range {
+            format!("{}_脱敏_p{}-{}", masked_file_name, start, end)
+        } else {
+            format!("{}_脱敏", masked_file_name)
+        }
     } else {
-        masked_file_name
+        // 文件名部分脱敏，在脱敏后的文件名后添加后缀
+        if let Some((start, end)) = options.page_range {
+            format!("{}_脱敏_p{}-{}", masked_file_name, start, end)
+        } else {
+            format!("{}_脱敏", masked_file_name)
+        }
     };
+    let final_file_name = sanitize_output_file_stem(&final_file_name);
     
     // 构建新的输出路径（使用脱敏后的文件名）
     let output_dir = std::path::Path::new(&options.output_path)
@@ -266,7 +326,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::Word => {
-            let content = file_parser::parse_word(&options.file_path)
+            let content = file_parser::parse_word_with_range(&options.file_path, options.page_range)
                 .map_err(|e| {
                     format!("Failed to parse Word: {}", e)
                 })?;
@@ -292,7 +352,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::PowerPoint => {
-            let content = file_parser::parse_powerpoint(&options.file_path)
+            let content = file_parser::parse_powerpoint_with_range(&options.file_path, options.page_range)
                 .map_err(|e| {
                     format!("Failed to parse PowerPoint: {}", e)
                 })?;
@@ -318,7 +378,8 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             }
         }
         file_parser::FileFormat::Pdf => {
-            let content = file_parser::parse_pdf(&options.file_path)
+            // parse_pdf_with_range 已经内置了 OCR 回退逻辑
+            let content = file_parser::parse_pdf_with_range(&options.file_path, options.page_range)
                 .map_err(|e| {
                     format!("Failed to parse PDF: {}", e)
                 })?;
@@ -573,7 +634,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
         }
         file_parser::FileFormat::Word => {
             // 读取 Word 文档内容
-            let content = file_parser::parse_word(&options.file_path)
+            let content = file_parser::parse_word_with_range(&options.file_path, options.page_range)
                 .map_err(|e| format!("Failed to parse Word: {}", e))?;
             
             // 按行分割
@@ -615,7 +676,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
         }
         file_parser::FileFormat::PowerPoint => {
             // 读取 PowerPoint 内容
-            let content = file_parser::parse_powerpoint(&options.file_path)
+            let content = file_parser::parse_powerpoint_with_range(&options.file_path, options.page_range)
                 .map_err(|e| format!("Failed to parse PowerPoint: {}", e))?;
             
             // 按行分割
@@ -656,8 +717,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             })
         }
         file_parser::FileFormat::Pdf => {
-            // 读取 PDF 内容
-            let content = file_parser::parse_pdf(&options.file_path)
+            // parse_pdf_with_range 已经内置了 OCR 回退逻辑
+            let content = file_parser::parse_pdf_with_range(&options.file_path, options.page_range)
                 .map_err(|e| format!("Failed to parse PDF: {}", e))?;
             
             // 按行分割
@@ -765,36 +826,104 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
     let original_file_name = std::path::Path::new(&options.file_path)
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("masked");
+        .unwrap_or("文件");
     
-    // 对文件名进行脱敏（使用敏感词库）
-    let masked_file_name = if original_file_name.chars().any(|c| c >= '\u{4E00}' && c <= '\u{9FA5}') {
-        // 包含中文，尝试匹配敏感词库
-        let sensitive_terms = load_sensitive_terms().await.unwrap_or_default();
-        
-        let mut result = original_file_name.to_string();
-        
-        // 按照敏感词长度从长到短排序，优先匹配长词
-        let mut sorted_terms = sensitive_terms.clone();
-        sorted_terms.sort_by(|a, b| b.term.len().cmp(&a.term.len()));
-        
-        for term in &sorted_terms {
-            if term.enabled && result.contains(&term.term) {
-                // 找到匹配的敏感词，替换为分类标签
-                result = result.replace(&term.term, &format!("[{}]", term.category));
-            }
-        }
-        
-        // 如果文件名被完全替换成标签，保留一些原始信息
-        if result.is_empty() || result.chars().all(|c| c == '[' || c == ']' || c.is_alphabetic()) {
-            format!("masked_{}", original_file_name.chars().take(5).collect::<String>())
+    // 对文件名进行脱敏处理（与 mask_file 函数保持一致）
+    let masked_file_name = if let Some(rule_ids) = &options.rule_ids {
+        // 1. 检查是否启用敏感词库
+        let use_sensitive_terms = rule_ids.contains(&"use_sensitive_terms".to_string());
+        let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
+            // 加载敏感词库
+            let sensitive_terms = load_sensitive_terms().await?;
+            
+            // 将敏感词转换为脱敏规则
+            sensitive_terms
+                .iter()
+                .map(|term| {
+                    let escaped_term = regex::escape(&term.term);
+                    let pattern = if term.term.chars().any(|c| c > '\u{4E00}' && c < '\u{9FA5}') {
+                        escaped_term
+                    } else {
+                        format!(r"\b{}\b", escaped_term)
+                    };
+                    
+                    masking_engine::MaskingRule {
+                        id: format!("sensitive_term_{}", term.id),
+                        name: format!("{} ({})", term.term, term.category),
+                        pattern,
+                        replacement_template: format!("[{}]", term.category),
+                        use_counter: false,
+                        enabled: term.enabled,
+                        builtin: false,
+                    }
+                })
+                .collect()
         } else {
-            result
+            Vec::new()
+        };
+        
+        // 2. 合并 builtin + custom + sensitive_term 规则
+        let builtin = masking_engine::get_builtin_rules();
+        let mut custom_masking_rules: Vec<masking_engine::MaskingRule> = options.custom_rules
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|cr| masking_engine::MaskingRule {
+                id: cr.id.clone(),
+                name: cr.name.clone(),
+                pattern: cr.pattern.clone(),
+                replacement_template: cr.replacement_template.clone(),
+                use_counter: cr.use_counter.unwrap_or(true),
+                enabled: true,
+                builtin: false,
+            })
+            .collect();
+        
+        let mut all_combined: Vec<masking_engine::MaskingRule> = builtin.to_vec();
+        all_combined.append(&mut custom_masking_rules);
+        all_combined.extend(sensitive_term_rules);
+
+        let active_rules: Vec<_> = all_combined
+            .iter()
+            .filter(|r| {
+                if r.id.starts_with("sensitive_term_") {
+                    r.enabled
+                } else {
+                    rule_ids.contains(&r.id)
+                }
+            })
+            .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
+            .collect();
+        
+        // 创建 NER 检测器
+        let ner_detector = ner::NERDetector::new();
+        
+        // 对文件名应用脱敏规则
+        let mut temp_mapping = std::collections::HashMap::new();
+        let mut temp_counter = 0usize;
+        let masked = masking_engine::mask_value_with_ner(
+            original_file_name,
+            &active_rules,
+            &ner_detector,
+            &mut temp_mapping,
+            &mut temp_counter
+        );
+        
+        // 添加页码标识（如果有）
+        if let Some((start, end)) = options.page_range {
+            format!("{}_脱敏_p{}-{}", masked, start, end)
+        } else {
+            format!("{}_脱敏", masked)
         }
     } else {
-        // 不包含中文，保留原文件名
-        original_file_name.to_string()
+        // 没有提供 rule_ids，只添加后缀
+        if let Some((start, end)) = options.page_range {
+            format!("{}_脱敏_p{}-{}", original_file_name, start, end)
+        } else {
+            format!("{}_脱敏", original_file_name)
+        }
     };
+    let masked_file_name = sanitize_output_file_stem(&masked_file_name);
     
     let extension = match format {
         file_parser::FileFormat::Csv => "csv",
@@ -813,7 +942,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         file_parser::FileFormat::Csv => {
             // 保存为 CSV
             let mut wtr = csv::Writer::from_path(&output_path)
-                .map_err(|e| format!("Failed to create CSV writer: {}", e))?;
+                .map_err(|e| format_output_create_error(&output_path, e))?;
             
             // 写入表头
             if let Some(headers) = &options.headers {
@@ -836,7 +965,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
             let csv_output_path = format!("{}/{}.csv", options.output_dir, masked_file_name);
             
             let mut wtr = csv::Writer::from_path(&csv_output_path)
-                .map_err(|e| format!("Failed to create CSV writer: {}", e))?;
+                .map_err(|e| format_output_create_error(&csv_output_path, e))?;
             
             // 写入表头
             if let Some(headers) = &options.headers {
@@ -936,34 +1065,11 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         file_parser::FileFormat::Text | file_parser::FileFormat::Markdown | file_parser::FileFormat::Pdf => {
             // 保存为纯文本或 Markdown（PDF 也保存为文本格式）
             let mut content = String::new();
-            
-            // 写入表头
-            if let Some(headers) = &options.headers {
-                if matches!(format, file_parser::FileFormat::Markdown) {
-                    content.push_str("| ");
-                    content.push_str(&headers.join(" | "));
-                    content.push_str(" |\n");
-                    content.push_str("|");
-                    for _ in headers {
-                        content.push_str(" --- |");
-                    }
-                    content.push('\n');
-                } else {
-                    content.push_str(&headers.join("\t"));
-                    content.push('\n');
-                }
-            }
-            
-            // 写入数据行
+
+            // 文本类预览会使用一个仅供界面显示的“内容”表头，保存文件时不能写入它。
             for row in &options.masked_rows {
-                if matches!(format, file_parser::FileFormat::Markdown) {
-                    content.push_str("| ");
-                    content.push_str(&row.join(" | "));
-                    content.push_str(" |\n");
-                } else {
-                    content.push_str(&row.join("\t"));
-                    content.push('\n');
-                }
+                content.push_str(&row.join("\t"));
+                content.push('\n');
             }
             
             std::fs::write(&output_path, content)

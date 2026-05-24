@@ -32,6 +32,7 @@ pub fn run() {
             masking::mask_file,
             masking::preview_masking,
             masking::save_preview_result,
+            masking::get_file_page_count,
             crypto::generate_passphrase,
             crypto::encrypt_mapping,
             crypto::decrypt_mapping,

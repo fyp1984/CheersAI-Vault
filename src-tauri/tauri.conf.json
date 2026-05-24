@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CheersAI Desktop",
-  "version": "0.1.34",
+  "version": "0.1.36",
   "identifier": "com.cheersai.vault",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },

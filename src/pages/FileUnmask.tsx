@@ -101,47 +101,49 @@ export default function FileUnmask() {
 
   return (
     <div className="h-full flex flex-col bg-[#f9fafb]">
-      <div className="flex-1 overflow-auto p-8">
-        <div className="max-w-3xl mx-auto">
+      <div className="flex-1 overflow-auto p-6">
+        <div className="w-full max-w-6xl mx-auto">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[#111827] mb-2">文件反脱敏</h1>
             <p className="text-sm text-[#6b7280]">上传已脱敏的文件和对照文件，使用解密口令还原原始内容</p>
           </div>
 
-          {/* 已脱敏文件选择 */}
-          <div className="bg-white rounded-lg border border-[#e5e7eb] p-5 mb-6 shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <FileText className="w-5 h-5 text-[#3b82f6]" />
-              <h2 className="text-base font-semibold text-[#111827]">已脱敏文件</h2>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+            {/* 已脱敏文件选择 */}
+            <div className="bg-white rounded-lg border border-[#e5e7eb] p-5 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <FileText className="w-5 h-5 text-[#3b82f6]" />
+                <h2 className="text-base font-semibold text-[#111827]">已脱敏文件</h2>
+              </div>
+              <button
+                onClick={selectMaskedFile}
+                className="w-full min-h-[132px] border-2 border-dashed border-[#cbd5e1] rounded-lg p-6 hover:border-[#3b82f6] hover:bg-[#3b82f6]/5 transition-all"
+                style={{ transitionDuration: '200ms' }}
+              >
+                <Upload className="w-8 h-8 mx-auto mb-2 text-[#9ca3af]" />
+                <p className="text-sm text-[#6b7280] break-all">
+                  {maskedFile ? maskedFile.split(/[\\/]/).pop() : "点击选择已脱敏的文件"}
+                </p>
+              </button>
             </div>
-            <button
-              onClick={selectMaskedFile}
-              className="w-full border-2 border-dashed border-[#cbd5e1] rounded-lg p-6 hover:border-[#3b82f6] hover:bg-[#3b82f6]/5 transition-all"
-              style={{ transitionDuration: '200ms' }}
-            >
-              <Upload className="w-8 h-8 mx-auto mb-2 text-[#9ca3af]" />
-              <p className="text-sm text-[#6b7280]">
-                {maskedFile ? maskedFile.split(/[\\/]/).pop() : "点击选择已脱敏的文件"}
-              </p>
-            </button>
-          </div>
 
-          {/* 对照文件选择 */}
-          <div className="bg-white rounded-lg border border-[#e5e7eb] p-5 mb-6 shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <FileText className="w-5 h-5 text-[#8b5cf6]" />
-              <h2 className="text-base font-semibold text-[#111827]">对照文件 (.cmap)</h2>
+            {/* 对照文件选择 */}
+            <div className="bg-white rounded-lg border border-[#e5e7eb] p-5 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <FileText className="w-5 h-5 text-[#3b82f6]" />
+                <h2 className="text-base font-semibold text-[#111827]">对照文件 (.cmap)</h2>
+              </div>
+              <button
+                onClick={selectMappingFile}
+                className="w-full min-h-[132px] border-2 border-dashed border-[#cbd5e1] rounded-lg p-6 hover:border-[#3b82f6] hover:bg-[#3b82f6]/5 transition-all"
+                style={{ transitionDuration: '200ms' }}
+              >
+                <Upload className="w-8 h-8 mx-auto mb-2 text-[#9ca3af]" />
+                <p className="text-sm text-[#6b7280] break-all">
+                  {mappingFile ? mappingFile.split(/[\\/]/).pop() : "点击选择对照文件"}
+                </p>
+              </button>
             </div>
-            <button
-              onClick={selectMappingFile}
-              className="w-full border-2 border-dashed border-[#cbd5e1] rounded-lg p-6 hover:border-[#8b5cf6] hover:bg-[#8b5cf6]/5 transition-all"
-              style={{ transitionDuration: '200ms' }}
-            >
-              <Upload className="w-8 h-8 mx-auto mb-2 text-[#9ca3af]" />
-              <p className="text-sm text-[#6b7280]">
-                {mappingFile ? mappingFile.split(/[\\/]/).pop() : "点击选择对照文件"}
-              </p>
-            </button>
           </div>
 
           {/* 解密口令输入 */}

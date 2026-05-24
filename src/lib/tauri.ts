@@ -32,6 +32,9 @@ export const tauriCommands = {
   savePreviewResult: (options: SavePreviewOptions) =>
     invoke<MaskResult>("save_preview_result", { options }),
 
+  getFilePageCount: (filePath: string) =>
+    invoke<number>("get_file_page_count", { filePath }),
+
   // Crypto
   generatePassphrase: () =>
     invoke<string>("generate_passphrase"),
@@ -183,11 +186,11 @@ export const tauriCommands = {
   openDesktopWindowWithButton: (url: string) =>
     invoke<void>("open_desktop_window_with_button", { url }),
 
-  ensureDesktopChildWebview: () =>
-    invoke<void>("ensure_desktop_child_webview"),
+  ensureDesktopChildWebview: (sidebarCollapsed = false) =>
+    invoke<void>("ensure_desktop_child_webview", { sidebarCollapsed }),
 
-  updateDesktopChildWebviewBounds: () =>
-    invoke<void>("update_desktop_child_webview_bounds"),
+  updateDesktopChildWebviewBounds: (sidebarCollapsed = false) =>
+    invoke<void>("update_desktop_child_webview_bounds", { sidebarCollapsed }),
 
   hideDesktopChildWebview: () =>
     invoke<void>("hide_desktop_child_webview"),

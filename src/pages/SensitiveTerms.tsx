@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb, ArrowUpDown } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb, FileSpreadsheet, Pencil } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import type { SensitiveTerm, AddSensitiveTermRequest } from "@/types/commands";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -39,6 +39,7 @@ export default function SensitiveTerms() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stats, setStats] = useState({ total: 0, enabled: 0, disabled: 0, categories: 0 });
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingTerm, setEditingTerm] = useState<SensitiveTerm | null>(null);
   const [form, setForm] = useState<AddSensitiveTermRequest>({ term: "", category: "", description: "" });
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -68,7 +69,7 @@ export default function SensitiveTerms() {
     }
   };
 
-  const handleAdd = async () => {
+  const handleSaveTerm = async () => {
     if (!form.term.trim() || !form.category.trim()) {
       setToast({ message: "请填写敏感词和分类", type: "error" });
       return;
@@ -76,17 +77,45 @@ export default function SensitiveTerms() {
 
     try {
       setLoading(true);
-      await tauriCommands.addSensitiveTerm(form);
-      setToast({ message: "添加成功", type: "success" });
+      if (editingTerm) {
+        await tauriCommands.updateSensitiveTerm({
+          id: editingTerm.id,
+          term: form.term,
+          category: form.category,
+          description: form.description,
+        });
+        setToast({ message: "修改成功", type: "success" });
+      } else {
+        await tauriCommands.addSensitiveTerm(form);
+        setToast({ message: "添加成功", type: "success" });
+      }
       setForm({ term: "", category: "", description: "" });
+      setEditingTerm(null);
       setShowAddForm(false);
       await loadData();
     } catch (error) {
-      console.error("Failed to add term:", error);
-      setToast({ message: "添加失败", type: "error" });
+      console.error("Failed to save term:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      setToast({ message: message || (editingTerm ? "修改失败" : "添加失败"), type: "error" });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleEdit = (term: SensitiveTerm) => {
+    setEditingTerm(term);
+    setForm({
+      term: term.term,
+      category: term.category,
+      description: term.description || "",
+    });
+    setShowAddForm(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingTerm(null);
+    setForm({ term: "", category: "", description: "" });
+    setShowAddForm(false);
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
@@ -156,7 +185,8 @@ export default function SensitiveTerms() {
       }
     } catch (error) {
       console.error("Failed to import:", error);
-      setToast({ message: "导入失败", type: "error" });
+      const message = error instanceof Error ? error.message : String(error);
+      setToast({ message: message || "导入失败", type: "error" });
     }
   };
 
@@ -190,6 +220,12 @@ export default function SensitiveTerms() {
 
   // 总页数
   const totalPages = Math.ceil(filteredTerms.length / pageSize);
+  const selectTriggerClass =
+    "h-10 rounded-xl border-gray-200 bg-white px-4 text-sm text-gray-700 shadow-sm transition-all hover:border-blue-200 hover:bg-blue-50/30 focus:ring-2 focus:ring-blue-100 focus:ring-offset-0 data-[state=open]:border-blue-300 data-[state=open]:bg-blue-50/40";
+  const selectContentClass =
+    "rounded-xl border-gray-200 bg-white p-1.5 shadow-xl shadow-slate-900/10";
+  const selectItemClass =
+    "cursor-pointer rounded-lg py-2 pl-8 pr-3 text-sm text-gray-700 focus:bg-blue-50 focus:text-blue-700 data-[state=checked]:bg-blue-50 data-[state=checked]:font-medium data-[state=checked]:text-blue-700";
 
   // 当筛选条件变化时，重置到第一页
   useEffect(() => {
@@ -231,64 +267,38 @@ export default function SensitiveTerms() {
 
         {/* 操作栏 */}
         <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex-1 flex items-center gap-2 min-w-[200px]">
-                <Input
-                  placeholder="搜索敏感词..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  className="max-w-xs"
-                />
-                <Button size="sm" variant="outline" onClick={handleSearch}>
-                  <Search className="w-4 h-4" />
-                </Button>
+          <CardContent className="py-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-[260px] flex-1 items-center gap-2 text-sm text-gray-500">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <FileSpreadsheet className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-medium text-gray-700">批量维护敏感词库</p>
+                  <p className="text-xs text-gray-400">支持 CSV 导入导出，便于备份和跨设备迁移</p>
+                </div>
               </div>
-              
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="px-3 py-1.5 text-sm border rounded-md"
-              >
-                <option value="">全部分类</option>
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-
-              {/* 排序选择 */}
-              <Select value={sortBy} onValueChange={(value: 'time' | 'alpha') => setSortBy(value)}>
-                <SelectTrigger className="w-[140px] h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="time">时间排序</SelectItem>
-                  <SelectItem value="alpha">首字母排序</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* 每页数量选择 */}
-              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
-                <SelectTrigger className="w-[120px] h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="5">每页 5 条</SelectItem>
-                  <SelectItem value="10">每页 10 条</SelectItem>
-                  <SelectItem value="20">每页 20 条</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Button size="sm" variant="outline" onClick={handleExport}>
+              <Button size="sm" variant="outline" onClick={handleExport} className="h-9">
                 <Download className="w-4 h-4 mr-1" />
                 导出
               </Button>
-              <Button size="sm" variant="outline" onClick={handleImport}>
+              <Button size="sm" variant="outline" onClick={handleImport} className="h-9">
                 <Upload className="w-4 h-4 mr-1" />
                 导入
               </Button>
-              <Button size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (showAddForm) {
+                    handleCancelEdit();
+                  } else {
+                    setEditingTerm(null);
+                    setForm({ term: "", category: "", description: "" });
+                    setShowAddForm(true);
+                  }
+                }}
+                className="h-9"
+              >
                 {showAddForm ? <ChevronUp className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
                 {showAddForm ? "收起" : "添加"}
               </Button>
@@ -298,17 +308,19 @@ export default function SensitiveTerms() {
 
         {/* 添加表单 */}
         {showAddForm && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardContent className="pt-4 space-y-3">
-              <p className="text-sm font-medium text-blue-900">添加敏感词</p>
-              <div className="grid grid-cols-2 gap-3">
+          <Card className="border-blue-200 bg-blue-50/70">
+            <CardContent className="space-y-3 p-4">
+              <p className="text-sm font-medium text-blue-900">
+                {editingTerm ? "修改敏感词" : "添加敏感词"}
+              </p>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">敏感词</Label>
                   <Input
                     placeholder="例：张三"
                     value={form.term}
                     onChange={(e) => setForm({ ...form, term: e.target.value })}
-                    className="text-sm h-8"
+                    className="h-9 bg-white text-sm"
                   />
                 </div>
                 <div className="space-y-1">
@@ -317,7 +329,7 @@ export default function SensitiveTerms() {
                     placeholder="例：姓名"
                     value={form.category}
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="text-sm h-8"
+                    className="h-9 bg-white text-sm"
                     list="categories-list"
                   />
                   <datalist id="categories-list">
@@ -333,14 +345,14 @@ export default function SensitiveTerms() {
                   placeholder="例：测试人员姓名"
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  className="text-sm h-8"
+                  className="h-9 bg-white text-sm"
                 />
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={handleAdd} disabled={loading}>
-                  保存
+                <Button size="sm" onClick={handleSaveTerm} disabled={loading}>
+                  {editingTerm ? "保存修改" : "保存"}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)}>
+                <Button size="sm" variant="outline" onClick={handleCancelEdit}>
                   取消
                 </Button>
               </div>
@@ -350,17 +362,68 @@ export default function SensitiveTerms() {
 
         {/* 词条列表 */}
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
+          <CardHeader className="space-y-4 pb-4">
+            <div className="flex items-center justify-between gap-4">
               <CardTitle className="text-base">
                 敏感词列表 (共 {filteredTerms.length} 条)
               </CardTitle>
-              <div className="text-sm text-gray-500">
+              <div className="shrink-0 text-sm text-gray-500">
                 第 {filteredTerms.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} - {Math.min(currentPage * pageSize, filteredTerms.length)} 条
               </div>
             </div>
+
+            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex min-w-[260px] flex-1 items-center gap-2">
+                  <Input
+                    placeholder="搜索敏感词..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    className="h-9 bg-white"
+                  />
+                  <Button size="sm" variant="outline" onClick={handleSearch} className="h-9 px-3">
+                    <Search className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                <Select value={selectedCategory || "__all__"} onValueChange={(value) => setSelectedCategory(value === "__all__" ? "" : value)}>
+                  <SelectTrigger className={`${selectTriggerClass} w-[144px]`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={selectContentClass}>
+                    <SelectItem value="__all__" className={selectItemClass}>全部分类</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat} value={cat} className={selectItemClass}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={sortBy} onValueChange={(value: 'time' | 'alpha') => setSortBy(value)}>
+                  <SelectTrigger className={`${selectTriggerClass} w-[144px]`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={selectContentClass}>
+                    <SelectItem value="time" className={selectItemClass}>时间排序</SelectItem>
+                    <SelectItem value="alpha" className={selectItemClass}>首字母排序</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                  <SelectTrigger className={`${selectTriggerClass} w-[132px]`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={selectContentClass}>
+                    <SelectItem value="5" className={selectItemClass}>每页 5 条</SelectItem>
+                    <SelectItem value="10" className={selectItemClass}>每页 10 条</SelectItem>
+                    <SelectItem value="20" className={selectItemClass}>每页 20 条</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardHeader>
-          <CardContent>
+
+          <CardContent className="pt-0">
             {sortedAndPagedTerms.length === 0 ? (
               <p className="text-sm text-gray-400 py-8 text-center">
                 {filteredTerms.length === 0 
@@ -387,6 +450,15 @@ export default function SensitiveTerms() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEdit(term)}
+                        className="h-7 px-2 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                      >
+                        <Pencil className="w-3.5 h-3.5 mr-1" />
+                        修改
+                      </Button>
                       <Switch
                         checked={term.enabled}
                         onCheckedChange={(checked) => handleToggle(term.id, checked)}

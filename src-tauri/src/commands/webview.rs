@@ -54,12 +54,12 @@ fn desktop_brand_hider_script() -> &'static str {
     "#
 }
 
-fn desktop_content_bounds(window: &Window) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
+fn desktop_content_bounds(window: &Window, sidebar_collapsed: bool) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
     let scale = window.scale_factor().map_err(|e| format!("Failed to get scale factor: {}", e))?;
     let size = window.inner_size().map_err(|e| format!("Failed to get window size: {}", e))?;
     let logical_width = size.width as f64 / scale;
     let logical_height = size.height as f64 / scale;
-    let sidebar_width = 256.0;
+    let sidebar_width = if sidebar_collapsed { 64.0 } else { 256.0 };
     let content_width = (logical_width - sidebar_width).max(320.0);
 
     Ok((
@@ -549,9 +549,10 @@ pub async fn open_webview_window(
 #[tauri::command]
 pub async fn ensure_desktop_child_webview(
     app: AppHandle,
+    sidebar_collapsed: bool,
 ) -> Result<(), String> {
     let main_window = app.get_window("main").ok_or("Main window not found".to_string())?;
-    let (mut position, mut size) = desktop_content_bounds(&main_window)?;
+    let (mut position, mut size) = desktop_content_bounds(&main_window, sidebar_collapsed)?;
     let desktop_url = DESKTOP_URL
         .parse::<tauri::Url>()
         .map_err(|e| format!("Invalid desktop URL: {}", e))?;
@@ -599,7 +600,7 @@ pub async fn ensure_desktop_child_webview(
                 #[cfg(target_os = "macos")]
                 {
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    let updated_bounds = desktop_content_bounds(&main_window)?;
+                    let updated_bounds = desktop_content_bounds(&main_window, sidebar_collapsed)?;
                     position = updated_bounds.0;
                     size = updated_bounds.1;
 
@@ -631,9 +632,10 @@ pub async fn ensure_desktop_child_webview(
 #[tauri::command]
 pub async fn update_desktop_child_webview_bounds(
     app: AppHandle,
+    sidebar_collapsed: bool,
 ) -> Result<(), String> {
     let main_window = app.get_window("main").ok_or("Main window not found".to_string())?;
-    let (position, size) = desktop_content_bounds(&main_window)?;
+    let (position, size) = desktop_content_bounds(&main_window, sidebar_collapsed)?;
 
     if let Some(webview) = app.get_webview(DESKTOP_CHILD_LABEL) {
         let _ = webview.set_position(position);

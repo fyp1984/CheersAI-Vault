@@ -15,12 +15,14 @@ except ImportError as e:
     print("  pip install PyMuPDF", file=sys.stderr)
     sys.exit(1)
 
-def extract_text_from_pdf(pdf_path):
+def extract_text_from_pdf(pdf_path, start_page=None, end_page=None):
     """
     Extract text from PDF using PyMuPDF
     
     Args:
         pdf_path: Path to the PDF file
+        start_page: Starting page number (1-indexed, inclusive), None for all pages
+        end_page: Ending page number (1-indexed, inclusive), None for all pages
         
     Returns:
         Extracted text as string
@@ -29,13 +31,25 @@ def extract_text_from_pdf(pdf_path):
         # 打开 PDF
         print(f"Opening PDF: {pdf_path}", file=sys.stderr)
         doc = fitz.open(pdf_path)
-        print(f"PDF has {len(doc)} pages", file=sys.stderr)
+        total_pages = len(doc)
+        print(f"PDF has {total_pages} pages", file=sys.stderr)
+
+        # 确定页码范围
+        if start_page is not None and end_page is not None:
+            # 转换为 0-indexed
+            start_idx = max(0, start_page - 1)
+            end_idx = min(total_pages, end_page)
+            print(f"Extracting pages {start_page}-{end_page} (indices {start_idx}-{end_idx-1})", file=sys.stderr)
+        else:
+            start_idx = 0
+            end_idx = total_pages
+            print(f"Extracting all pages", file=sys.stderr)
 
         all_text = []
 
-        # 处理每一页并直接提取文本
-        for page_num in range(len(doc)):
-            print(f"Processing page {page_num + 1}/{len(doc)}...", file=sys.stderr)
+        # 处理指定范围的页面
+        for page_num in range(start_idx, end_idx):
+            print(f"Processing page {page_num + 1}/{total_pages}...", file=sys.stderr)
             page = doc[page_num]
 
             page_text = page.get_text("text").strip()
@@ -69,8 +83,8 @@ def extract_text_from_pdf(pdf_path):
                 doc = fitz.open(pdf_path)
                 ocr_texts = []
                 
-                for page_num in range(len(doc)):
-                    print(f"OCR 识别第 {page_num + 1}/{len(doc)} 页...", file=sys.stderr)
+                for page_num in range(start_idx, end_idx):
+                    print(f"OCR 识别第 {page_num + 1}/{total_pages} 页...", file=sys.stderr)
                     page = doc[page_num]
                     
                     # 将 PDF 页面转换为图片
@@ -132,18 +146,37 @@ def extract_text_from_pdf(pdf_path):
         raise
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python pdf_ocr.py <pdf_file_path>", file=sys.stderr)
+    if len(sys.argv) < 2 or len(sys.argv) > 4:
+        print("Usage: python pdf_ocr.py <pdf_file_path> [start_page] [end_page]", file=sys.stderr)
+        print("  start_page: Starting page number (1-indexed, optional)", file=sys.stderr)
+        print("  end_page: Ending page number (1-indexed, optional)", file=sys.stderr)
         sys.exit(1)
     
     pdf_path = sys.argv[1]
+    start_page = None
+    end_page = None
+    
+    # 解析页码范围参数
+    if len(sys.argv) >= 3:
+        try:
+            start_page = int(sys.argv[2])
+        except ValueError:
+            print(f"ERROR: Invalid start_page: {sys.argv[2]}", file=sys.stderr)
+            sys.exit(1)
+    
+    if len(sys.argv) >= 4:
+        try:
+            end_page = int(sys.argv[3])
+        except ValueError:
+            print(f"ERROR: Invalid end_page: {sys.argv[3]}", file=sys.stderr)
+            sys.exit(1)
     
     if not os.path.exists(pdf_path):
         print(f"ERROR: File not found: {pdf_path}", file=sys.stderr)
         sys.exit(1)
     
     try:
-        text = extract_text_from_pdf(pdf_path)
+        text = extract_text_from_pdf(pdf_path, start_page, end_page)
         
         # Output the extracted text to stdout
         print(text)
