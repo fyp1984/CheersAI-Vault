@@ -48,6 +48,8 @@ export interface PreviewResult {
   original_rows: string[][];
   masked_rows: string[][];
   headers: string[];
+  masked_file_stem: string;
+  masked_file_name: string;
   detected_entities?: RowEntities[];
   mapping?: MappingEntry[];
 }
@@ -64,6 +66,7 @@ export interface SavePreviewOptions {
   headers?: string[];
   passphrase?: string;
   mapping?: MappingEntry[];
+  masked_file_stem?: string;
   rule_ids?: string[];
   custom_rules?: CustomRule[];
   page_range?: [number, number]; // 页码范围 [起始页, 结束页]，从 1 开始

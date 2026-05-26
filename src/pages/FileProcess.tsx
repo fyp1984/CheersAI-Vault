@@ -263,7 +263,7 @@ export default function FileProcess() {
             page_range: file.pageRange,
           });
           return {
-            fileName: file.name,
+            fileName: preview.masked_file_name || file.name,
             preview,
           };
         })
@@ -323,6 +323,7 @@ export default function FileProcess() {
             headers: filePreview.preview.headers,
             passphrase: passphrase || undefined,
             mapping: filePreview.preview.mapping,
+            masked_file_stem: filePreview.preview.masked_file_stem,
             rule_ids: selectedRules,
             custom_rules: customRules.length > 0 ? customRules : undefined,
             page_range: file.pageRange,

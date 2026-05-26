@@ -4,6 +4,9 @@ use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
 use tokio::process::Command;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct OcrDownloadProgress {
     pub downloaded: u64,
@@ -51,7 +54,16 @@ fn find_system_python() -> Option<PathBuf> {
     let candidates = vec!["python3", "python"];
 
     for candidate in candidates {
-        if let Ok(output) = std::process::Command::new(candidate).arg("--version").output() {
+        let mut command = std::process::Command::new(candidate);
+        command.arg("--version");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        if let Ok(output) = command.output() {
             if output.status.success() {
                 return Some(PathBuf::from(candidate));
             }
@@ -84,9 +96,18 @@ pub(crate) fn resolve_ocr_runtime_from_env() -> Option<(PathBuf, PathBuf)> {
 }
 
 fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
-    std::process::Command::new(python_cmd)
+    let mut command = std::process::Command::new(python_cmd);
+    command
         .arg("-c")
-        .arg("import fitz; print('OK')")
+        .arg("import fitz; print('OK')");
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
         .output()
         .map(|output| output.status.success() && String::from_utf8_lossy(&output.stdout).contains("OK"))
         .unwrap_or(false)

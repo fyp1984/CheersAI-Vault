@@ -65,6 +65,7 @@ pub struct SavePreviewOptions {
     pub headers: Option<Vec<String>>,
     pub passphrase: Option<String>,
     pub mapping: Option<Vec<masking_engine::MappingEntry>>,
+    pub masked_file_stem: Option<String>,
     pub rule_ids: Option<Vec<String>>,
     pub custom_rules: Option<Vec<CustomRule>>,
     pub page_range: Option<(usize, usize)>, // 页码范围 (起始页, 结束页)，从 1 开始
@@ -113,8 +114,52 @@ pub struct PreviewResult {
     pub original_rows: Vec<Vec<String>>,
     pub masked_rows: Vec<Vec<String>>,
     pub headers: Vec<String>,
+    pub masked_file_stem: String,
+    pub masked_file_name: String,
     pub detected_entities: Option<Vec<ner::RowEntities>>,
     pub mapping: Option<Vec<masking_engine::MappingEntry>>,
+}
+
+fn output_extension_for_format(format: &file_parser::FileFormat) -> &'static str {
+    match format {
+        file_parser::FileFormat::Csv => "csv",
+        file_parser::FileFormat::Excel => "csv",
+        file_parser::FileFormat::Word => "docx",
+        file_parser::FileFormat::Pdf => "txt",
+        file_parser::FileFormat::Markdown => "md",
+        file_parser::FileFormat::Text => "txt",
+        _ => "txt",
+    }
+}
+
+fn build_masked_file_stem(
+    file_path: &str,
+    active_rules: &[masking_engine::MaskingRule],
+    ner_detector: &ner::NERDetector,
+    mapping: &mut std::collections::HashMap<String, masking_engine::MappingEntry>,
+    counter: &mut usize,
+    page_range: Option<(usize, usize)>,
+) -> String {
+    let original_file_name = std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文件");
+
+    let masked = masking_engine::mask_value_with_ner(
+        original_file_name,
+        active_rules,
+        ner_detector,
+        mapping,
+        counter,
+    );
+
+    let with_suffix = if let Some((start, end)) = page_range {
+        format!("{}_脱敏_p{}-{}", masked, start, end)
+    } else {
+        format!("{}_脱敏", masked)
+    };
+
+    sanitize_output_file_stem(&with_suffix)
 }
 
 #[tauri::command]
@@ -568,6 +613,21 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     } else {
         ner::NERDetector::new()
     };
+    let mut filename_mapping = std::collections::HashMap::new();
+    let mut filename_counter = 0usize;
+    let masked_file_stem = build_masked_file_stem(
+        &options.file_path,
+        &active_rules,
+        &ner_detector,
+        &mut filename_mapping,
+        &mut filename_counter,
+        options.page_range,
+    );
+    let masked_file_name = format!(
+        "{}.{}",
+        masked_file_stem,
+        output_extension_for_format(&format)
+    );
 
     match format {
         file_parser::FileFormat::Csv => {
@@ -575,8 +635,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map_err(|e| format!("Failed to parse CSV: {}", e))?;
 
             let preview_rows: Vec<_> = rows.into_iter().take(max_rows).collect();
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
 
             let masked_rows: Vec<Vec<String>> = preview_rows
                 .iter()
@@ -597,6 +657,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -606,8 +668,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map_err(|e| format!("Failed to parse Excel: {}", e))?;
 
             let preview_rows: Vec<_> = rows.into_iter().take(max_rows).collect();
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
 
             let masked_rows: Vec<Vec<String>> = preview_rows
                 .iter()
@@ -628,6 +690,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -642,8 +706,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
             
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
@@ -670,6 +734,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -684,8 +750,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
             
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
@@ -712,6 +778,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -727,8 +795,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .collect();
             
             
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
             
             // 批量检测所有行
             let batch_entities = ner_detector.detect_entities_batch(&lines);
@@ -765,6 +833,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -779,8 +849,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            let mut mapping = std::collections::HashMap::new();
-            let mut counter = 0usize;
+            let mut mapping = filename_mapping.clone();
+            let mut counter = filename_counter;
             
             // 对每行进行脱敏
             let masked_lines: Vec<String> = lines
@@ -807,6 +877,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                masked_file_stem: masked_file_stem.clone(),
+                masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
             })
@@ -827,9 +899,11 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("文件");
-    
-    // 对文件名进行脱敏处理（与 mask_file 函数保持一致）
-    let masked_file_name = if let Some(rule_ids) = &options.rule_ids {
+
+    // 优先使用预览阶段已经生成并清洗过的文件名，避免 macOS 保存前仍暴露原始文件名。
+    let masked_file_name = if let Some(preview_file_stem) = options.masked_file_stem.as_deref() {
+        preview_file_stem.to_string()
+    } else if let Some(rule_ids) = &options.rule_ids {
         // 1. 检查是否启用敏感词库
         let use_sensitive_terms = rule_ids.contains(&"use_sensitive_terms".to_string());
         let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
@@ -925,15 +999,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
     };
     let masked_file_name = sanitize_output_file_stem(&masked_file_name);
     
-    let extension = match format {
-        file_parser::FileFormat::Csv => "csv",
-        file_parser::FileFormat::Excel => "xlsx",
-        file_parser::FileFormat::Word => "docx",
-        file_parser::FileFormat::Pdf => "txt",  // PDF 保存为文本格式
-        file_parser::FileFormat::Markdown => "md",
-        file_parser::FileFormat::Text => "txt",
-        _ => "txt",
-    };
+    let extension = output_extension_for_format(&format);
     
     let output_path = format!("{}/{}.{}", options.output_dir, masked_file_name, extension);
     
