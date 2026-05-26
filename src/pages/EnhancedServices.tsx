@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen, Lightbulb, Bot } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Loader2, Package, Trash2, Brain, ExternalLink, FolderOpen, Lightbulb, Bot, Minimize2, Maximize2 } from 'lucide-react';
 import { tauriCommands } from '@/lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
@@ -45,6 +45,7 @@ export function EnhancedServices() {
   });
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showPathDialog, setShowPathDialog] = useState<'ocr' | 'aiModel' | null>(null);
+  const [ocrInstallProgressMode, setOcrInstallProgressMode] = useState<'dialog' | 'background' | null>(null);
   const [platformContext, setPlatformContext] = useState<PlatformContext | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -81,6 +82,8 @@ export function EnhancedServices() {
       : service === 'ocr'
         ? '选择 OCR 运行时目录'
         : '选择 Ollama 目录';
+  const ocrProgressValue = Math.max(0, Math.min(100, downloadProgress.ocr || 0));
+  const ocrProgressLabel = progressStatus.ocr || (isMac ? '正在准备 macOS OCR 运行时...' : '正在准备 OCR 运行时...');
 
   useEffect(() => {
     const unlistenPromises: Promise<() => void>[] = [];
@@ -299,6 +302,7 @@ export function EnhancedServices() {
   const handleConfirmInstallOcr = async () => {
     try {
       setShowPathDialog(null);
+      setOcrInstallProgressMode('dialog');
       setInstalling((prev) => ({ ...prev, ocr: true }));
       setMessage(null);
       setDownloadProgress((prev) => ({ ...prev, ocr: 0 }));
@@ -316,6 +320,8 @@ export function EnhancedServices() {
     } finally {
       setInstalling((prev) => ({ ...prev, ocr: false }));
       setDownloadProgress((prev) => ({ ...prev, ocr: 0 }));
+      setProgressStatus((prev) => ({ ...prev, ocr: '' }));
+      setOcrInstallProgressMode(null);
     }
   };
 
@@ -548,6 +554,40 @@ export function EnhancedServices() {
         </div>
       )}
 
+      {installing.ocr && ocrInstallProgressMode === 'background' && (
+        <div className="mb-6 rounded-lg border border-blue-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-[240px] flex-1 items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="font-medium text-gray-900">OCR 正在后台安装</span>
+                  <span className="shrink-0 text-gray-500">{ocrProgressValue > 0 ? `${ocrProgressValue.toFixed(1)}%` : '准备中'}</span>
+                </div>
+                <p className="mt-0.5 truncate text-xs text-gray-500">{ocrProgressLabel}</p>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    className={`h-full rounded-full bg-blue-600 transition-all duration-300 ${ocrProgressValue === 0 ? 'w-1/3 animate-pulse' : ''}`}
+                    style={ocrProgressValue > 0 ? { width: `${ocrProgressValue}%` } : undefined}
+                  />
+                </div>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setOcrInstallProgressMode('dialog')}
+              className="h-9"
+            >
+              <Maximize2 className="mr-1.5 h-4 w-4" />
+              查看详情
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* 服务卡片网格 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* OCR 服务卡片 */}
@@ -648,16 +688,16 @@ export function EnhancedServices() {
             </div>
 
             {/* 下载进度 */}
-            {installing.ocr && downloadProgress.ocr > 0 && (
+            {installing.ocr && (
               <div className="mt-4">
                 <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-                  <span className="truncate mr-2">{progressStatus.ocr || '下载进度'}</span>
-                  <span className="font-medium">{downloadProgress.ocr.toFixed(1)}%</span>
+                  <span className="truncate mr-2">{ocrProgressLabel}</span>
+                  <span className="font-medium">{ocrProgressValue > 0 ? `${ocrProgressValue.toFixed(1)}%` : '准备中'}</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                   <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${downloadProgress.ocr}%` }}
+                    className={`bg-blue-600 h-2 rounded-full transition-all duration-300 ${ocrProgressValue === 0 ? 'w-1/3 animate-pulse' : ''}`}
+                    style={ocrProgressValue > 0 ? { width: `${ocrProgressValue}%` } : undefined}
                   />
                 </div>
               </div>
@@ -933,6 +973,57 @@ export function EnhancedServices() {
             >
               <Download className="h-4 w-4 mr-2" />
               开始安装
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={ocrInstallProgressMode === 'dialog'}
+        onOpenChange={(open) => {
+          if (!open && installing.ocr) {
+            setOcrInstallProgressMode('background');
+          } else if (!open) {
+            setOcrInstallProgressMode(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>OCR 正在安装</DialogTitle>
+            <DialogDescription>
+              安装会继续在本地后台运行，收起弹窗不会中断任务。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <div className="flex items-start gap-3">
+                <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-blue-600" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-blue-950">{ocrProgressLabel}</span>
+                    <span className="shrink-0 text-blue-700">{ocrProgressValue > 0 ? `${ocrProgressValue.toFixed(1)}%` : '准备中'}</span>
+                  </div>
+                  <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white">
+                    <div
+                      className={`h-full rounded-full bg-blue-600 transition-all duration-300 ${ocrProgressValue === 0 ? 'w-1/3 animate-pulse' : ''}`}
+                      style={ocrProgressValue > 0 ? { width: `${ocrProgressValue}%` } : undefined}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              macOS 安装 PyMuPDF 时可能需要较长时间。你可以把它放到后台，页面上会继续显示进度。
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOcrInstallProgressMode('background')}>
+              <Minimize2 className="mr-2 h-4 w-4" />
+              后台安装
             </Button>
           </DialogFooter>
         </DialogContent>
