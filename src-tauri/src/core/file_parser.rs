@@ -136,8 +136,6 @@ pub fn parse_word(path: &str) -> Result<String> {
 // Word document parsing with page range support
 pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     use zip::ZipArchive;
-    use quick_xml::Reader;
-    use quick_xml::events::Event;
 
     // 检查文件是否存在
     if !std::path::Path::new(path).exists() {
@@ -155,6 +153,15 @@ pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> 
     
     let mut archive = ZipArchive::new(file)
         .with_context(|| format!("无法读取 DOCX 文件，可能文件已损坏或不是有效的 DOCX 格式: {}", path))?;
+
+    let app_page_count = match archive.by_name("docProps/app.xml") {
+        Ok(mut app_file) => {
+            let mut app_content = String::new();
+            app_file.read_to_string(&mut app_content).ok();
+            extract_docx_app_page_count(&app_content).ok().flatten()
+        }
+        Err(_) => None,
+    };
 
     // Try to read document.xml which contains the main content
     let mut content = String::new();
@@ -175,7 +182,46 @@ pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> 
 
     // 指定了页码范围，按分页符分割
     let (start_page, end_page) = page_range.unwrap();
-    extract_word_text_by_pages(&content, start_page, end_page)
+    extract_word_text_by_pages(&content, start_page, end_page, app_page_count)
+}
+
+fn extract_docx_app_page_count(xml_content: &str) -> Result<Option<usize>> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let mut reader = Reader::from_str(xml_content);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut in_pages = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                in_pages = e.name().as_ref() == b"Pages";
+            }
+            Ok(Event::Text(e)) if in_pages => {
+                if let Ok(txt) = e.unescape() {
+                    if let Ok(page_count) = txt.trim().parse::<usize>() {
+                        if page_count > 0 {
+                            return Ok(Some(page_count));
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"Pages" {
+                    in_pages = false;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(anyhow::anyhow!("XML 解析错误: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(None)
 }
 
 // 简单提取 Word 文本（不考虑分页）
@@ -210,8 +256,13 @@ fn extract_word_text_simple(xml_content: &str) -> Result<String> {
     Ok(text)
 }
 
-// 按分页符提取 Word 文本
-fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: usize) -> Result<String> {
+// 按分页符提取 Word 文本；没有显式分页符时，按 Word 保存的总页数近似分段。
+fn extract_word_text_by_pages(
+    xml_content: &str,
+    start_page: usize,
+    end_page: usize,
+    expected_page_count: Option<usize>,
+) -> Result<String> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
@@ -227,10 +278,9 @@ fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: us
     let mut reader = Reader::from_str(xml_content);
     reader.trim_text(true);
 
-    let mut pages: Vec<String> = vec![String::new()]; // 第一页
+    let mut pages: Vec<String> = Vec::new();
     let mut current_page_text = String::new();
     let mut buf = Vec::new();
-    let mut in_break = false;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -240,12 +290,23 @@ fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: us
                     for attr in e.attributes() {
                         if let Ok(attr) = attr {
                             if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
-                                in_break = true;
                                 // 保存当前页内容
-                                if !current_page_text.trim().is_empty() {
-                                    pages.push(current_page_text.clone());
-                                    current_page_text.clear();
-                                }
+                                pages.push(current_page_text.clone());
+                                current_page_text.clear();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                // Word often writes page breaks as a self-closing <w:br w:type="page"/>.
+                if e.name().as_ref() == b"w:br" {
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                pages.push(current_page_text.clone());
+                                current_page_text.clear();
                                 break;
                             }
                         }
@@ -253,21 +314,14 @@ fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: us
                 }
             }
             Ok(Event::Text(e)) => {
-                if !in_break {
-                    if let Ok(txt) = e.unescape() {
-                        current_page_text.push_str(&txt);
-                        current_page_text.push('\n');
-                    }
-                }
-            }
-            Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"w:br" {
-                    in_break = false;
+                if let Ok(txt) = e.unescape() {
+                    current_page_text.push_str(&txt);
+                    current_page_text.push('\n');
                 }
             }
             Ok(Event::Eof) => {
                 // 保存最后一页
-                if !current_page_text.trim().is_empty() {
+                if !current_page_text.is_empty() || pages.is_empty() {
                     pages.push(current_page_text);
                 }
                 break;
@@ -278,9 +332,18 @@ fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: us
         buf.clear();
     }
 
-    // 如果没有检测到分页符，将整个文档作为一页
-    if pages.len() == 1 && pages[0].is_empty() {
+    // 如果没有检测到任何正文，将整个文档作为一页再走一次全文提取兜底。
+    if pages.iter().all(|page| page.trim().is_empty()) {
         return extract_word_text_simple(xml_content);
+    }
+
+    if pages.len() == 1 {
+        if let Some(expected_pages) = expected_page_count {
+            if expected_pages > 1 {
+                let full_text = extract_word_text_simple(xml_content)?;
+                pages = split_text_into_estimated_pages(&full_text, expected_pages);
+            }
+        }
     }
 
     let total_pages = pages.len();
@@ -312,6 +375,27 @@ fn extract_word_text_by_pages(xml_content: &str, start_page: usize, end_page: us
     }
 
     Ok(result)
+}
+
+fn split_text_into_estimated_pages(text: &str, total_pages: usize) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    if total_pages <= 1 || lines.is_empty() {
+        return vec![text.to_string()];
+    }
+
+    let mut pages = Vec::with_capacity(total_pages);
+    for page_index in 0..total_pages {
+        let start = page_index * lines.len() / total_pages;
+        let end = (page_index + 1) * lines.len() / total_pages;
+        let page_text = if start < end {
+            lines[start..end].join("\n")
+        } else {
+            String::new()
+        };
+        pages.push(page_text);
+    }
+
+    pages
 }
 
 pub fn write_word(path: &str, content: &str) -> Result<()> {
@@ -591,6 +675,15 @@ pub fn get_page_count(path: &str) -> Result<usize> {
             let mut archive = ZipArchive::new(file)
                 .context("无法读取 DOCX 文件")?;
 
+            if let Ok(mut app_file) = archive.by_name("docProps/app.xml") {
+                let mut app_content = String::new();
+                if app_file.read_to_string(&mut app_content).is_ok() {
+                    if let Some(page_count) = extract_docx_app_page_count(&app_content)? {
+                        return Ok(page_count);
+                    }
+                }
+            }
+
             let mut content = String::new();
             match archive.by_name("word/document.xml") {
                 Ok(mut doc_file) => {
@@ -612,6 +705,18 @@ pub fn get_page_count(path: &str) -> Result<usize> {
             loop {
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Start(e)) => {
+                        if e.name().as_ref() == b"w:br" {
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                        page_count += 1;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::Empty(e)) => {
                         if e.name().as_ref() == b"w:br" {
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {

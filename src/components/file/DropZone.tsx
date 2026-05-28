@@ -111,7 +111,7 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
         支持 CSV、Excel、JSON、TXT、Word、PowerPoint、PDF、Markdown
       </p>
       <p className="mt-0.5 text-xs text-gray-400">
-        注：Word/PPT/PDF 将输出为 TXT 格式
+        注：脱敏结果统一保存为 Markdown（.md）格式
       </p>
     </div>
   );
