@@ -12,11 +12,15 @@ import {
   Upload,
   RotateCcw,
   Sparkles,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getBuildVersion, getAppVersion } from "@/lib/version";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+const HELP_WIKI_URL =
+  "https://dcnd0q32i5v3.feishu.cn/wiki/TVChw3onji9mVdkx96tcXsSYnlf?from=from_copylink";
 
 const navItems = [
   { to: "/cloud", icon: Cloud, label: "CheersAI", description: "访问云端AI服务" },
@@ -55,6 +59,16 @@ export function Sidebar() {
   useEffect(() => {
     setHoveredItem(null);
   }, [sidebarCollapsed]);
+
+  const handleOpenHelpWiki = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(HELP_WIKI_URL);
+    } catch (error) {
+      console.error("Failed to open help wiki:", error);
+      window.open(HELP_WIKI_URL, "_blank", "noopener,noreferrer");
+    }
+  };
 
   return (
     <aside
@@ -139,13 +153,24 @@ export function Sidebar() {
       {/* Footer */}
       <div className={cn("py-4", sidebarCollapsed ? "px-2" : "px-3")}>
         {!sidebarCollapsed && (
-          <div className="px-3 py-2 mb-3">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-              <div className="text-xs text-slate-400">系统状态</div>
+          <div className="px-3 py-2 mb-3 space-y-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                <div className="text-xs text-slate-400">系统状态</div>
+              </div>
+              <div className="text-xs text-slate-300">运行正常</div>
+              <div className="text-xs text-slate-500 mt-0.5">版本 {appVersion}</div>
             </div>
-            <div className="text-xs text-slate-300">运行正常</div>
-            <div className="text-xs text-slate-500 mt-0.5">版本 {appVersion}</div>
+            <button
+              type="button"
+              onClick={handleOpenHelpWiki}
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 text-xs font-medium text-slate-200 transition-all hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-white active:scale-95"
+              aria-label="打开使用文档"
+            >
+              <ExternalLink className="h-4 w-4" />
+              使用说明
+            </button>
           </div>
         )}
         
