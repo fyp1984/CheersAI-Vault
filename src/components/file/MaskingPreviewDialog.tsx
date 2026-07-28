@@ -125,9 +125,9 @@ export function MaskingPreviewDialog({
   
   console.log('MaskingPreviewDialog: Rendering preview', { fileName, preview });
 
-  // 计算脱敏数量
-  const maskedCount = preview.masked_rows.reduce((count, row, rowIndex) => {
-    return count + row.filter((cell, cellIndex) => 
+  // 共享核心仅为 TXT/Markdown 提供真实命中数；旧格式继续沿用变更单元格口径。
+  const maskedCount = preview.masked_entity_count ?? preview.masked_rows.reduce((count, row, rowIndex) => {
+    return count + row.filter((cell, cellIndex) =>
       cell !== preview.original_rows[rowIndex]?.[cellIndex]
     ).length;
   }, 0);

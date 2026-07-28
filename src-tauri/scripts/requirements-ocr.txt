@@ -1,0 +1,53 @@
+# OCR dependencies for pdf_ocr.py (scanned/image-only PDF text extraction).
+#
+# Consumed by the Runtime's OCR component (see docs/enterprise/deployment.md).
+# This is a plain pip requirements file, not a Cargo/Node dependency — it is
+# installed once by whoever deploys the enterprise Runtime, into a Python
+# virtual environment of their choosing, and never installed automatically
+# by the Runtime itself.
+#
+# Verified against: Python 3.13.3 (macOS, arm64), `pip freeze` in a fresh
+# venv created with `python3 -m venv venv && pip install PyMuPDF Pillow
+# easyocr`. Versions below are exactly what that install resolved to on
+# 2026-07-28 — see docs/enterprise/deployment.md for the verification
+# command and full pip freeze output.
+#
+# Direct dependencies actually imported by pdf_ocr.py / preflight checks:
+#   - PyMuPDF (module name: fitz) — PDF page rendering
+#   - Pillow (module name: PIL)   — image handling
+#   - easyocr                     — OCR engine (pulls in torch/torchvision)
+#
+# Everything else below is a transitive dependency pinned for reproducible
+# installs; pip will resolve them automatically from the three direct
+# dependencies above, this file only pins the exact verified versions.
+
+# --- direct ---
+pymupdf==1.28.0
+pillow==12.3.0
+easyocr==1.7.2
+
+# --- transitive (pinned for reproducibility; resolved automatically by pip) ---
+filelock==3.32.0
+fsspec==2026.6.0
+ImageIO==2.37.4
+Jinja2==3.1.6
+lazy-loader==0.5
+MarkupSafe==3.0.3
+mpmath==1.3.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.5.1
+opencv-python-headless==5.0.0.93
+packaging==26.2
+pyclipper==1.4.0
+python-bidi==0.6.11
+PyYAML==6.0.3
+scikit-image==0.26.0
+scipy==1.18.0
+setuptools==83.0.0
+shapely==2.1.2
+sympy==1.14.0
+tifffile==2026.7.14
+torch==2.13.0
+torchvision==0.28.0
+typing_extensions==4.16.0

@@ -327,6 +327,8 @@ export default function FileProcess() {
             rule_ids: selectedRules,
             custom_rules: customRules.length > 0 ? customRules : undefined,
             page_range: file.pageRange,
+            masked_entity_count: filePreview.preview.masked_entity_count,
+            masked_markdown: filePreview.preview.masked_markdown,
           });
           
           updateFile(file.id, { status: "completed" });

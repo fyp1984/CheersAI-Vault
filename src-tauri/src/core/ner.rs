@@ -43,10 +43,14 @@ impl NERDetector {
             Regex::new(r"\b[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b").unwrap()
         ));
         
-        // 手机号（11位，1开头）
+        // 手机号（11位，1开头）。注意：不使用 \b —— `regex` crate 的 \b 是
+        // Unicode word boundary，中文字符本身也算 word 字符，导致紧邻中文
+        // 文本（如"是13812345678"）时边界不成立、无法匹配。改为匹配后在
+        // detect_with_regex() 中手动校验前后一位（若存在）是否为 ASCII
+        // 数字，以避免从更长的纯数字串（如银行卡号）内部截取子串。
         patterns.push((
             "手机号".to_string(),
-            Regex::new(r"\b1[3-9]\d{9}\b").unwrap()
+            Regex::new(r"1[3-9]\d{9}").unwrap()
         ));
         
         // 邮箱地址
@@ -169,9 +173,24 @@ impl NERDetector {
     /// 方法1：正则表达式检测
     fn detect_with_regex(&self, text: &str) -> Vec<EntityMatch> {
         let mut entities = Vec::new();
-        
+        let bytes = text.as_bytes();
+
         for (entity_type, pattern) in &self.patterns {
             for mat in pattern.find_iter(text) {
+                if entity_type == "手机号" {
+                    // 手机号正则本身不含 \b（见上方定义处的说明），这里手动
+                    // 校验匹配前后一位字节：只要有一侧仍是 ASCII 数字，说明
+                    // 这段号码只是更长数字串（例如银行卡号）的内部子串，不
+                    // 是独立手机号，跳过。中文字符、中文/英文标点、字符串
+                    // 起止位置都不是 ASCII 数字，不受影响。
+                    let before_is_digit = mat.start() > 0
+                        && bytes[mat.start() - 1].is_ascii_digit();
+                    let after_is_digit = mat.end() < bytes.len()
+                        && bytes[mat.end()].is_ascii_digit();
+                    if before_is_digit || after_is_digit {
+                        continue;
+                    }
+                }
                 entities.push(EntityMatch {
                     text: mat.as_str().to_string(),
                     entity_type: entity_type.clone(),
@@ -182,7 +201,7 @@ impl NERDetector {
                 });
             }
         }
-        
+
         entities
     }
     
@@ -614,12 +633,111 @@ mod tests {
         let detector = NERDetector::new();
         let text = "我的手机号是13812345678";
         let entities = detector.detect_entities(text);
-        
+
         assert!(!entities.is_empty());
         assert_eq!(entities[0].entity_type, "手机号");
         assert_eq!(entities[0].text, "13812345678");
+
+        // start/end 必须只覆盖号码本身的 UTF-8 byte 范围。
+        let expected_start = text.find("13812345678").unwrap();
+        let expected_end = expected_start + "13812345678".len();
+        assert_eq!(entities[0].start, expected_start);
+        assert_eq!(entities[0].end, expected_end);
     }
-    
+
+    /// 手机号正则不含 \b 后手动做的数字边界校验：正例（整行/行首行尾/中文
+    /// 与中文标点紧邻）都必须精确识别，且 start/end 只覆盖号码本身。
+    #[test]
+    fn test_detect_phone_positive_boundaries() {
+        let detector = NERDetector::new();
+        let phone = "13812345678";
+
+        let cases: Vec<&str> = vec![
+            "13812345678",              // 整行号码，无前后缀
+            "13812345678\n备注信息",     // 行首（同时也是字符串起始）
+            "备注信息\n13812345678",     // 行尾（同时也是字符串结束）
+            "我的手机号是13812345678",    // 中文字符紧邻号码前侧
+            "电话：13812345678，备用",   // 中文标点紧邻号码两侧
+        ];
+
+        for text in cases {
+            let entities = detector.detect_entities(text);
+            let phone_matches: Vec<&EntityMatch> = entities
+                .iter()
+                .filter(|e| e.entity_type == "手机号")
+                .collect();
+
+            assert_eq!(
+                phone_matches.len(),
+                1,
+                "文本 {:?} 应恰好识别出 1 个手机号，实际: {:?}",
+                text,
+                phone_matches
+            );
+
+            let m = phone_matches[0];
+            let expected_start = text.find(phone).unwrap();
+            let expected_end = expected_start + phone.len();
+
+            assert_eq!(m.text, phone, "文本 {:?} 识别到的号码内容不对", text);
+            assert_eq!(m.start, expected_start, "文本 {:?} 的 start 不精确", text);
+            assert_eq!(m.end, expected_end, "文本 {:?} 的 end 不精确", text);
+        }
+    }
+
+    /// 负例：号码前后仍是 ASCII 数字（更长数字串的内部子串）、以及嵌在
+    /// 16~19 位银行卡号内部的手机号形状片段，都不应被识别为手机号。
+    #[test]
+    fn test_detect_phone_negative_longer_digit_runs() {
+        let detector = NERDetector::new();
+
+        let no_phone_cases: Vec<&str> = vec![
+            "913812345678",       // 号码前多一位数字
+            "138123456789",       // 号码后多一位数字
+            "0013812345678",      // 号码前多两位数字
+            "62220213812345678",  // 17 位数字，形如银行卡号，内部含号码形状片段
+        ];
+
+        for text in no_phone_cases {
+            let entities = detector.detect_entities(text);
+            let phone_matches: Vec<&EntityMatch> = entities
+                .iter()
+                .filter(|e| e.entity_type == "手机号")
+                .collect();
+            assert!(
+                phone_matches.is_empty(),
+                "文本 {:?} 不应识别出手机号，实际: {:?}",
+                text,
+                phone_matches
+            );
+        }
+    }
+
+    /// 负例：非法号段（第二位不在 3-9 范围内）不应被识别为手机号。
+    #[test]
+    fn test_detect_phone_negative_invalid_segment() {
+        let detector = NERDetector::new();
+
+        let no_phone_cases: Vec<&str> = vec![
+            "12",              // 长度不足，且号段本身非法
+            "12345678901",     // 11 位数字但第二位是 2，非法号段
+        ];
+
+        for text in no_phone_cases {
+            let entities = detector.detect_entities(text);
+            let phone_matches: Vec<&EntityMatch> = entities
+                .iter()
+                .filter(|e| e.entity_type == "手机号")
+                .collect();
+            assert!(
+                phone_matches.is_empty(),
+                "文本 {:?} 不应识别出手机号，实际: {:?}",
+                text,
+                phone_matches
+            );
+        }
+    }
+
     #[test]
     fn test_detect_email() {
         let detector = NERDetector::new();

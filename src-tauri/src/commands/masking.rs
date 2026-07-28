@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::core::{masking_engine, file_parser, ner, crypto, database};
+use engine_core::{DeterministicFinding, MaskingSession};
 use uuid::Uuid;
 
 /// 获取文件的总页数
@@ -69,6 +70,8 @@ pub struct SavePreviewOptions {
     pub rule_ids: Option<Vec<String>>,
     pub custom_rules: Option<Vec<CustomRule>>,
     pub page_range: Option<(usize, usize)>, // 页码范围 (起始页, 结束页)，从 1 开始
+    pub masked_entity_count: Option<usize>,
+    pub masked_markdown: Option<String>,
 }
 
 fn sanitize_output_file_stem(file_stem: &str) -> String {
@@ -118,6 +121,46 @@ pub struct PreviewResult {
     pub masked_file_name: String,
     pub detected_entities: Option<Vec<ner::RowEntities>>,
     pub mapping: Option<Vec<masking_engine::MappingEntry>>,
+    pub masked_entity_count: Option<usize>,
+    pub masked_markdown: Option<String>,
+}
+
+fn deterministic_findings(detector: &ner::NERDetector, content: &str) -> Vec<DeterministicFinding> {
+    detector
+        .detect_entities(content)
+        .into_iter()
+        .map(|entity| DeterministicFinding {
+            text: entity.text,
+            entity_type: entity.entity_type,
+            start: entity.start,
+            end: entity.end,
+        })
+        .collect()
+}
+
+fn sorted_mappings(
+    mapping: &std::collections::HashMap<String, masking_engine::MappingEntry>,
+) -> Vec<masking_engine::MappingEntry> {
+    let mut entries: Vec<_> = mapping.values().cloned().collect();
+    entries.sort_by(|left, right| left.masked.cmp(&right.masked));
+    entries
+}
+
+fn mask_text_through_shared_core(
+    content: &str,
+    rules: &[masking_engine::MaskingRule],
+    detector: &ner::NERDetector,
+    initial_mappings: Vec<masking_engine::MappingEntry>,
+    placeholder_counter: usize,
+) -> engine_core::MaskingResult {
+    let findings = deterministic_findings(detector, content);
+    let mut session = MaskingSession::with_state(
+        rules.to_vec(),
+        initial_mappings,
+        placeholder_counter,
+    );
+    let markdown = session.mask_document(content, &findings);
+    session.finish(markdown)
 }
 
 fn output_extension_for_format(_format: &file_parser::FileFormat) -> &'static str {
@@ -189,6 +232,81 @@ fn rows_to_markdown(headers: Option<&[String]>, rows: &[Vec<String>]) -> String 
     content
 }
 
+fn preview_content_for_save(
+    format: &file_parser::FileFormat,
+    masked_markdown: Option<&str>,
+    headers: Option<&[String]>,
+    masked_rows: &[Vec<String>],
+) -> Result<String, String> {
+    if matches!(
+        format,
+        file_parser::FileFormat::Text
+            | file_parser::FileFormat::Markdown
+            | file_parser::FileFormat::Word
+            | file_parser::FileFormat::Pdf
+    ) {
+        return masked_markdown
+            .map(str::to_owned)
+            .ok_or_else(|| "预览缺少共享核心完整 Markdown，拒绝保存".to_string());
+    }
+
+    Ok(rows_to_markdown(headers, masked_rows))
+}
+
+#[cfg(test)]
+mod preview_save_content_tests {
+    use super::*;
+
+    #[test]
+    fn text_and_markdown_preserve_canonical_line_endings_exactly() {
+        let cases = [
+            (file_parser::FileFormat::Text, "alpha", "no trailing newline"),
+            (file_parser::FileFormat::Text, "alpha\n", "one trailing newline"),
+            (file_parser::FileFormat::Text, "alpha\n\n", "two trailing newlines"),
+            (file_parser::FileFormat::Markdown, "# alpha\n\n\n", "multiple trailing newlines"),
+            (file_parser::FileFormat::Markdown, "# alpha\r\nline\r\n", "CRLF content"),
+        ];
+        let rows = vec![vec!["reconstructed".to_string()]];
+
+        for (format, canonical, label) in cases {
+            let actual = preview_content_for_save(&format, Some(canonical), None, &rows).unwrap();
+            assert_eq!(actual.as_bytes(), canonical.as_bytes(), "{label}");
+        }
+    }
+
+    #[test]
+    fn shared_core_formats_require_canonical_markdown() {
+        let rows = vec![vec!["must not be used".to_string()]];
+
+        for format in [
+            file_parser::FileFormat::Text,
+            file_parser::FileFormat::Markdown,
+            file_parser::FileFormat::Word,
+            file_parser::FileFormat::Pdf,
+        ] {
+            let error = preview_content_for_save(&format, None, None, &rows).unwrap_err();
+            assert_eq!(error, "预览缺少共享核心完整 Markdown，拒绝保存");
+        }
+    }
+
+    #[test]
+    fn non_text_formats_keep_rows_to_markdown_behavior() {
+        let headers = vec!["列".to_string()];
+        let rows = vec![vec!["alpha".to_string()], vec!["beta".to_string()]];
+
+        let actual = preview_content_for_save(
+            &file_parser::FileFormat::Csv,
+            Some("must not be used"),
+            Some(&headers),
+            &rows,
+        )
+        .unwrap();
+
+        assert_eq!(actual, rows_to_markdown(Some(&headers), &rows));
+        assert_eq!(actual, "alpha\nbeta\n");
+    }
+}
+
 fn build_masked_file_stem(
     file_path: &str,
     active_rules: &[masking_engine::MaskingRule],
@@ -228,6 +346,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
     
     let mut mapping = std::collections::HashMap::new();
     let mut counter = 0usize;
+    let mut shared_masked_entity_count = None;
     
     // 1. 检查是否启用敏感词库
     let use_sensitive_terms = options.rule_ids.contains(&"use_sensitive_terms".to_string());
@@ -480,7 +599,19 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to parse Word: {}", e)
                 })?;
 
-            let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&mapping),
+                counter,
+            );
+            let masked_content = core_result.markdown;
+            shared_masked_entity_count = Some(core_result.masked_entity_count);
+            mapping.clear();
+            for (index, entry) in core_result.mappings.into_iter().enumerate() {
+                mapping.insert(format!("{}-{}", entry.rule_id, index + 1), entry);
+            }
 
             file_parser::write_markdown(&final_output_path, &masked_content)
                 .map_err(|e| {
@@ -529,31 +660,19 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to parse PDF: {}", e)
                 })?;
 
-            // 按行分割
-            let lines: Vec<String> = content.lines()
-                .map(|s| s.to_string())
-                .collect();
-            
-            
-            // 批量检测所有行
-            let batch_entities = ner_detector.detect_entities_batch(&lines);
-            
-            // 对每行应用脱敏
-            let masked_lines: Vec<String> = lines
-                .iter()
-                .zip(batch_entities.iter())
-                .map(|(line, entities)| {
-                    if entities.is_empty() {
-                        // 没有检测到实体，使用正则表达式脱敏
-                        masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter)
-                    } else {
-                        // 有检测到实体，应用实体脱敏
-                        masking_engine::apply_entities_to_text(line, entities, &mut mapping, &mut counter)
-                    }
-                })
-                .collect();
-            
-            let masked_content = masked_lines.join("\n");
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&mapping),
+                counter,
+            );
+            let masked_content = core_result.markdown;
+            shared_masked_entity_count = Some(core_result.masked_entity_count);
+            mapping.clear();
+            for (index, entry) in core_result.mappings.into_iter().enumerate() {
+                mapping.insert(format!("{}-{}", entry.rule_id, index + 1), entry);
+            }
             
             file_parser::write_markdown(&final_output_path, &masked_content)
                 .map_err(|e| {
@@ -577,7 +696,19 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
                     format!("Failed to read file: {}", e)
                 })?;
 
-            let masked_content = masking_engine::mask_value_with_ner(&content, &active_rules, &ner_detector, &mut mapping, &mut counter);
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&mapping),
+                counter,
+            );
+            let masked_content = core_result.markdown;
+            shared_masked_entity_count = Some(core_result.masked_entity_count);
+            mapping.clear();
+            for (index, entry) in core_result.mappings.into_iter().enumerate() {
+                mapping.insert(format!("{}-{}", entry.rule_id, index + 1), entry);
+            }
 
             file_parser::write_markdown(&final_output_path, &masked_content)
                 .map_err(|e| {
@@ -610,7 +741,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         file_size: std::fs::metadata(&options.file_path)
             .map(|m| m.len() as i64)
             .unwrap_or(0),
-        masked_count: counter as i32,
+        masked_count: shared_masked_entity_count.unwrap_or(counter) as i32,
         processing_time_ms,
         status: "success".to_string(),
         error_message: None,
@@ -624,7 +755,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
 
     Ok(MaskResult {
         output_path: final_output_path,
-        masked_count: counter,
+        masked_count: shared_masked_entity_count.unwrap_or(counter),
         mapping_path,
     })
 }
@@ -759,6 +890,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: None,
+                masked_markdown: None,
             })
         }
         file_parser::FileFormat::Excel => {
@@ -792,6 +925,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: None,
+                masked_markdown: None,
             })
         }
         file_parser::FileFormat::Word => {
@@ -804,14 +939,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            let mut mapping = filename_mapping.clone();
-            let mut counter = filename_counter;
-            
-            // 对每行进行脱敏
-            let masked_lines: Vec<String> = lines
-                .iter()
-                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
-                .collect();
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&filename_mapping),
+                filename_counter,
+            );
+            let masked_markdown = core_result.markdown;
+            let masked_lines: Vec<String> = masked_markdown.lines().map(str::to_string).collect();
             
             // 将文本行转换为表格格式（单列）
             let original_rows: Vec<Vec<String>> = lines.iter()
@@ -826,7 +962,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
             // 转换映射为 MappingEntry 向量
-            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            let mapping_entries = core_result.mappings;
             
             Ok(PreviewResult {
                 original_rows,
@@ -836,6 +972,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: Some(core_result.masked_entity_count),
+                masked_markdown: Some(masked_markdown),
             })
         }
         file_parser::FileFormat::PowerPoint => {
@@ -880,6 +1018,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: None,
+                masked_markdown: None,
             })
         }
         file_parser::FileFormat::Pdf => {
@@ -893,24 +1033,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .collect();
             
             
-            let mut mapping = filename_mapping.clone();
-            let mut counter = filename_counter;
-            
-            // 批量检测所有行
-            let batch_entities = ner_detector.detect_entities_batch(&lines);
-            
-            // 对每行应用脱敏
-            let masked_lines: Vec<String> = lines
-                .iter()
-                .zip(batch_entities.iter())
-                .map(|(line, entities)| {
-                    if entities.is_empty() {
-                        masking_engine::mask_value(line, &active_rules, &mut mapping, &mut counter)
-                    } else {
-                        masking_engine::apply_entities_to_text(line, entities, &mut mapping, &mut counter)
-                    }
-                })
-                .collect();
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&filename_mapping),
+                filename_counter,
+            );
+            let masked_markdown = core_result.markdown;
+            let masked_lines: Vec<String> = masked_markdown.lines().map(str::to_string).collect();
             
             // 将文本行转换为表格格式（单列）
             let original_rows: Vec<Vec<String>> = lines.iter()
@@ -925,7 +1056,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
             // 转换映射为 MappingEntry 向量
-            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            let mapping_entries = core_result.mappings;
             
             Ok(PreviewResult {
                 original_rows,
@@ -935,6 +1066,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: Some(core_result.masked_entity_count),
+                masked_markdown: Some(masked_markdown),
             })
         }
         file_parser::FileFormat::Markdown | file_parser::FileFormat::Text => {
@@ -947,14 +1080,15 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 .map(|s| s.to_string())
                 .collect();
             
-            let mut mapping = filename_mapping.clone();
-            let mut counter = filename_counter;
-            
-            // 对每行进行脱敏
-            let masked_lines: Vec<String> = lines
-                .iter()
-                .map(|line| masking_engine::mask_value_with_ner(line, &active_rules, &ner_detector, &mut mapping, &mut counter))
-                .collect();
+            let core_result = mask_text_through_shared_core(
+                &content,
+                &active_rules,
+                &ner_detector,
+                sorted_mappings(&filename_mapping),
+                filename_counter,
+            );
+            let masked_markdown = core_result.markdown;
+            let masked_lines: Vec<String> = masked_markdown.lines().map(str::to_string).collect();
             
             // 将文本行转换为表格格式（单列）
             let original_rows: Vec<Vec<String>> = lines.iter()
@@ -969,7 +1103,7 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
             let detected_entities = Some(ner_detector.detect_in_rows(&original_rows));
             
             // 转换映射为 MappingEntry 向量
-            let mapping_entries: Vec<masking_engine::MappingEntry> = mapping.values().cloned().collect();
+            let mapping_entries = core_result.mappings;
             
             Ok(PreviewResult {
                 original_rows,
@@ -979,9 +1113,49 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
                 mapping: Some(mapping_entries),
+                masked_entity_count: Some(core_result.masked_entity_count),
+                masked_markdown: Some(masked_markdown),
             })
         }
         _ => Err("预览功能目前支持 CSV、Excel、Word、PowerPoint、PDF、Markdown 和 TXT 文件".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod shared_core_adapter_tests {
+    use super::*;
+    use engine_core::{InputFormat, MaskingRequest, MaskingService};
+
+    #[test]
+    fn text_adapter_matches_direct_shared_core() {
+        let rules: Vec<_> = masking_engine::get_builtin_rules()
+            .iter()
+            .filter(|rule| ["phone", "email"].contains(&rule.id.as_str()))
+            .cloned()
+            .map(|mut rule| {
+                rule.enabled = true;
+                rule
+            })
+            .collect();
+        let content = "13900000000 unit.test@example.invalid 13900000000";
+        let direct = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: content.into(),
+            rules: rules.clone(),
+            deterministic_findings: vec![],
+        })
+        .unwrap();
+        let adapter = mask_text_through_shared_core(
+            content,
+            &rules,
+            &ner::NERDetector::new(),
+            vec![],
+            0,
+        );
+
+        assert_eq!(adapter.markdown, direct.markdown);
+        assert_eq!(adapter.mappings, direct.mappings);
+        assert_eq!(adapter.masked_entity_count, direct.masked_entity_count);
     }
 }
 
@@ -989,6 +1163,11 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
 
 #[tauri::command]
 pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResult, String> {
+    // 共享核心格式传入真实命中数；旧格式保持按变更行数记录的口径。
+    let masked_count = options
+        .masked_entity_count
+        .unwrap_or(options.masked_rows.len());
+
     // 开始计时
     let start_time = std::time::Instant::now();
     
@@ -1114,7 +1293,12 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         return Err(format!("Unsupported format for save_preview_result: {:?}", format));
     }
 
-    let content = rows_to_markdown(options.headers.as_deref(), &options.masked_rows);
+    let content = preview_content_for_save(
+        &format,
+        options.masked_markdown.as_deref(),
+        options.headers.as_deref(),
+        &options.masked_rows,
+    )?;
     std::fs::write(&output_path, content)
         .map_err(|e| format_output_create_error(&output_path, e))?;
     
@@ -1140,7 +1324,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         file_size: std::fs::metadata(&options.file_path)
             .map(|m| m.len() as i64)
             .unwrap_or(0),
-        masked_count: options.masked_rows.len() as i32,
+        masked_count: masked_count as i32,
         processing_time_ms,
         status: "success".to_string(),
         error_message: None,
@@ -1154,7 +1338,7 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
     
     Ok(MaskResult {
         output_path,
-        masked_count: options.masked_rows.len(),
+        masked_count,
         mapping_path: Some(mapping_path),
     })
 }
