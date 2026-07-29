@@ -1,189 +1,413 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PDF text extraction helper based on PyMuPDF.
-Used as the lightweight cross-platform fallback runtime for Vault.
+Structured PDF text extraction + OCR.
+
+Outputs a JSON document (schema version "1.0") to stdout.
+Stderr is used for progress / diagnostic messages only.
+
+CLI arguments:
+  <pdf_path>                  Input PDF path (required).
+  --start-page N              1-indexed first page (optional).
+  --end-page N                1-indexed last page (optional).
+  --model-dir DIR             EasyOCR model storage directory (optional).
+  --max-pages N               Max pages to process (default 200).
+  --max-pixels-per-page N     Max pixels per page at given DPI (default 12_000_000;
+                               kept in sync with component-runtime's
+                               OcrConfig::default() so a standard Letter/A4/Legal
+                               full-page scan at 300 DPI is not rejected).
+  --max-total-pixels N        Max total pixels across all selected pages.
+  --dpi N                     Rendering DPI (default 300).
+
+Exit codes:
+  0 = success (JSON on stdout is valid)
+  1 = input error (file not found, limit exceeded, page range invalid)
+  2 = dependency error (PyMuPDF not installed)
+  3 = OCR dependency error (EasyOCR/PIL not installed, model missing, download blocked)
+  4 = OCR processing error (timeout, internal failure)
+
+Output JSON schema: see docstring in component-runtime/src/lib.rs.
 """
 
-import sys
+import argparse
+import json
+import math
 import os
-try:
-    import fitz  # PyMuPDF
-except ImportError as e:
-    print(f"ERROR: Missing required Python package: {e}", file=sys.stderr)
-    print("Please install required packages:", file=sys.stderr)
-    print("  pip install PyMuPDF", file=sys.stderr)
-    sys.exit(1)
+import sys
 
-def extract_text_from_pdf(pdf_path, start_page=None, end_page=None):
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
+def emit_error(exit_code, message):
+    """Output an empty result with the error field and exit with code."""
+    result = {
+        "schema_version": "1.0",
+        "pages": [],
+        "quality": {
+            "total_pages": 0,
+            "empty_pages": 0,
+            "failed_pages": 0,
+            "avg_confidence": 0.0,
+        },
+    }
+    print(json.dumps(result, ensure_ascii=False))
+    sys.exit(exit_code)
+
+
+# ---------------------------------------------------------------------------
+# Shared Reader builder (R2) — used by both self-test and OCR
+# ---------------------------------------------------------------------------
+
+def _build_reader(model_dir, download_enabled=False):
+    """Build an EasyOCR Reader with explicit model directory and no download.
+
+    Raises RuntimeError if Reader cannot be initialised offline.
     """
-    Extract text from PDF using PyMuPDF
-    
-    Args:
-        pdf_path: Path to the PDF file
-        start_page: Starting page number (1-indexed, inclusive), None for all pages
-        end_page: Ending page number (1-indexed, inclusive), None for all pages
-        
-    Returns:
-        Extracted text as string
+    import easyocr
+    kwargs = {
+        "lang_list": ["ch_sim", "en"],
+        "gpu": False,
+        "verbose": False,
+        "download_enabled": download_enabled,
+    }
+    if model_dir:
+        kwargs["model_storage_directory"] = model_dir
+    return easyocr.Reader(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# PyMuPDF text extraction (text-layer PDFs)
+# ---------------------------------------------------------------------------
+
+def extract_text_pymupdf(doc, start_idx, end_idx):
+    """Extract structured blocks from a text-layer PDF.
+
+    Returns (pages, quality).  Every text block gets confidence=1.0,
+    language="und".
     """
+    import fitz
+
+    pages = []
+    total_confidence = 0.0
+    confidence_count = 0
+    empty_pages = 0
+    failed_pages = 0
+
+    for page_num in range(start_idx, end_idx):
+        page = doc[page_num]
+        rect = page.rect
+        width = rect.width
+        height = rect.height
+
+        try:
+            page_dict = page.get_text("dict")
+            blocks = []
+            for block in page_dict.get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                lines_text = []
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "").strip()
+                        if text:
+                            lines_text.append(text)
+                if not lines_text:
+                    continue
+                full_text = " ".join(lines_text)
+                bbox_raw = block.get("bbox", [0, 0, 0, 0])
+                blocks.append({
+                    "text": full_text,
+                    "bbox": bbox_raw[:4],
+                    "confidence": 1.0,
+                    "language": "und",
+                })
+                total_confidence += 1.0
+                confidence_count += 1
+        except Exception as exc:
+            eprint(f"Page {page_num + 1} text extraction failed: {exc}")
+            failed_pages += 1
+            blocks = []
+
+        if not blocks:
+            empty_pages += 1
+
+        pages.append({
+            "page_number": page_num + 1,
+            "width": width,
+            "height": height,
+            "blocks": blocks,
+        })
+
+    quality = {
+        "total_pages": end_idx - start_idx,
+        "empty_pages": empty_pages,
+        "failed_pages": failed_pages,
+        "avg_confidence": round(total_confidence / max(confidence_count, 1), 4),
+    }
+    return pages, quality
+
+
+# ---------------------------------------------------------------------------
+# EasyOCR (scanned PDFs)
+# ---------------------------------------------------------------------------
+
+def ocr_page_easyocr(reader, page, page_num, dpi):
+    """OCR a single page with EasyOCR, returning blocks list."""
+    from PIL import Image
+    from io import BytesIO
+    import numpy as np
+    import fitz
+
+    zoom = dpi / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat)
+    img_data = pix.tobytes("png")
+    img = Image.open(BytesIO(img_data))
+    img_array = np.array(img)
+
+    results = reader.readtext(img_array)
+    blocks = []
+    for detection in results:
+        bbox_pts = detection[0]
+        text = detection[1]
+        confidence = detection[2]
+        if not text.strip():
+            continue
+        xs = [p[0] / zoom for p in bbox_pts]
+        ys = [p[1] / zoom for p in bbox_pts]
+        pdf_bbox = [min(xs), min(ys), max(xs), max(ys)]
+        blocks.append({
+            "text": text.strip(),
+            "bbox": pdf_bbox,
+            "confidence": round(float(confidence), 4),
+            "language": "und",
+        })
+    return blocks
+
+
+def ocr_with_easyocr(doc, start_idx, end_idx, model_dir, dpi):
+    """Run EasyOCR on a range of pages.
+
+    Returns (pages, quality).
+    """
+    eprint("Initializing EasyOCR (model dir: {})".format(model_dir or "default"))
+
     try:
-        # 打开 PDF
-        print(f"Opening PDF: {pdf_path}", file=sys.stderr)
-        doc = fitz.open(pdf_path)
-        total_pages = len(doc)
-        print(f"PDF has {total_pages} pages", file=sys.stderr)
+        reader = _build_reader(model_dir, download_enabled=False)
+    except Exception as exc:
+        raise RuntimeError(f"EasyOCR offline init failed: {exc}")
 
-        # 确定页码范围
-        if start_page is not None and end_page is not None:
-            # 转换为 0-indexed
-            start_idx = max(0, start_page - 1)
-            end_idx = min(total_pages, end_page)
-            print(f"Extracting pages {start_page}-{end_page} (indices {start_idx}-{end_idx-1})", file=sys.stderr)
-        else:
-            start_idx = 0
-            end_idx = total_pages
-            print(f"Extracting all pages", file=sys.stderr)
+    pages = []
+    total_confidence = 0.0
+    confidence_count = 0
+    empty_pages = 0
+    failed_pages = 0
 
-        all_text = []
+    for page_num in range(start_idx, end_idx):
+        page = doc[page_num]
+        rect = page.rect
+        width = rect.width
+        height = rect.height
+        eprint(f"OCR page {page_num + 1}/{doc.page_count}...")
+        try:
+            blocks = ocr_page_easyocr(reader, page, page_num, dpi)
+        except Exception as exc:
+            eprint(f"Page {page_num + 1} OCR failed: {exc}")
+            failed_pages += 1
+            blocks = []
 
-        # 处理指定范围的页面
-        for page_num in range(start_idx, end_idx):
-            print(f"Processing page {page_num + 1}/{total_pages}...", file=sys.stderr)
-            page = doc[page_num]
+        for block in blocks:
+            total_confidence += block["confidence"]
+            confidence_count += 1
+        if not blocks:
+            empty_pages += 1
 
-            page_text = page.get_text("text").strip()
-            all_text.append(page_text)
+        pages.append({
+            "page_number": page_num + 1,
+            "width": width,
+            "height": height,
+            "blocks": blocks,
+        })
 
-            print(f"Page {page_num + 1} extracted {len(page_text)} characters", file=sys.stderr)
+    quality = {
+        "total_pages": end_idx - start_idx,
+        "empty_pages": empty_pages,
+        "failed_pages": failed_pages,
+        "avg_confidence": round(total_confidence / max(confidence_count, 1), 4),
+    }
+    return pages, quality
 
-        doc.close()
 
-        # 合并所有页面
-        final_text = '\n\n'.join([text for text in all_text if text])
-        print(f"Total extracted: {len(final_text)} characters", file=sys.stderr)
+# ---------------------------------------------------------------------------
+# Limit checking (R3)
+# ---------------------------------------------------------------------------
 
-        if not final_text.strip():
-            # 检测到扫描版 PDF，尝试使用 EasyOCR
-            print("=" * 60, file=sys.stderr)
-            print("⚠ 检测到图片型 PDF（扫描版），启动 OCR 识别...", file=sys.stderr)
-            print("=" * 60, file=sys.stderr)
-            
-            try:
-                import easyocr
-                import numpy as np
-                from PIL import Image
-                from io import BytesIO
-                
-                print("正在初始化 EasyOCR（首次使用会下载模型，约 50MB）...", file=sys.stderr)
-                # 初始化 EasyOCR（支持中英文）
-                reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
-                
-                # 重新打开 PDF 进行 OCR
-                doc = fitz.open(pdf_path)
-                ocr_texts = []
-                
-                for page_num in range(start_idx, end_idx):
-                    print(f"OCR 识别第 {page_num + 1}/{total_pages} 页...", file=sys.stderr)
-                    page = doc[page_num]
-                    
-                    # 将 PDF 页面转换为图片
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x 缩放提高质量
-                    img_data = pix.tobytes("png")
-                    
-                    # 转换为 PIL Image
-                    img = Image.open(BytesIO(img_data))
-                    img_array = np.array(img)
-                    
-                    # 使用 EasyOCR 识别
-                    result = reader.readtext(img_array)
-                    
-                    # 提取文本
-                    page_text = []
-                    for detection in result:
-                        # detection 格式: (bbox, text, confidence)
-                        text = detection[1]
-                        page_text.append(text)
-                    
-                    page_ocr_text = '\n'.join(page_text)
-                    ocr_texts.append(page_ocr_text)
-                    print(f"第 {page_num + 1} 页识别出 {len(page_ocr_text)} 个字符", file=sys.stderr)
-                
-                doc.close()
-                
-                # 合并所有页面的 OCR 结果
-                final_text = '\n\n'.join([text for text in ocr_texts if text])
-                print(f"OCR 总共识别: {len(final_text)} 个字符", file=sys.stderr)
-                print("=" * 60, file=sys.stderr)
-                
-                if not final_text.strip():
-                    raise RuntimeError("OCR 识别失败，未能提取到文本")
-                
-            except ImportError as ie:
-                print("=" * 60, file=sys.stderr)
-                print("❌ 缺少 EasyOCR 依赖", file=sys.stderr)
-                print("=" * 60, file=sys.stderr)
-                print("", file=sys.stderr)
-                print("当前使用的是轻量版 OCR，仅支持文本型 PDF。", file=sys.stderr)
-                print("要处理扫描版 PDF，需要安装完整版 OCR。", file=sys.stderr)
-                print("", file=sys.stderr)
-                print("解决方案：", file=sys.stderr)
-                print("1. 进入「增强服务」页面", file=sys.stderr)
-                print("2. 找到「OCR 文字识别服务」", file=sys.stderr)
-                print("3. 点击「完全卸载」", file=sys.stderr)
-                print("4. 重新点击「一键安装」（会安装完整版）", file=sys.stderr)
-                print("", file=sys.stderr)
-                print("完整版 OCR 包含 EasyOCR，可以识别图片中的文字。", file=sys.stderr)
-                print("=" * 60, file=sys.stderr)
-                raise RuntimeError("需要完整版 OCR 才能处理扫描版 PDF，请按照上述步骤安装")
+def check_limits(
+    doc, start_idx, end_idx, max_pages, max_pixels_per_page, max_total_pixels, dpi
+):
+    """Validate page/pixel limits BEFORE rendering.
 
-        return final_text
+    Returns None on success, or error string on failure.
+    """
+    total_pages = doc.page_count
+    selected = end_idx - start_idx
 
-    except Exception as e:
-        print(f"ERROR: PDF text extraction failed: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        raise
+    if max_pages > 0 and selected > max_pages:
+        return f"Selected {selected} pages exceeds limit of {max_pages}"
+
+    # At given DPI, each page pixel-area = (page_width * zoom) * (page_height * zoom)
+    # where zoom = dpi / 72.
+    zoom = dpi / 72.0
+    for pn in range(start_idx, end_idx):
+        page = doc[pn]
+        w = page.rect.width
+        h = page.rect.height
+        pixels = int(math.ceil(w * zoom)) * int(math.ceil(h * zoom))
+        if max_pixels_per_page > 0 and pixels > max_pixels_per_page:
+            return (
+                f"Page {pn + 1} at {dpi} DPI: {pixels:,} px exceeds "
+                f"max {max_pixels_per_page:,} px per page"
+            )
+
+    if max_total_pixels > 0:
+        total_px = 0
+        for pn in range(start_idx, end_idx):
+            page = doc[pn]
+            w = page.rect.width
+            h = page.rect.height
+            total_px += int(math.ceil(w * zoom)) * int(math.ceil(h * zoom))
+        if total_px > max_total_pixels:
+            return (
+                f"Total pixels across {selected} pages: {total_px:,} exceeds "
+                f"max {max_total_pixels:,}"
+            )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) < 2 or len(sys.argv) > 4:
-        print("Usage: python pdf_ocr.py <pdf_file_path> [start_page] [end_page]", file=sys.stderr)
-        print("  start_page: Starting page number (1-indexed, optional)", file=sys.stderr)
-        print("  end_page: Ending page number (1-indexed, optional)", file=sys.stderr)
-        sys.exit(1)
-    
-    pdf_path = sys.argv[1]
-    start_page = None
-    end_page = None
-    
-    # 解析页码范围参数
-    if len(sys.argv) >= 3:
-        try:
-            start_page = int(sys.argv[2])
-        except ValueError:
-            print(f"ERROR: Invalid start_page: {sys.argv[2]}", file=sys.stderr)
-            sys.exit(1)
-    
-    if len(sys.argv) >= 4:
-        try:
-            end_page = int(sys.argv[3])
-        except ValueError:
-            print(f"ERROR: Invalid end_page: {sys.argv[3]}", file=sys.stderr)
-            sys.exit(1)
-    
+    parser = argparse.ArgumentParser(
+        description="Extract text or OCR from PDF, output JSON to stdout."
+    )
+    parser.add_argument("pdf_path", help="Path to the input PDF file")
+    parser.add_argument("--start-page", type=int, default=None)
+    parser.add_argument("--end-page", type=int, default=None)
+    parser.add_argument("--model-dir", type=str, default=None)
+    parser.add_argument("--max-pages", type=int, default=200)
+    parser.add_argument("--max-pixels-per-page", type=int, default=12_000_000)
+    parser.add_argument("--max-total-pixels", type=int, default=1_600_000_000)
+    parser.add_argument("--dpi", type=int, default=300)
+    args = parser.parse_args()
+
+    pdf_path = args.pdf_path
     if not os.path.exists(pdf_path):
-        print(f"ERROR: File not found: {pdf_path}", file=sys.stderr)
-        sys.exit(1)
-    
+        eprint(f"File not found: {pdf_path}")
+        emit_error(1, "File not found")
+
     try:
-        text = extract_text_from_pdf(pdf_path, start_page, end_page)
-        
-        # Output the extracted text to stdout
-        print(text)
-        
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+        import fitz
+    except ImportError as exc:
+        eprint(f"PyMuPDF import failed: {exc}")
+        emit_error(2, f"PyMuPDF import failed: {exc}")
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as exc:
+        eprint(f"Cannot open PDF: {exc}")
+        emit_error(1, f"Cannot open PDF: {exc}")
+
+    total_pages = doc.page_count
+    eprint(f"PDF has {total_pages} pages")
+
+    start_idx = 0
+    end_idx = total_pages
+    if args.start_page is not None:
+        start_idx = max(0, args.start_page - 1)
+    if args.end_page is not None:
+        end_idx = min(total_pages, args.end_page)
+    if start_idx >= end_idx:
+        doc.close()
+        eprint("Invalid page range")
+        emit_error(1, "Invalid page range")
+
+    # ---- R3: page/pixel limit check BEFORE rendering ----
+    limit_error = check_limits(
+        doc,
+        start_idx,
+        end_idx,
+        args.max_pages,
+        args.max_pixels_per_page,
+        args.max_total_pixels,
+        args.dpi,
+    )
+    if limit_error:
+        doc.close()
+        eprint(f"LIMIT: {limit_error}")
+        emit_error(1, limit_error)
+
+    eprint(f"Processing pages {start_idx + 1}-{end_idx}")
+
+    # Step 1: Try PyMuPDF text extraction
+    eprint("Trying text-layer extraction...")
+    pages, quality = extract_text_pymupdf(doc, start_idx, end_idx)
+
+    has_text = any(
+        bool(p["blocks"]) and any(b["text"].strip() for b in p["blocks"])
+        for p in pages
+    )
+
+    if not has_text:
+        eprint("No text layer detected; switching to OCR...")
+        try:
+            import easyocr
+            import numpy as np
+            from PIL import Image
+        except ImportError as exc:
+            doc.close()
+            eprint(f"OCR dependencies not available: {exc}")
+            # Exit 3: OCR dependency missing
+            quality["failed_pages"] = quality["total_pages"]
+            result = {
+                "schema_version": "1.0",
+                "pages": pages,
+                "quality": quality,
+            }
+            print(json.dumps(result, ensure_ascii=False))
+            sys.exit(3)
+
+        try:
+            ocr_pages, ocr_quality = ocr_with_easyocr(
+                doc, start_idx, end_idx, args.model_dir, args.dpi
+            )
+            pages = ocr_pages
+            quality = ocr_quality
+        except Exception as exc:
+            doc.close()
+            eprint(f"OCR processing failed: {exc}")
+            quality["failed_pages"] = quality["total_pages"]
+            result = {
+                "schema_version": "1.0",
+                "pages": pages,
+                "quality": quality,
+            }
+            print(json.dumps(result, ensure_ascii=False))
+            sys.exit(4)
+
+    doc.close()
+
+    result = {
+        "schema_version": "1.0",
+        "pages": pages,
+        "quality": quality,
+    }
+    print(json.dumps(result, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     main()

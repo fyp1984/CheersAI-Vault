@@ -1,100 +1,43 @@
-use once_cell::sync::Lazy;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MaskingRule {
-    pub id: String,
-    pub name: String,
-    pub pattern: String,
-    pub replacement_template: String,
-    pub enabled: bool,
-    pub builtin: bool,
-    /// true = 追加自增序号（适合 PII 如姓名）；false = 固定文本（适合公司名/项目代号等）
-    pub use_counter: bool,
+pub use engine_core::{get_builtin_rules, MappingEntry, MaskingRule};
+use engine_core::{DeterministicFinding, MaskingSession};
+
+fn to_findings(entities: &[crate::core::ner::EntityMatch]) -> Vec<DeterministicFinding> {
+    entities
+        .iter()
+        .map(|entity| DeterministicFinding {
+            text: entity.text.clone(),
+            entity_type: entity.entity_type.clone(),
+            start: entity.start,
+            end: entity.end,
+        })
+        .collect()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MappingEntry {
-    pub original: String,
-    pub masked: String,
-    pub rule_id: String,
+fn session_from_legacy_state(
+    rules: &[MaskingRule],
+    mapping: &HashMap<String, MappingEntry>,
+    counter: usize,
+) -> MaskingSession {
+    let mut mappings: Vec<_> = mapping.values().cloned().collect();
+    mappings.sort_by(|left, right| left.masked.cmp(&right.masked));
+    MaskingSession::with_state(rules.to_vec(), mappings, counter)
 }
 
-static BUILTIN_RULES: Lazy<Vec<MaskingRule>> = Lazy::new(|| {
-    vec![
-        MaskingRule {
-            id: "id_card".to_string(),
-            name: "身份证号".to_string(),
-            pattern: r"[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]".to_string(),
-            replacement_template: "***IDCARD***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "phone".to_string(),
-            name: "手机号".to_string(),
-            pattern: r"1[3-9]\d{9}".to_string(),
-            replacement_template: "***PHONE***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "email".to_string(),
-            name: "电子邮箱".to_string(),
-            pattern: r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}".to_string(),
-            replacement_template: "***EMAIL***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "bank_card".to_string(),
-            name: "银行卡号".to_string(),
-            pattern: r"[1-9]\d{15,18}".to_string(),
-            replacement_template: "***BANKCARD***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "ipv4".to_string(),
-            name: "IPv4地址".to_string(),
-            pattern: r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)".to_string(),
-            replacement_template: "***IP***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "passport".to_string(),
-            name: "护照号".to_string(),
-            pattern: r"[A-Za-z][0-9]{8}".to_string(),
-            replacement_template: "***PASSPORT***".to_string(),
-            enabled: true,
-            builtin: true,
-            use_counter: true,
-        },
-        MaskingRule {
-            id: "chinese_name".to_string(),
-            name: "中文姓名".to_string(),
-            pattern: r"[\u4e00-\u9fa5]{2,4}".to_string(),
-            replacement_template: "姓名".to_string(),
-            enabled: false,
-            builtin: true,
-            use_counter: true,
-        },
-    ]
-});
-
-pub fn get_builtin_rules() -> &'static Vec<MaskingRule> {
-    &BUILTIN_RULES
+fn sync_legacy_state(
+    session: &MaskingSession,
+    mapping: &mut HashMap<String, MappingEntry>,
+    counter: &mut usize,
+) {
+    mapping.clear();
+    for (index, entry) in session.mappings().iter().cloned().enumerate() {
+        mapping.insert(format!("{}-{}", entry.rule_id, index + 1), entry);
+    }
+    *counter = session.placeholder_counter();
 }
 
-/// 使用 NER + 规则进行脱敏
+/// 桌面 Adapter：NER 检测仍留在当前进程，规则、映射与替换由 engine-core 执行。
 pub fn mask_value_with_ner(
     value: &str,
     rules: &[MaskingRule],
@@ -102,317 +45,85 @@ pub fn mask_value_with_ner(
     mapping: &mut HashMap<String, MappingEntry>,
     counter: &mut usize,
 ) -> String {
-    let mut result = value.to_string();
-    let original_value = value.to_string();
-    
-    // 1. 先使用规则进行脱敏（正则表达式匹配）
-    result = mask_value(&result, rules, mapping, counter);
-    
-    // 2. 再使用 NER 检测原始文本中的实体（NER 在原始文本上工作）
-    let entities = ner_detector.detect_entities(value);
-    
-    if !entities.is_empty() {
-        
-        // 创建规则 ID 集合，用于快速查找
-        let enabled_rule_ids: std::collections::HashSet<&str> = rules.iter()
-            .map(|r| r.id.as_str())
-            .collect();
-        
-        // 3. 对于 NER 检测到的实体，如果还没有被脱敏，则进行脱敏
-        // 需要在当前结果中查找这些实体
-        for entity in entities {
-            let original = entity.text.clone();
-            
-            // 检查这个实体是否还在结果中（如果不在，说明已经被规则脱敏了）
-            if !result.contains(&original) {
-                // 已经被规则脱敏了，跳过
-
-                continue;
-            }
-            
-            // 检查是否已经有映射
-            if let Some(entry) = mapping.values().find(|e| e.original == original) {
-
-                result = result.replace(&original, &entry.masked);
-                continue;
-            }
-            
-            // 根据实体类型检查对应的规则是否启用
-            let (masked, rule_id, should_mask) = match entity.entity_type.as_str() {
-                "身份证号" => {
-                    let enabled = enabled_rule_ids.contains("id_card");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***IDCARD{}***", counter), "id_card_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "手机号" => {
-                    let enabled = enabled_rule_ids.contains("phone");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***PHONE{}***", counter), "phone_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "邮箱" => {
-                    let enabled = enabled_rule_ids.contains("email");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***EMAIL{}***", counter), "email_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "银行卡号" => {
-                    let enabled = enabled_rule_ids.contains("bank_card");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "IP地址" => {
-                    let enabled = enabled_rule_ids.contains("ipv4");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***IP{}***", counter), "ipv4_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "护照号" => {
-                    let enabled = enabled_rule_ids.contains("passport");
-                    if enabled {
-                        *counter += 1;
-                        (format!("***PASSPORT{}***", counter), "passport_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "姓名" | "中文姓名" => {
-                    let enabled = enabled_rule_ids.contains("chinese_name");
-                    if enabled {
-                        *counter += 1;
-                        (format!("姓名{}", counter), "chinese_name_ner".to_string(), true)
-                    } else {
-
-                        (String::new(), String::new(), false)
-                    }
-                },
-                "日期" => {
-                    // 日期没有对应的规则开关，默认脱敏
-                    *counter += 1;
-                    (format!("***DATE{}***", counter), "date_ner".to_string(), true)
-                },
-                "地址" => {
-                    // 地址没有对应的规则开关，默认脱敏
-                    *counter += 1;
-                    (format!("***ADDRESS{}***", counter), "address_ner".to_string(), true)
-                },
-                "地名" => {
-                    // 地名没有对应的规则开关，默认脱敏
-                    *counter += 1;
-                    (format!("***LOCATION{}***", counter), "location_ner".to_string(), true)
-                },
-                "组织" => {
-                    // 组织没有对应的规则开关，默认脱敏
-                    *counter += 1;
-                    (format!("***ORG{}***", counter), "organization_ner".to_string(), true)
-                },
-                _ => {
-                    *counter += 1;
-                    (format!("***SENSITIVE{}***", counter), "unknown_ner".to_string(), true)
-                }
-            };
-            
-            // 只有当规则启用时才进行脱敏
-            if !should_mask {
-                continue;
-            }
-            
-            
-            // 保存映射
-            let map_key = format!("{}-{}", rule_id, counter);
-            mapping.insert(
-                map_key,
-                MappingEntry {
-                    original: original.clone(),
-                    masked: masked.clone(),
-                    rule_id,
-                },
-            );
-            
-            // 替换文本
-            result = result.replace(&original, &masked);
-        }
-    }
-    
-    if original_value != result {
-    } else {
-    }
-    
-    result
+    let findings = to_findings(&ner_detector.detect_entities(value));
+    let mut session = session_from_legacy_state(rules, mapping, *counter);
+    let masked = session.mask_fragment(value, &findings);
+    sync_legacy_state(&session, mapping, counter);
+    masked
 }
 
-/// 应用已检测到的实体进行脱敏（用于批量处理）
+/// 桌面批处理 Adapter：使用已经检测到的实体，不在共享核心中启动任何外部能力。
 pub fn apply_entities_to_text(
     value: &str,
     entities: &[crate::core::ner::EntityMatch],
     mapping: &mut HashMap<String, MappingEntry>,
     counter: &mut usize,
 ) -> String {
-    if entities.is_empty() {
-        return value.to_string();
-    }
-    
-    let mut result = value.to_string();
-    
-    // 按位置倒序排列实体，从后往前替换，避免位置偏移问题
-    let mut sorted_entities = entities.to_vec();
-    sorted_entities.sort_by(|a, b| b.start.cmp(&a.start));
-    
-    for entity in sorted_entities {
-        let original = entity.text.clone();
-        
-        // 检查是否已经有映射
-        if let Some(entry) = mapping.values().find(|e| e.original == original) {
-            result = result.replace(&original, &entry.masked);
-            continue;
-        }
-        
-        // 根据实体类型生成脱敏值
-        let (masked, rule_id) = match entity.entity_type.as_str() {
-            "身份证号" => {
-                *counter += 1;
-                (format!("***IDCARD{}***", counter), "id_card_ner".to_string())
-            },
-            "手机号" => {
-                *counter += 1;
-                (format!("***PHONE{}***", counter), "phone_ner".to_string())
-            },
-            "邮箱" => {
-                *counter += 1;
-                (format!("***EMAIL{}***", counter), "email_ner".to_string())
-            },
-            "银行卡号" => {
-                *counter += 1;
-                (format!("***BANKCARD{}***", counter), "bank_card_ner".to_string())
-            },
-            "IP地址" => {
-                *counter += 1;
-                (format!("***IP{}***", counter), "ipv4_ner".to_string())
-            },
-            "护照号" => {
-                *counter += 1;
-                (format!("***PASSPORT{}***", counter), "passport_ner".to_string())
-            },
-            "姓名" => {
-                *counter += 1;
-                (format!("***NAME{}***", counter), "name_ner".to_string())
-            },
-            _ => {
-                // 未知类型，使用通用脱敏
-                *counter += 1;
-                (format!("***SENSITIVE{}***", counter), "unknown_ner".to_string())
-            }
-        };
-        
-        // 添加到映射
-        mapping.insert(
-            original.clone(),
-            MappingEntry {
-                original: original.clone(),
-                masked: masked.clone(),
-                rule_id,
-            },
-        );
-        
-        // 替换文本
-        result = result.replace(&original, &masked);
-    }
-    
-    result
+    let findings = to_findings(entities);
+    let mut session = session_from_legacy_state(&[], mapping, *counter);
+    let masked = session.apply_findings_fragment_unchecked(value, &findings);
+    sync_legacy_state(&session, mapping, counter);
+    masked
 }
 
+/// 兼容现有非 TXT/Markdown Adapter；算法实现只存在于 engine-core。
 pub fn mask_value(
     value: &str,
     rules: &[MaskingRule],
     mapping: &mut HashMap<String, MappingEntry>,
     counter: &mut usize,
 ) -> String {
-    let mut result = value.to_string();
-    let original_value = value.to_string();
-    
-    if value.len() > 0 && value.len() < 200 {
+    let mut session = session_from_legacy_state(rules, mapping, *counter);
+    let masked = session.mask_fragment(value, &[]);
+    sync_legacy_state(&session, mapping, counter);
+    masked
+}
 
-    } else if value.len() > 0 {
-    }
-    
-    if rules.is_empty() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::ner::EntityMatch;
 
-    }
-
-    for rule in rules {
-        if !rule.enabled {
-
-            continue;
-        }
-        let re = match Regex::new(&rule.pattern) {
-            Ok(r) => r,
-            Err(e) => {
-
-                continue;
-            }
-        };
-
-        let before = result.clone();
-        result = re
-            .replace_all(&result, |caps: &regex::Captures| {
-                let original = caps[0].to_string();
-                if let Some(entry) = mapping.values().find(|e| e.original == original) {
-                    return entry.masked.clone();
-                }
-                let masked = if rule.use_counter {
-                    *counter += 1;
-                    format!("{}{}", rule.replacement_template, counter)
-                } else {
-                    rule.replacement_template.clone()
-                };
-                let map_key = if rule.use_counter {
-                    format!("{}-{}", rule.id, counter)
-                } else {
-                    format!("{}-{}", rule.id, original)
-                };
-                mapping.insert(
-                    map_key,
-                    MappingEntry {
-                        original: original.clone(),
-                        masked: masked.clone(),
-                        rule_id: rule.id.clone(),
-                    },
-                );
-                masked
-            })
-            .to_string();
-        
-        if before != result {
-
+    fn entity(text: &str, entity_type: &str) -> EntityMatch {
+        EntityMatch {
+            text: text.to_string(),
+            entity_type: entity_type.to_string(),
+            start: 0,
+            end: text.len(),
+            confidence: 1.0,
+            source: "test".to_string(),
         }
     }
 
-    if original_value != result {
-    } else {
+    #[test]
+    fn legacy_entity_adapter_preserves_name_placeholder() {
+        let mut mapping = HashMap::new();
+        let mut counter = 0;
+        let masked = apply_entities_to_text(
+            "测试姓名甲",
+            &[entity("测试姓名甲", "姓名")],
+            &mut mapping,
+            &mut counter,
+        );
+
+        assert_eq!(masked, "***NAME1***");
+        assert_eq!(counter, 1);
+        assert_eq!(mapping.values().next().unwrap().rule_id, "name_ner");
     }
 
-    result
+    #[test]
+    fn legacy_entity_adapter_preserves_generic_sensitive_placeholder() {
+        let mut mapping = HashMap::new();
+        let mut counter = 0;
+        let masked = apply_entities_to_text(
+            "2099-12-31",
+            &[entity("2099-12-31", "日期")],
+            &mut mapping,
+            &mut counter,
+        );
+
+        assert_eq!(masked, "***SENSITIVE1***");
+        assert_eq!(counter, 1);
+        assert_eq!(mapping.values().next().unwrap().rule_id, "unknown_ner");
+    }
 }

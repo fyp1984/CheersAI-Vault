@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Upload, FileText, Key, Download, AlertCircle, CheckCircle2 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { tauriCommands } from "@/lib/tauri";
+import { useUnmaskStore } from "@/store/unmaskStore";
 
 export default function FileUnmask() {
-  const [maskedFile, setMaskedFile] = useState<string>("");
-  const [mappingFile, setMappingFile] = useState<string>("");
+  const { maskedFile, mappingFile, setMaskedFile, setMappingFile } = useUnmaskStore();
   const [passphrase, setPassphrase] = useState<string>("");
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<{ output_path: string; restored_count: number } | null>(null);

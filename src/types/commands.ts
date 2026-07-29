@@ -52,6 +52,8 @@ export interface PreviewResult {
   masked_file_name: string;
   detected_entities?: RowEntities[];
   mapping?: MappingEntry[];
+  masked_entity_count?: number;
+  masked_markdown?: string;
 }
 
 export interface MappingEntry {
@@ -70,6 +72,8 @@ export interface SavePreviewOptions {
   rule_ids?: string[];
   custom_rules?: CustomRule[];
   page_range?: [number, number]; // 页码范围 [起始页, 结束页]，从 1 开始
+  masked_entity_count?: number;
+  masked_markdown?: string;
 }
 
 // 获取文件页数

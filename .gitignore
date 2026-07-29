@@ -26,3 +26,9 @@ dist-ssr
 # Python embedded libraries (too large for GitHub)
 python-embed/
 src-tauri/resources/
+
+# Enterprise Runtime local build and controlled runtime data
+apps/vault-runtime-api/target/
+apps/vault-runtime-api/enterprise-data/
+enterprise-data/
+src-tauri/crates/*/target/

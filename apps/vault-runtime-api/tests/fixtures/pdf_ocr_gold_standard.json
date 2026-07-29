@@ -1,0 +1,109 @@
+{
+  "fixture": "pdf_ocr_gold_standard.pdf",
+  "description": "3-page fictional image-only scan-PDF for OCR gold-standard testing",
+  "pages": 3,
+  "has_text_layer": false,
+  "generated_with": "PIL+PyMuPDF insert_image (no PDF text objects)",
+  "generation_font": {
+    "path": "/System/Library/Fonts/STHeiti Medium.ttc",
+    "size_pt": 30,
+    "large_size_pt": 40,
+    "render_dpi": 300
+  },
+  "expected_fields": {
+    "page_1": [
+      {
+        "text": "项目合同确认书",
+        "category": "title"
+      },
+      {
+        "text": "张三",
+        "category": "chinese_name"
+      },
+      {
+        "text": "13912345678",
+        "category": "phone"
+      },
+      {
+        "text": "zhangsan@example.cn",
+        "category": "email"
+      },
+      {
+        "text": "110101199001011234",
+        "category": "id_card"
+      }
+    ],
+    "page_2": [
+      {
+        "text": "补充条款",
+        "category": "title"
+      },
+      {
+        "text": "李四",
+        "category": "chinese_name"
+      },
+      {
+        "text": "13800138000",
+        "category": "phone"
+      },
+      {
+        "text": "lisi@test.com",
+        "category": "email"
+      }
+    ],
+    "page_3": []
+  },
+  "required_clear_fields": [
+    {
+      "text": "13912345678",
+      "category": "phone",
+      "page": 1
+    },
+    {
+      "text": "zhangsan@example.cn",
+      "category": "email",
+      "page": 1
+    },
+    {
+      "text": "110101199001011234",
+      "category": "id_card",
+      "page": 1
+    }
+  ],
+  "supplementary_low_quality_fields": [
+    {
+      "text": "13800138000",
+      "category": "phone",
+      "page": 2
+    },
+    {
+      "text": "lisi@test.com",
+      "category": "email",
+      "page": 2
+    },
+    {
+      "text": "李四",
+      "category": "chinese_name",
+      "page": 2
+    },
+    {
+      "text": "补充条款",
+      "category": "title",
+      "page": 2
+    }
+  ],
+  "masking_expected": {
+    "rules_enabled": [
+      "phone",
+      "email",
+      "id_card"
+    ],
+    "expected_masked_count": 3,
+    "fields_not_masked_by_current_rules": [
+      "张三",
+      "李四",
+      "项目合同确认书",
+      "补充条款"
+    ]
+  }
+}

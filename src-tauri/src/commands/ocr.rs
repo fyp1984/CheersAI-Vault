@@ -4,6 +4,8 @@ use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
 use tokio::process::Command;
 
+use component_runtime::{OcrConfig, OcrComponentStatus, preflight_check};
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -95,6 +97,29 @@ pub(crate) fn resolve_ocr_runtime_from_env() -> Option<(PathBuf, PathBuf)> {
     None
 }
 
+/// Build an `OcrConfig` from the current environment, or return `None`
+/// when no OCR runtime is discoverable.
+pub(crate) fn ocr_config_from_env() -> Option<OcrConfig> {
+    let (python_path, script_path) = resolve_ocr_runtime_from_env()?;
+    let model_dir = get_ocr_dir_from_env().join("model");
+    let model_dir = if model_dir.exists() { Some(model_dir) } else { None };
+    Some(OcrConfig {
+        python_path,
+        script_path,
+        model_dir,
+        ..Default::default()
+    })
+}
+
+/// Return a user-friendly label for the OCR component status.
+pub(crate) fn ocr_status_label(status: OcrComponentStatus) -> &'static str {
+    match status {
+        OcrComponentStatus::Unavailable => "未安装",
+        OcrComponentStatus::Invalid => "组件不完整",
+        OcrComponentStatus::Ready => "就绪",
+    }
+}
+
 fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
     let mut command = std::process::Command::new(python_cmd);
     command
@@ -113,7 +138,7 @@ fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
         .unwrap_or(false)
 }
 
-/// 检查 OCR 是否已安装
+/// 检查 OCR 是否已安装（使用共享组件预检）
 #[tauri::command]
 pub async fn check_ocr_installed(app: AppHandle) -> Result<bool, String> {
     let ocr_dir = get_ocr_dir(&app)?;
@@ -124,11 +149,26 @@ pub async fn check_ocr_installed(app: AppHandle) -> Result<bool, String> {
     }
 
     if let Some(python) = find_existing_ocr_python(&ocr_dir) {
-        return Ok(python_supports_pdf_extraction(&python));
+        let config = OcrConfig {
+            python_path: python,
+            script_path,
+            model_dir: Some(ocr_dir.join("model")),
+            ..Default::default()
+        };
+        let status = component_runtime::preflight_check(&config);
+        return Ok(status == OcrComponentStatus::Ready);
     }
 
     if let Some(system_python) = find_system_python() {
-        return Ok(python_supports_pdf_extraction(&system_python));
+        let script_path = ocr_dir.join("pdf_ocr.py");
+        let config = OcrConfig {
+            python_path: system_python,
+            script_path,
+            model_dir: Some(ocr_dir.join("model")),
+            ..Default::default()
+        };
+        let status = component_runtime::preflight_check(&config);
+        return Ok(status == OcrComponentStatus::Ready);
     }
 
     Ok(false)
