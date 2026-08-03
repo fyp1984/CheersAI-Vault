@@ -13,7 +13,10 @@
 //! - Both the desktop Tauri app and the enterprise `vault-runtime-api` depend
 //!   on this single crate — no second copy of the executor or JSON parser.
 
+use std::collections::HashMap;
+use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use engine_core::{OcrResult, validate_ocr_result};
@@ -172,6 +175,145 @@ impl OcrComponentStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Shared OCR resolver (desktop + Runtime)
+// ---------------------------------------------------------------------------
+
+/// Environment variable names for explicit OCR configuration.
+const ENV_OCR_PYTHON: &str = "VAULT_OCR_PYTHON";
+const ENV_OCR_SCRIPT: &str = "VAULT_OCR_SCRIPT";
+const ENV_OCR_MODEL_DIR: &str = "VAULT_OCR_MODEL_DIR";
+
+/// Resolve the OCR configuration from the environment.
+///
+/// *Explicit mode*: if any of `VAULT_OCR_PYTHON`, `VAULT_OCR_SCRIPT` or
+/// `VAULT_OCR_MODEL_DIR` is set, the explicit values are used verbatim.
+/// A missing or invalid explicit value will cause `preflight_check` to report
+/// `Unavailable`/`Invalid`; the resolver will **not** fall back to automatic
+/// discovery or PATH basename lookup.
+///
+/// *Discovery mode*: when none of the three variables is set, the resolver
+/// looks for an existing CheersAI OCR installation under the current system
+/// user's standard application-data directory, using deterministic candidate
+/// paths only.  It does not scan arbitrary directories, install, download, or
+/// copy anything.
+pub fn resolve_ocr_config() -> Option<OcrConfig> {
+    if has_explicit_ocr_env() {
+        Some(resolve_explicit_ocr_config())
+    } else {
+        discover_shared_ocr_installation()
+    }
+}
+
+/// Whether the current process has any explicit OCR path variable set.
+pub fn has_explicit_ocr_env() -> bool {
+    env::var_os(ENV_OCR_PYTHON).is_some()
+        || env::var_os(ENV_OCR_SCRIPT).is_some()
+        || env::var_os(ENV_OCR_MODEL_DIR).is_some()
+}
+
+fn resolve_explicit_ocr_config() -> OcrConfig {
+    OcrConfig {
+        python_path: env::var_os(ENV_OCR_PYTHON)
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        script_path: env::var_os(ENV_OCR_SCRIPT)
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        model_dir: env::var_os(ENV_OCR_MODEL_DIR).map(PathBuf::from),
+        ..OcrConfig::default()
+    }
+}
+
+fn discover_shared_ocr_installation() -> Option<OcrConfig> {
+    let ocr_dir = user_ocr_installation_dir()?;
+    let script_path = ocr_dir.join("pdf_ocr.py");
+    if !script_path.exists() {
+        return None;
+    }
+    let python_path = find_ocr_python(&ocr_dir)?;
+    let model_dir = resolve_model_dir(&ocr_dir);
+
+    Some(OcrConfig {
+        python_path,
+        script_path,
+        model_dir,
+        ..OcrConfig::default()
+    })
+}
+
+/// The standard per-user CheersAI OCR installation directory.
+///
+/// - macOS: `~/Library/Application Support/com.cheersai.vault/ocr-package`
+/// - Linux: `$XDG_DATA_HOME/com.cheersai.vault/ocr-package`, or
+///          `~/.local/share/com.cheersai.vault/ocr-package`
+/// - Windows: `%APPDATA%/com.cheersai.vault/ocr-package`
+fn user_ocr_installation_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join("Library/Application Support/com.cheersai.vault/ocr-package")
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .map(|base| base.join("com.cheersai.vault/ocr-package"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        env::var_os("APPDATA").map(|base| PathBuf::from(base).join("com.cheersai.vault/ocr-package"))
+    }
+}
+
+fn ocr_python_candidates(ocr_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(ocr_dir.join("python").join("python.exe"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        candidates.push(ocr_dir.join("venv").join("bin").join("python3"));
+        candidates.push(ocr_dir.join("venv").join("bin").join("python"));
+        candidates.push(ocr_dir.join("python").join("bin").join("python3"));
+        candidates.push(ocr_dir.join("python").join("bin").join("python"));
+    }
+
+    candidates
+}
+
+fn find_ocr_python(ocr_dir: &Path) -> Option<PathBuf> {
+    ocr_python_candidates(ocr_dir)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn resolve_model_dir(ocr_dir: &Path) -> Option<PathBuf> {
+    let install_model = ocr_dir.join("model");
+    if install_model.exists() {
+        return Some(install_model);
+    }
+    easyocr_user_model_dir().filter(|d| d.exists())
+}
+
+/// The standard per-user EasyOCR model directory (`~/.EasyOCR/model`).
+fn easyocr_user_model_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".EasyOCR/model"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        env::var_os("HOME").map(|home| PathBuf::from(home).join(".EasyOCR/model"))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Global concurrency limit  (R4)
 // ---------------------------------------------------------------------------
 
@@ -186,10 +328,14 @@ pub async fn acquire_ocr_permit() -> tokio::sync::SemaphorePermit<'static> {
 // Preflight check  (R2)
 // ---------------------------------------------------------------------------
 
-/// Cached deep preflight result.  Set once on first call, never re-checked
-/// (avoids reloading EasyOCR on every status API request).
-static DEEP_PREFLIGHT_CACHE: once_cell::sync::OnceCell<OcrComponentStatus> =
-    once_cell::sync::OnceCell::new();
+/// Cached deep preflight results, keyed by a normalized representation of the
+/// resolved Python / script / model configuration.
+///
+/// Only `Ready` outcomes are stored.  Failed outcomes are never cached, so
+/// changing an invalid configuration and re-running `preflight_check` will
+/// re-evaluate the new configuration from scratch.
+static DEEP_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, OcrComponentStatus>>> =
+    OnceLock::new();
 
 /// Run the full preflight chain:
 ///
@@ -199,48 +345,71 @@ static DEEP_PREFLIGHT_CACHE: once_cell::sync::OnceCell<OcrComponentStatus> =
 ///   `model_storage_directory`, verifying the model is present and the
 ///   engine can run without network access.  Uses `download_enabled=False`.
 ///
-/// The *deep* check is run once and cached; subsequent calls return the
-/// cached value.
+/// The *deep* check result for a given resolved configuration is cached once
+/// it reaches `Ready`; subsequent calls with the same configuration return the
+/// cached value.  Non-ready outcomes are never cached.
 pub fn preflight_check(config: &OcrConfig) -> OcrComponentStatus {
     // 1. Script exists
     if !config.script_path.exists() {
         return OcrComponentStatus::Unavailable;
     }
 
-    // 2. Python binary exists
-    if !config.python_path.exists() && which_python(&config.python_path).is_none() {
+    // 2. Python binary exists (no PATH basename fallback)
+    if !config.python_path.exists() {
         return OcrComponentStatus::Unavailable;
     }
 
-    let python = if config.python_path.exists() {
-        config.python_path.clone()
-    } else {
-        match which_python(&config.python_path) {
-            Some(p) => p,
-            None => return OcrComponentStatus::Unavailable,
-        }
-    };
-
     // 3. PyMuPDF import check
-    if !check_python_import(&python, "fitz") {
+    if !check_python_import(&config.python_path, "fitz") {
         return OcrComponentStatus::Unavailable;
     }
 
     // 4. Full OCR stack (EasyOCR + PIL)
-    if !check_python_import(&python, "easyocr")
-        || !check_python_import(&python, "PIL")
+    if !check_python_import(&config.python_path, "easyocr")
+        || !check_python_import(&config.python_path, "PIL")
     {
         return OcrComponentStatus::Invalid;
     }
 
-    // 5. Deep preflight (cached) — actually initialises EasyOCR offline.
-    if let Some(cached) = DEEP_PREFLIGHT_CACHE.get() {
-        return *cached;
+    // 5. Deep preflight (cached, Ready-only) — actually initialises EasyOCR offline.
+    let cache = DEEP_PREFLIGHT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = preflight_cache_key(config);
+    if let Ok(guard) = cache.lock() {
+        if let Some(&cached) = guard.get(&key) {
+            if cached == OcrComponentStatus::Ready {
+                return cached;
+            }
+        }
     }
 
-    let status = deep_preflight_check(&python, config);
-    let _ = DEEP_PREFLIGHT_CACHE.set(status);
+    let status = deep_preflight_check(&config.python_path, config);
+    if status == OcrComponentStatus::Ready {
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(key, status);
+        }
+    }
     status
+}
+
+fn preflight_cache_key(config: &OcrConfig) -> String {
+    fn normalize(path: &Path) -> String {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string()
+    }
+
+    let model_key = config
+        .model_dir
+        .as_ref()
+        .map(|p| normalize(p))
+        .unwrap_or_default();
+    format!(
+        "{}|{}|{}",
+        normalize(&config.python_path),
+        normalize(&config.script_path),
+        model_key
+    )
 }
 
 /// Run the deep preflight: initialise EasyOCR on a tiny in-memory test image
@@ -295,19 +464,6 @@ except Exception as e:
     } else {
         OcrComponentStatus::Invalid
     }
-}
-
-fn which_python(python: &Path) -> Option<PathBuf> {
-    let name = python.file_name()?.to_str()?;
-    std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| {
-            let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if path.is_empty() { None } else { Some(PathBuf::from(path)) }
-        })
 }
 
 fn check_python_import(python: &Path, module: &str) -> bool {
@@ -413,8 +569,20 @@ pub async fn run_ocr(
         Err(_elapsed) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
+            let stderr = stderr_task.await.unwrap_or_default();
             let _ = stdout_task.await;
-            let _ = stderr_task.await;
+            // The last reached stage (emitted by pdf_ocr.py as `[ocr-stage]`
+            // progress lines) goes to the server-side process log only — it is
+            // de-identified (elapsed seconds, no paths or original text) and
+            // never reaches the browser/API error. The user-facing error keeps
+            // the stable, generic timeout message.
+            let progress = ocr_progress_summary(&stderr);
+            if !progress.is_empty() {
+                eprintln!(
+                    "[ocr] run timed out after {}s{progress}",
+                    config.timeout.as_secs()
+                );
+            }
             return Err(OcrError::Timeout(config.timeout.as_secs()));
         }
     };
@@ -547,6 +715,87 @@ fn sanitise_error(msg: &str) -> String {
     }
 }
 
+/// Extract the `[ocr-stage] ...` progress lines `pdf_ocr.py` writes to stderr
+/// and join the last few reached stages, for the **server-side de-identified
+/// process log** only. It is never put into the user-facing OCR error; the
+/// error keeps the stable generic `"…timed out after Ns"` message. Returns an
+/// empty string when no progress lines are present.
+///
+/// De-identification is enforced at the code level, not by trusting the
+/// script: only lines whose stage name is in a fixed allowlist AND whose
+/// `elapsed=` value parses as a non-negative decimal number are kept, and the
+/// summary is **rebuilt** from the parsed pieces (`<stage>=<seconds>s`) rather
+/// than echoed verbatim. Any other line (unknown stage, malformed or negative
+/// number, embedded path or original text) is dropped entirely.
+fn ocr_progress_summary(stderr: &str) -> String {
+    let mut stages: Vec<String> = Vec::new();
+    for line in stderr.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("[ocr-stage] ") else {
+            continue;
+        };
+        let Some((stage, elapsed_part)) = rest.split_once(" elapsed=") else {
+            continue;
+        };
+        let Some(seconds) = elapsed_part.strip_suffix('s') else {
+            continue;
+        };
+        if !is_non_negative_decimal(seconds) || !is_allowed_ocr_stage(stage) {
+            continue;
+        }
+        // Rebuild canonically from the validated pieces; never echo the raw line.
+        stages.push(format!("{stage}={seconds}s"));
+    }
+    if stages.is_empty() {
+        return String::new();
+    }
+    let tail: Vec<&str> = stages
+        .iter()
+        .rev()
+        .take(4)
+        .rev()
+        .map(String::as_str)
+        .collect();
+    format!(" (reached: {})", tail.join("; "))
+}
+
+/// True when `s` is a non-negative decimal number (digits with at most one
+/// `.`), e.g. `0`, `12`, `3.5`. Scientific notation, signs and any other
+/// character are rejected so only a plain seconds value survives.
+fn is_non_negative_decimal(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut seen_digit = false;
+    let mut seen_dot = false;
+    for c in s.chars() {
+        match c {
+            '0'..='9' => seen_digit = true,
+            '.' if !seen_dot => seen_dot = true,
+            _ => return false,
+        }
+    }
+    seen_digit
+}
+
+/// True when `stage` is one of the fixed stage names emitted by `pdf_ocr.py`
+/// (`text_extract`, `reader_init`, `total`) or a `page<N> render|readtext`
+/// entry. Anything else is not allowed into the server log.
+fn is_allowed_ocr_stage(stage: &str) -> bool {
+    const FIXED: [&str; 3] = ["text_extract", "reader_init", "total"];
+    if FIXED.contains(&stage) {
+        return true;
+    }
+    if let Some(rest) = stage.strip_prefix("page") {
+        if let Some((page_no, kind)) = rest.split_once(' ') {
+            if !page_no.is_empty() && page_no.chars().all(|c| c.is_ascii_digit()) {
+                return kind == "render" || kind == "readtext";
+            }
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -616,6 +865,172 @@ mod tests {
         let json = format!("\u{feff}{{\"schema_version\":\"1.0\",\"pages\":[{{\"page_number\":1,\"width\":612.0,\"height\":792.0,\"blocks\":[{{\"text\":\"BOM test\",\"bbox\":[0.0,0.0,10.0,10.0],\"confidence\":1.0,\"language\":\"en\"}}]}}],\"quality\":{{\"total_pages\":1,\"empty_pages\":0,\"failed_pages\":0,\"avg_confidence\":1.0}}}}");
         let result = parse_ocr_json(&json).unwrap();
         assert_eq!(result.pages[0].blocks[0].text, "BOM test");
+    }
+
+    // --------------- shared resolver tests ---------------
+
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn save_env(key: &str) -> Option<std::ffi::OsString> {
+        env::var_os(key)
+    }
+
+    fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(v) => env::set_var(key, v),
+            None => env::remove_var(key),
+        }
+    }
+
+    fn clear_all_ocr_env() {
+        env::remove_var(ENV_OCR_PYTHON);
+        env::remove_var(ENV_OCR_SCRIPT);
+        env::remove_var(ENV_OCR_MODEL_DIR);
+    }
+
+    #[test]
+    fn explicit_config_takes_precedence_when_incomplete() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_python = save_env(ENV_OCR_PYTHON);
+        let saved_script = save_env(ENV_OCR_SCRIPT);
+        let saved_model = save_env(ENV_OCR_MODEL_DIR);
+        clear_all_ocr_env();
+
+        // Only one explicit variable set; resolver must still enter explicit
+        // mode and not fall back to automatic discovery.
+        env::set_var(ENV_OCR_PYTHON, "/definitely/missing/ocr-venv/bin/python3");
+        let config = resolve_ocr_config().expect("explicit mode must return a config");
+        assert_eq!(config.python_path, PathBuf::from("/definitely/missing/ocr-venv/bin/python3"));
+        assert!(config.script_path.as_os_str().is_empty());
+
+        restore_env(ENV_OCR_PYTHON, saved_python);
+        restore_env(ENV_OCR_SCRIPT, saved_script);
+        restore_env(ENV_OCR_MODEL_DIR, saved_model);
+    }
+
+    #[test]
+    fn explicit_missing_python_path_stays_unavailable_even_if_basename_exists_on_path() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_python = save_env(ENV_OCR_PYTHON);
+        let saved_script = save_env(ENV_OCR_SCRIPT);
+        let saved_model = save_env(ENV_OCR_MODEL_DIR);
+        clear_all_ocr_env();
+
+        // Basename `python3` almost certainly exists on PATH, but the explicit
+        // path itself does not.  Preflight must not silently substitute PATH.
+        env::set_var(ENV_OCR_PYTHON, "/definitely/missing/ocr-venv/bin/python3");
+        env::set_var(ENV_OCR_SCRIPT, "/definitely/missing/ocr-venv/bin/pdf_ocr.py");
+        let config = resolve_ocr_config().unwrap();
+        let status = preflight_check(&config);
+        assert_eq!(status, OcrComponentStatus::Unavailable);
+
+        restore_env(ENV_OCR_PYTHON, saved_python);
+        restore_env(ENV_OCR_SCRIPT, saved_script);
+        restore_env(ENV_OCR_MODEL_DIR, saved_model);
+    }
+
+    #[test]
+    fn auto_discovery_finds_existing_user_installation() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_python = save_env(ENV_OCR_PYTHON);
+        let saved_script = save_env(ENV_OCR_SCRIPT);
+        let saved_model = save_env(ENV_OCR_MODEL_DIR);
+        clear_all_ocr_env();
+
+        // The resolver must at least discover the existing installation (or
+        // correctly return None if there is none).  Whether the discovered
+        // installation is Ready depends on the actual model state of this
+        // machine; that is validated separately via Runtime status and real
+        // OCR loop tests, not asserted here.
+        if let Some(config) = resolve_ocr_config() {
+            assert!(config.script_path.exists(), "discovered script must exist");
+            assert!(config.python_path.exists(), "discovered python must exist");
+        }
+
+        restore_env(ENV_OCR_PYTHON, saved_python);
+        restore_env(ENV_OCR_SCRIPT, saved_script);
+        restore_env(ENV_OCR_MODEL_DIR, saved_model);
+    }
+
+    #[test]
+    fn installation_model_dir_priority_over_easyocr_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let install_model = dir.path().join("model");
+        std::fs::create_dir_all(&install_model).unwrap();
+
+        let resolved = resolve_model_dir(dir.path());
+        assert_eq!(resolved, Some(install_model));
+    }
+
+    #[test]
+    fn preflight_cache_key_isolated_by_config() {
+        let config_a = OcrConfig {
+            python_path: PathBuf::from("/fake/python3"),
+            script_path: PathBuf::from("/fake/pdf_ocr.py"),
+            model_dir: Some(PathBuf::from("/fake/model")),
+            ..OcrConfig::default()
+        };
+        let config_b = OcrConfig {
+            python_path: PathBuf::from("/other/python3"),
+            script_path: PathBuf::from("/fake/pdf_ocr.py"),
+            model_dir: Some(PathBuf::from("/fake/model")),
+            ..OcrConfig::default()
+        };
+        assert_ne!(
+            preflight_cache_key(&config_a),
+            preflight_cache_key(&config_b),
+            "different python paths must produce different cache keys"
+        );
+    }
+
+    #[test]
+    fn preflight_failure_is_not_cached() {
+        // Use a fake Python that exits successfully for import checks but
+        // fails the deep preflight because there is no real model.  The first
+        // call returns Invalid; a second call must also return Invalid (not
+        // Unavailable from a stale cached failure), proving failure was not
+        // cached as a permanent negative result.
+        let dir = tempfile::tempdir().unwrap();
+        let python = dir.path().join("fake_python");
+        let script = dir.path().join("pdf_ocr.py");
+        std::fs::write(&script, b"#").unwrap();
+
+        // Write a shell script that claims all imports succeed but deep
+        // EasyOCR init will fail because model_dir is empty.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Fake Python: any `python -c "import X; print('OK')` invocation prints OK,
+            // so the Level 1/2 import checks pass.  Level 3 deep check will fail
+            // because model_dir is empty.
+            std::fs::write(
+                &python,
+                "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo OK; fi\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows batch fallback: claim all -c invocations succeed.
+            std::fs::write(&python, "@echo off\nif \"%1\"==\"-c\" echo OK\n").unwrap();
+        }
+
+        let config = OcrConfig {
+            python_path: python.clone(),
+            script_path: script.clone(),
+            model_dir: Some(dir.path().join("empty_model")),
+            ..OcrConfig::default()
+        };
+
+        let first = preflight_check(&config);
+        assert_eq!(first, OcrComponentStatus::Invalid);
+        let second = preflight_check(&config);
+        assert_eq!(
+            second,
+            OcrComponentStatus::Invalid,
+            "failure must not be cached as a different status"
+        );
     }
 
     // --------------- preflight config defaults ---------------
@@ -790,6 +1205,73 @@ mod tests {
         let safe = sanitise_error(&long);
         assert!(safe.len() < 600);
         assert!(safe.ends_with("(truncated)"));
+    }
+
+    #[test]
+    fn ocr_progress_summary_keeps_only_whitelisted_stages_with_numeric_elapsed() {
+        let well_formed =
+            "[ocr-stage] text_extract elapsed=0.6s\n[ocr-stage] reader_init elapsed=2.1s";
+        assert_eq!(
+            ocr_progress_summary(well_formed),
+            " (reached: text_extract=0.6s; reader_init=2.1s)"
+        );
+        // page stages are allowed only for render/readtext
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] page1 render elapsed=0.2s"),
+            " (reached: page1 render=0.2s)"
+        );
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] page12 readtext elapsed=28.4s"),
+            " (reached: page12 readtext=28.4s)"
+        );
+    }
+
+    #[test]
+    fn ocr_progress_summary_drops_unknown_stages_and_malformed_values() {
+        // unknown stage name -> dropped
+        assert_eq!(ocr_progress_summary("[ocr-stage] mystery elapsed=1.0s"), "");
+        // page stage with a disallowed kind -> dropped
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] page1 delete elapsed=1.0s"),
+            ""
+        );
+        // non-numeric / negative / scientific-notation elapsed -> dropped
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] text_extract elapsed=abc"),
+            ""
+        );
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] text_extract elapsed=-1.0s"),
+            ""
+        );
+        assert_eq!(
+            ocr_progress_summary("[ocr-stage] text_extract elapsed=1e5s"),
+            ""
+        );
+        // wrong/missing elapsed marker -> dropped
+        assert_eq!(ocr_progress_summary("[ocr-stage] text_extract 1.0s"), "");
+        assert_eq!(ocr_progress_summary("text_extract elapsed=1.0s"), "");
+        // no progress lines at all -> empty
+        assert_eq!(ocr_progress_summary(""), "");
+    }
+
+    #[test]
+    fn ocr_progress_summary_never_echoes_embedded_paths_or_original_text() {
+        // A trailing path or original text makes the line unparseable, so the
+        // WHOLE line is dropped — never partially echoed into the log.
+        let with_path = "[ocr-stage] text_extract elapsed=1.0s /Users/me/secret";
+        assert_eq!(ocr_progress_summary(with_path), "");
+
+        let with_phone = "[ocr-stage] text_extract elapsed=1.0s 13912345678";
+        assert_eq!(ocr_progress_summary(with_phone), "");
+
+        // A well-formed stage next to a malicious one: only the valid line survives.
+        let mixed =
+            "[ocr-stage] text_extract elapsed=1.0s /Users/me/secret\n[ocr-stage] page2 readtext elapsed=3.5s\n";
+        assert_eq!(
+            ocr_progress_summary(mixed),
+            " (reached: page2 readtext=3.5s)"
+        );
     }
 
     // --------------- full JSON round-trip ---------------

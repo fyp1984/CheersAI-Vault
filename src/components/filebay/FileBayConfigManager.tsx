@@ -23,6 +23,9 @@ import type { FileBayConfigStatus } from "@/types/commands";
 import { open } from "@tauri-apps/plugin-dialog";
 import { CLOUD_APP_URL } from "@/lib/cloud";
 
+const safeError = (error: unknown, fallback: string) =>
+  typeof error === 'string' && /^FILEBAY_[A-Z_]+$/.test(error) ? error : fallback;
+
 export function FileBayConfigManager() {
   const [configStatus, setConfigStatus] = useState<FileBayConfigStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,8 +47,8 @@ export function FileBayConfigManager() {
         });
       }
     } catch (error) {
-      console.error("Failed to load FileBay config:", error);
-      setMessage({ type: 'error', text: `加载配置失败: ${error}` });
+      console.error("Failed to load FileBay config");
+      setMessage({ type: 'error', text: safeError(error, '加载配置失败，请重试') });
     } finally {
       setLoading(false);
     }
@@ -71,7 +74,7 @@ export function FileBayConfigManager() {
         try {
           await tauriCommands.validateFilebayConfigFile(filePath);
         } catch (error) {
-          setMessage({ type: 'error', text: `配置文件验证失败: ${error}` });
+          setMessage({ type: 'error', text: safeError(error, '配置文件验证失败，请重试') });
           return;
         }
 
@@ -83,8 +86,8 @@ export function FileBayConfigManager() {
         await loadConfigStatus();
       }
     } catch (error) {
-      console.error("Failed to import config:", error);
-      setMessage({ type: 'error', text: `导入失败: ${error}` });
+      console.error("Failed to import config");
+      setMessage({ type: 'error', text: safeError(error, '导入失败，请重试') });
     }
   };
 
@@ -98,8 +101,8 @@ export function FileBayConfigManager() {
       // 重新加载状态
       await loadConfigStatus();
     } catch (error) {
-      console.error("Failed to delete config:", error);
-      setMessage({ type: 'error', text: `删除失败: ${error}` });
+      console.error("Failed to delete config");
+      setMessage({ type: 'error', text: safeError(error, '删除失败，请重试') });
     }
   };
 
@@ -113,8 +116,8 @@ export function FileBayConfigManager() {
         text: '已打开 Desktop 在线工作区，请在云端页面中下载或刷新 FileBay 配置文件。',
       });
     } catch (error) {
-      console.error("Failed to open cloud page:", error);
-      setMessage({ type: 'error', text: `打开在线工作区失败: ${error}` });
+      console.error("Failed to open cloud page");
+      setMessage({ type: 'error', text: '打开在线工作区失败，请重试' });
     }
   };
 

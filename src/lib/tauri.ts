@@ -76,6 +76,9 @@ export const tauriCommands = {
   listSandboxFiles: () =>
     invoke<SandboxFile[]>("list_sandbox_files"),
 
+  getSandboxDirPath: () =>
+    invoke<string>("get_sandbox_dir_path"),
+
   listFilesInDirectory: (directory: string) =>
     invoke<SandboxFile[]>("list_files_in_directory", { directory }),
 
@@ -344,9 +347,9 @@ export const tauriCommands = {
     invoke<string>("eval_js_in_desktop_webview", { jsCode }),
   
   // FileBay Config Sync
-  syncFilebayConfigFromDesktop: (url: string, token: string, owner: string, repo: string) =>
-    invoke<string>("sync_filebay_config_from_desktop", { url, token, owner, repo }),
-  
-  // Get FileBay Token
-  getFilebayToken: () => invoke<string>("get_filebay_token"),
+
+  // 按当前文件的真实本机路径向后端确认上传候选身份，而不是按文件名字符串匹配；
+  // 返回值只包含发起查询的路径自身映射到的正式历史 ID，不返回其他历史的路径信息。
+  confirmFilebayUploadCandidates: (filePaths: string[]) =>
+    invoke<Record<string, string>>("confirm_filebay_upload_candidates", { filePaths }),
 };

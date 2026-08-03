@@ -1,7 +1,6 @@
 use anyhow::{Result, Context};
 use std::fs;
 use std::io::Read;
-use component_runtime::OcrConfig;
 
 #[derive(Debug)]
 pub enum FileFormat {
@@ -876,75 +875,45 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
 }
 
 // OCR-based PDF parsing with page range support, via component-runtime.
+//
+// This is the only OCR entry point on the desktop side: it uses exactly the
+// same shared resolver (`ocr_config_from_env` -> `component_runtime::resolve_ocr_config`)
+// as the enterprise Runtime. There is deliberately no second Python/script
+// lookup here — a missing or invalid shared configuration, or a failed
+// `run_ocr_blocking` call, is reported to the caller as-is instead of being
+// retried against some other interpreter, so desktop and Runtime can never
+// disagree about which installation actually processed a file.
 fn parse_pdf_with_python_ocr_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     use std::fs;
 
-    // 1. Try configured OCR runtime (downloaded package)
-    if let Some(config) = crate::commands::ocr::ocr_config_from_env() {
-        eprintln!("🔍 OCR using configured runtime: {}", config.python_path.display());
-
-        let pdf_bytes = fs::read(path)
-            .map_err(|e| anyhow::anyhow!("无法读取 PDF 文件: {}", e))?;
-
-        match component_runtime::run_ocr_blocking(&config, &pdf_bytes, page_range) {
-            Ok(ocr_result) => {
-                let markdown = engine_core::ocr_result_to_markdown(&ocr_result);
-                eprintln!("✅ OCR succeeded: {} chars, {} pages",
-                    markdown.len(), ocr_result.pages.len());
-                return Ok(markdown);
-            }
-            Err(ocr_error) => {
-                let msg = ocr_error.to_string();
-                let code = ocr_error.error_code();
-                eprintln!("❌ OCR failed [{}]: {}", code, msg);
-                // Fall through to dev script fallback
-            }
-        }
-    } else {
-        eprintln!("⚠️ OCR runtime not found from env");
-    }
-
-    // 2. Dev environment: try system Python with project script
-    let dev_script = std::path::PathBuf::from("src-tauri/scripts/pdf_ocr.py");
-    if dev_script.exists() {
-        eprintln!("🔍 Found dev script: {}", dev_script.display());
-
-        let python_commands = vec!["python3", "python", "py"];
-        for python_cmd in &python_commands {
-            eprintln!("🔍 Trying python command: {}", python_cmd);
-
-            let config = OcrConfig {
-                python_path: std::path::PathBuf::from(python_cmd),
-                script_path: dev_script.clone(),
-                model_dir: None,
-                ..Default::default()
-            };
-
-            let pdf_bytes = fs::read(path)
-                .map_err(|e| anyhow::anyhow!("无法读取 PDF 文件: {}", e))?;
-
-            match component_runtime::run_ocr_blocking(&config, &pdf_bytes, page_range) {
-                Ok(ocr_result) => {
-                    let markdown = engine_core::ocr_result_to_markdown(&ocr_result);
-                    eprintln!("✅ OCR succeeded with {}: {} chars", python_cmd, markdown.len());
-                    return Ok(markdown);
-                }
-                Err(ocr_error) => {
-                    let code = ocr_error.error_code();
-                    let msg = ocr_error.to_string();
-                    eprintln!("❌ OCR failed with {} [{}]: {}", python_cmd, code, msg);
-                }
-            }
-        }
-
+    let Some(config) = crate::commands::ocr::ocr_config_from_env() else {
         return Err(anyhow::anyhow!(
-            "⚠️ 检测到扫描版 PDF，需要 OCR 功能。OCR 依赖未安装或配置不正确。"
+            "⚠️ OCR 功能未安装\n\n\
+            检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
+            请通过「增强服务」页面安装 OCR 组件后重试。"
         ));
-    }
+    };
 
-    Err(anyhow::anyhow!(
-        "⚠️ OCR 功能未安装\n\n\
-        检测到扫描版 PDF，需要下载 OCR 依赖。\n\n\
-        请通过「增强服务」页面安装 OCR 组件后重试。"
-    ))
+    eprintln!("🔍 OCR using configured runtime");
+
+    let pdf_bytes = fs::read(path)
+        .map_err(|e| anyhow::anyhow!("无法读取 PDF 文件: {}", e))?;
+
+    match component_runtime::run_ocr_blocking(&config, &pdf_bytes, page_range) {
+        Ok(ocr_result) => {
+            let markdown = engine_core::ocr_result_to_markdown(&ocr_result);
+            eprintln!("✅ OCR succeeded: {} chars, {} pages",
+                markdown.len(), ocr_result.pages.len());
+            Ok(markdown)
+        }
+        Err(ocr_error) => {
+            let msg = ocr_error.to_string();
+            let code = ocr_error.error_code();
+            eprintln!("❌ OCR failed [{}]: {}", code, msg);
+            Err(anyhow::anyhow!(
+                "⚠️ 检测到扫描版 PDF，需要 OCR 功能。OCR 处理失败 [{}]: {}",
+                code, msg
+            ))
+        }
+    }
 }

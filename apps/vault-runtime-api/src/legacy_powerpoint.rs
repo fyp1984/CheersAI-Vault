@@ -65,7 +65,8 @@ const MACOS_CANDIDATES: &[&str] = &[
 
 /// Last-resort portable / CI fallback path.
 /// Used only when all other candidates (env, standard installs, PATH) fail.
-const PORTABLE_TMP_CANDIDATE: &str = "/tmp/ppt-conversion-feasibility/libreoffice-portable/LibreOffice.app/Contents/MacOS/soffice";
+const PORTABLE_TMP_CANDIDATE: &str =
+    "/tmp/ppt-conversion-feasibility/libreoffice-portable/LibreOffice.app/Contents/MacOS/soffice";
 
 // --------------- public types ---------------
 
@@ -105,10 +106,7 @@ impl ConvertError {
                 "INPUT_ENCRYPTED",
                 "Encrypted PowerPoint files are not supported",
             ),
-            Self::ProcessingTimeout => (
-                "PROCESSING_TIMEOUT",
-                "PowerPoint conversion timed out",
-            ),
+            Self::ProcessingTimeout => ("PROCESSING_TIMEOUT", "PowerPoint conversion timed out"),
             Self::ResourceLimitExceeded => (
                 "RESOURCE_LIMIT_EXCEEDED",
                 "PowerPoint input exceeds the size limit",
@@ -138,7 +136,9 @@ pub struct SofficeResolver {
 
 impl SofficeResolver {
     pub const fn new() -> Self {
-        Self { cache: OnceLock::new() }
+        Self {
+            cache: OnceLock::new(),
+        }
     }
 
     /// Resolve a soffice path, recording each probe attempt into `log`.
@@ -340,11 +340,9 @@ pub async fn convert_ppt_to_pptx(input: &[u8]) -> Result<Vec<u8>, ConvertError> 
     }
 
     #[cfg(test)]
-    let soffice: Option<PathBuf> = TEST_SOFFICE.with(|cell| {
-        match &*cell.borrow() {
-            Some(override_path) => override_path.clone(),
-            None => resolve_soffice().map(|p| p.to_path_buf()),
-        }
+    let soffice: Option<PathBuf> = TEST_SOFFICE.with(|cell| match &*cell.borrow() {
+        Some(override_path) => override_path.clone(),
+        None => resolve_soffice().map(|p| p.to_path_buf()),
     });
 
     #[cfg(not(test))]
@@ -361,10 +359,7 @@ pub async fn convert_ppt_to_pptx(input: &[u8]) -> Result<Vec<u8>, ConvertError> 
 /// soffice path so that tests can inject fake converters.
 /// Callers are responsible for validating the input (size, CFB structure)
 /// before calling this function.
-pub async fn convert_with_soffice(
-    input: &[u8],
-    soffice: &Path,
-) -> Result<Vec<u8>, ConvertError> {
+pub async fn convert_with_soffice(input: &[u8], soffice: &Path) -> Result<Vec<u8>, ConvertError> {
     convert_with_soffice_opt(input, soffice, DEFAULT_CONVERT_TIMEOUT, MAX_OUTPUT_BYTES).await
 }
 
@@ -376,7 +371,6 @@ pub async fn convert_with_soffice_opt(
     convert_timeout: Duration,
     max_output_bytes: u64,
 ) -> Result<Vec<u8>, ConvertError> {
-
     // --- temp directory ---
     let tmp_dir = tempfile::tempdir().map_err(|_| ConvertError::Internal)?;
     let tmp_path = tmp_dir.path().to_path_buf();
@@ -464,8 +458,8 @@ fn validate_pptx_output(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{mpsc, Arc, Barrier};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
 
     // ---- helpers ----
@@ -511,7 +505,9 @@ mod tests {
         let mut ole2 = vec![0xd0, 0xcf, 0x11, 0xe0];
         ole2.resize(512, 0);
         assert!(looks_like_legacy_ppt(&ole2));
-        assert!(!looks_like_legacy_ppt(&[0xd0, 0xcf, 0x11, 0xe0, 0x00, 0x01]));
+        assert!(!looks_like_legacy_ppt(&[
+            0xd0, 0xcf, 0x11, 0xe0, 0x00, 0x01
+        ]));
         assert!(!looks_like_legacy_ppt(b"PK\x03\x04"));
         assert!(!looks_like_legacy_ppt(b""));
         assert!(!looks_like_legacy_ppt(b"not ole2"));
@@ -555,13 +551,28 @@ mod tests {
 
     #[test]
     fn validate_accepts_real_ppt_fixtures() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ppt_normal_demo.ppt");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ppt_normal_demo.ppt"
+        );
         let data = std::fs::read(path).unwrap();
-        assert!(validate_cfb(&data).is_none(), "real .ppt fixture must pass CFB validation");
-        let path2 = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ppt_contacts.ppt");
+        assert!(
+            validate_cfb(&data).is_none(),
+            "real .ppt fixture must pass CFB validation"
+        );
+        let path2 = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ppt_contacts.ppt"
+        );
         let data2 = std::fs::read(path2).unwrap();
-        assert!(validate_cfb(&data2).is_none(), "real .ppt fixture must pass CFB validation");
-        let path3 = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ppt_corrupt.ppt");
+        assert!(
+            validate_cfb(&data2).is_none(),
+            "real .ppt fixture must pass CFB validation"
+        );
+        let path3 = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ppt_corrupt.ppt"
+        );
         let data3 = std::fs::read(path3).unwrap();
         assert_eq!(validate_cfb(&data3), Some(ConvertError::InputCorrupted));
     }
@@ -596,8 +607,10 @@ mod tests {
     fn engine_core_rejects_plain_zip() {
         // A valid ZIP that is not a PPTX
         let plain_zip = minimal_valid_zip();
-        assert!(!validate_pptx_output(&plain_zip),
-            "plain ZIP must be rejected by engine_core parser");
+        assert!(
+            !validate_pptx_output(&plain_zip),
+            "plain ZIP must be rejected by engine_core parser"
+        );
     }
 
     #[test]
@@ -611,26 +624,26 @@ mod tests {
     /// Not a valid PPTX — engine_core parser will reject it.
     fn minimal_valid_zip() -> &'static [u8] {
         &[
-            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0xf4, 0x8e, 0xf9, 0x5c, 0x86, 0xa6, 0x10, 0x36, 0x05, 0x00,
-            0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-            0x61, 0x68, 0x65, 0x6c, 0x6c, 0x6f,
-            0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0xf4, 0x8e, 0xf9, 0x5c, 0x86, 0xa6, 0x10, 0x36,
-            0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x61,
-            0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00,
-            0x00, 0x00,
+            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf4, 0x8e, 0xf9, 0x5c,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x61, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03,
+            0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf4, 0x8e, 0xf9, 0x5c, 0x86, 0xa6, 0x10, 0x36,
+            0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x61, 0x50,
+            0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x2f, 0x00, 0x00,
+            0x00, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]
     }
 
     /// Always-false probe for testing "nothing available".
-    fn probe_none(_: &Path) -> bool { false }
+    fn probe_none(_: &Path) -> bool {
+        false
+    }
 
     /// Always-true probe (for testing candidate acceptance).
-    fn probe_all(_: &Path) -> bool { true }
+    fn probe_all(_: &Path) -> bool {
+        true
+    }
 
     #[test]
     fn resolver_search_order_env_then_candidates_then_path_then_tmp() {
@@ -641,11 +654,14 @@ mod tests {
         let mut log = Vec::new();
 
         // All probes fail → None
-        let result = SofficeResolver::search(
-            env, candidates, path_result, tmp, &probe_none, &mut log,
-        );
+        let result =
+            SofficeResolver::search(env, candidates, path_result, tmp, &probe_none, &mut log);
         assert!(result.is_none());
-        assert_eq!(log.len(), 5, "must probe all 5 sources (env + 2 candidates + path + tmp)");
+        assert_eq!(
+            log.len(),
+            5,
+            "must probe all 5 sources (env + 2 candidates + path + tmp)"
+        );
         assert!(log[0].starts_with("env:"), "first probe must be env");
         assert!(log[1].starts_with("candidate:"));
         assert!(log[2].starts_with("candidate:"));
@@ -692,13 +708,19 @@ mod tests {
         let mut log = Vec::new();
         // path probe fails, tmp probe succeeds — order must be path then tmp
         let result = SofficeResolver::search(
-            None, &[], Some("/path/soffice"), "/tmp/soffice",
+            None,
+            &[],
+            Some("/path/soffice"),
+            "/tmp/soffice",
             &|p: &Path| p.to_str().unwrap().contains("/tmp/"),
             &mut log,
         );
         assert!(result.is_some());
         assert_eq!(log.len(), 2);
-        assert!(log[0].starts_with("path:"), "PATH must be probed before tmp");
+        assert!(
+            log[0].starts_with("path:"),
+            "PATH must be probed before tmp"
+        );
         assert!(log[1].starts_with("tmp:"), "tmp must be last");
     }
 
@@ -709,18 +731,12 @@ mod tests {
         let mut log2 = Vec::new();
 
         // First call: must probe
-        let r1 = resolver.resolve(
-            None, &["/a/soffice"], None, "/tmp/x",
-            &probe_all, &mut log1,
-        );
+        let r1 = resolver.resolve(None, &["/a/soffice"], None, "/tmp/x", &probe_all, &mut log1);
         assert!(r1.is_some());
         assert!(!log1.is_empty(), "first call must probe");
 
         // Second call: must return cached without probing
-        let r2 = resolver.resolve(
-            None, &["/a/soffice"], None, "/tmp/x",
-            &probe_all, &mut log2,
-        );
+        let r2 = resolver.resolve(None, &["/a/soffice"], None, "/tmp/x", &probe_all, &mut log2);
         assert_eq!(r1.map(|p| p.to_path_buf()), r2.map(|p| p.to_path_buf()));
         assert!(log2.is_empty(), "cached call must not probe again");
     }
@@ -731,19 +747,17 @@ mod tests {
         // with new probes succeeds — failure must not be cached.
         let resolver = SofficeResolver::new();
         let mut log1 = Vec::new();
-        let r1 = resolver.resolve(
-            None, &["/bad"], None, "/bad2", &probe_none, &mut log1,
-        );
+        let r1 = resolver.resolve(None, &["/bad"], None, "/bad2", &probe_none, &mut log1);
         assert!(r1.is_none());
         assert!(!log1.is_empty(), "first call must probe");
 
         // Second call: now probes succeed — must work
         let mut log2 = Vec::new();
-        let r2 = resolver.resolve(
-            None, &["/a/soffice"], None, "/tmp/x",
-            &probe_all, &mut log2,
+        let r2 = resolver.resolve(None, &["/a/soffice"], None, "/tmp/x", &probe_all, &mut log2);
+        assert!(
+            r2.is_some(),
+            "failure must not be cached; second call with valid probe must succeed"
         );
-        assert!(r2.is_some(), "failure must not be cached; second call with valid probe must succeed");
         assert!(!log2.is_empty(), "second call must probe again");
     }
 
@@ -786,7 +800,10 @@ mod tests {
                     cache_written_rx.recv().unwrap();
                 }
                 assert_eq!(
-                    failure_probe_resolver.cache.get().map(|path| path.as_path()),
+                    failure_probe_resolver
+                        .cache
+                        .get()
+                        .map(|path| path.as_path()),
                     Some(Path::new("/first-writer/soffice")),
                     "failure probe must observe the first writer before returning false"
                 );
@@ -819,15 +836,24 @@ mod tests {
 
         // Establish cache
         let r1 = resolver.resolve(
-            None, &["/a/soffice"], None, "/tmp/x",
-            &probe_all, &mut Vec::new(),
+            None,
+            &["/a/soffice"],
+            None,
+            "/tmp/x",
+            &probe_all,
+            &mut Vec::new(),
         );
         assert!(r1.is_some());
 
         // Probe that panics if called — cache hit must skip it entirely
         let r2 = resolver.resolve(
-            None, &["/a/soffice"], None, "/tmp/x",
-            &|_: &Path| -> bool { panic!("probe must not be called on cache hit"); },
+            None,
+            &["/a/soffice"],
+            None,
+            "/tmp/x",
+            &|_: &Path| -> bool {
+                panic!("probe must not be called on cache hit");
+            },
             &mut Vec::new(),
         );
         assert!(r2.is_some());
@@ -841,7 +867,8 @@ mod tests {
         let script = if let Some(src) = copy_output {
             format!(
                 "#!/bin/sh\nmkdir -p \"$8\"\ncp \"{}\" \"$8/input.pptx\"\nexit {}\n",
-                src.display(), exit_code
+                src.display(),
+                exit_code
             )
         } else {
             format!("#!/bin/sh\nexit {}\n", exit_code)
@@ -849,7 +876,11 @@ mod tests {
         let mut file = std::fs::File::create(script_path).unwrap();
         file.write_all(script.as_bytes()).unwrap();
         file.flush().unwrap();
-        std::process::Command::new("chmod").arg("+x").arg(script_path).output().unwrap();
+        std::process::Command::new("chmod")
+            .arg("+x")
+            .arg(script_path)
+            .output()
+            .unwrap();
     }
 
     /// Write a valid PPTX to `dest` from the fictional.pptx fixture.
@@ -883,8 +914,11 @@ mod tests {
         let fake = dir.path().join("fake-soffice");
         write_fake_soffice_script(&fake, 0, Some(&out));
         let result = convert_with_soffice(&minimal_valid_cfb(), &fake).await;
-        assert_eq!(result.unwrap_err(), ConvertError::Internal,
-            "plain ZIP output must be CONVERSION_INTERNAL_ERROR");
+        assert_eq!(
+            result.unwrap_err(),
+            ConvertError::Internal,
+            "plain ZIP output must be CONVERSION_INTERNAL_ERROR"
+        );
     }
 
     #[tokio::test]
@@ -900,10 +934,9 @@ mod tests {
 
     #[tokio::test]
     async fn fake_converter_spawn_fail_is_unavailable() {
-        let result = convert_with_soffice(
-            &minimal_valid_cfb(),
-            Path::new("/nonexistent/path/soffice"),
-        ).await;
+        let result =
+            convert_with_soffice(&minimal_valid_cfb(), Path::new("/nonexistent/path/soffice"))
+                .await;
         assert_eq!(result.unwrap_err(), ConvertError::ConverterUnavailable);
     }
 
@@ -924,16 +957,24 @@ mod tests {
         let fake = dir.path().join("fake-soffice");
         let script = "#!/bin/sh\nsleep 5\nexit 0\n";
         std::fs::write(&fake, script).unwrap();
-        std::process::Command::new("chmod").arg("+x").arg(&fake).output().unwrap();
+        std::process::Command::new("chmod")
+            .arg("+x")
+            .arg(&fake)
+            .output()
+            .unwrap();
 
         let result = convert_with_soffice_opt(
             &minimal_valid_cfb(),
             &fake,
             Duration::from_secs(1),
             MAX_OUTPUT_BYTES,
-        ).await;
-        assert_eq!(result.unwrap_err(), ConvertError::ProcessingTimeout,
-            "converter that exceeds deadline must be PROCESSING_TIMEOUT");
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            ConvertError::ProcessingTimeout,
+            "converter that exceeds deadline must be PROCESSING_TIMEOUT"
+        );
     }
 
     #[tokio::test]
@@ -943,16 +984,24 @@ mod tests {
         let fake = dir.path().join("fake-soffice");
         let script = "#!/bin/sh\nmkdir -p \"$8\"\ndd if=/dev/zero of=\"$8/input.pptx\" bs=1024 count=1 2>/dev/null\nexit 0\n";
         std::fs::write(&fake, script).unwrap();
-        std::process::Command::new("chmod").arg("+x").arg(&fake).output().unwrap();
+        std::process::Command::new("chmod")
+            .arg("+x")
+            .arg(&fake)
+            .output()
+            .unwrap();
 
         let result = convert_with_soffice_opt(
             &minimal_valid_cfb(),
             &fake,
             DEFAULT_CONVERT_TIMEOUT,
             100, // very small max output
-        ).await;
-        assert_eq!(result.unwrap_err(), ConvertError::ResourceLimitExceeded,
-            "output exceeding limit must be RESOURCE_LIMIT_EXCEEDED");
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            ConvertError::ResourceLimitExceeded,
+            "output exceeding limit must be RESOURCE_LIMIT_EXCEEDED"
+        );
     }
 
     // ---- error code coverage ----
@@ -960,10 +1009,16 @@ mod tests {
     #[test]
     fn error_codes_are_meaningful_and_distinct() {
         let codes: Vec<&str> = vec![
-            ConvertError::ConverterUnavailable, ConvertError::InputCorrupted,
-            ConvertError::InputEncrypted, ConvertError::ProcessingTimeout,
-            ConvertError::ResourceLimitExceeded, ConvertError::Internal,
-        ].into_iter().map(|e| e.error_code()).collect();
+            ConvertError::ConverterUnavailable,
+            ConvertError::InputCorrupted,
+            ConvertError::InputEncrypted,
+            ConvertError::ProcessingTimeout,
+            ConvertError::ResourceLimitExceeded,
+            ConvertError::Internal,
+        ]
+        .into_iter()
+        .map(|e| e.error_code())
+        .collect();
         assert!(codes.contains(&"LEGACY_CONVERTER_UNAVAILABLE"));
         assert!(codes.contains(&"INPUT_CORRUPTED"));
         assert!(codes.contains(&"INPUT_ENCRYPTED"));
@@ -992,9 +1047,12 @@ mod tests {
     #[test]
     fn to_app_error_maps_every_variant() {
         for variant in &[
-            ConvertError::ConverterUnavailable, ConvertError::InputCorrupted,
-            ConvertError::InputEncrypted, ConvertError::ProcessingTimeout,
-            ConvertError::ResourceLimitExceeded, ConvertError::Internal,
+            ConvertError::ConverterUnavailable,
+            ConvertError::InputCorrupted,
+            ConvertError::InputEncrypted,
+            ConvertError::ProcessingTimeout,
+            ConvertError::ResourceLimitExceeded,
+            ConvertError::Internal,
         ] {
             let app_err = variant.to_app_error();
             assert!(!app_err.code.is_empty());
@@ -1005,14 +1063,25 @@ mod tests {
     #[test]
     fn app_error_messages_never_contain_paths() {
         for variant in &[
-            ConvertError::ConverterUnavailable, ConvertError::InputCorrupted,
-            ConvertError::Internal, ConvertError::ProcessingTimeout,
+            ConvertError::ConverterUnavailable,
+            ConvertError::InputCorrupted,
+            ConvertError::Internal,
+            ConvertError::ProcessingTimeout,
             ConvertError::ResourceLimitExceeded,
         ] {
             let app_err = variant.to_app_error();
-            assert!(!app_err.message.contains('/'), "{variant:?} message must not contain path");
-            assert!(!app_err.message.contains("soffice"), "{variant:?} message must not expose binary name");
-            assert!(!app_err.message.contains("tmp"), "{variant:?} message must not expose tmp dir");
+            assert!(
+                !app_err.message.contains('/'),
+                "{variant:?} message must not contain path"
+            );
+            assert!(
+                !app_err.message.contains("soffice"),
+                "{variant:?} message must not expose binary name"
+            );
+            assert!(
+                !app_err.message.contains("tmp"),
+                "{variant:?} message must not expose tmp dir"
+            );
         }
     }
 
@@ -1020,13 +1089,19 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_input() {
-        assert_eq!(convert_ppt_to_pptx(b"").await.unwrap_err(), ConvertError::InputCorrupted);
+        assert_eq!(
+            convert_ppt_to_pptx(b"").await.unwrap_err(),
+            ConvertError::InputCorrupted
+        );
     }
 
     #[tokio::test]
     async fn rejects_oversized_input() {
         let large = vec![0u8; MAX_PPT_BYTES + 1];
-        assert_eq!(convert_ppt_to_pptx(&large).await.unwrap_err(), ConvertError::ResourceLimitExceeded);
+        assert_eq!(
+            convert_ppt_to_pptx(&large).await.unwrap_err(),
+            ConvertError::ResourceLimitExceeded
+        );
     }
 
     #[tokio::test]
@@ -1042,10 +1117,16 @@ mod tests {
             eprintln!("SKIP: LibreOffice not available for integration test");
             return;
         }
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ppt_normal_demo.ppt");
+        let fixture_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ppt_normal_demo.ppt"
+        );
         let ppt_data = match std::fs::read(fixture_path) {
             Ok(data) => data,
-            Err(_) => { eprintln!("SKIP: bundled fixture not found"); return; }
+            Err(_) => {
+                eprintln!("SKIP: bundled fixture not found");
+                return;
+            }
         };
         if !looks_like_legacy_ppt(&ppt_data) {
             eprintln!("SKIP: fixture does not look like a legacy .ppt");
@@ -1055,7 +1136,10 @@ mod tests {
         let result = rt.block_on(convert_ppt_to_pptx(&ppt_data));
         match result {
             Ok(pptx_bytes) => {
-                assert!(validate_pptx_output(&pptx_bytes), "output must parse as valid PPTX");
+                assert!(
+                    validate_pptx_output(&pptx_bytes),
+                    "output must parse as valid PPTX"
+                );
                 assert!(pptx_bytes.len() > 100, "output should be substantial");
             }
             Err(ConvertError::ConverterUnavailable) => {

@@ -2,7 +2,6 @@ import { ExternalLink, AlertCircle, Loader2, MonitorUp, RefreshCw, Shield, Wifi 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CLOUD_APP_URL } from "@/lib/cloud";
-import { tauriCommands } from "@/lib/tauri";
 
 export type CloudFallbackState = "waiting" | "mounting" | "fallback";
 
@@ -60,6 +59,9 @@ export default function CheersAICloud({
       return;
     }
 
+    // 动态加载：仅在未提供 onOpenStandalone 时才需要 Tauri 命令，
+    // 避免普通浏览器静态打包 Tauri IPC（与下方 onOpenExternal 的 plugin-shell 动态加载一致）。
+    const { tauriCommands } = await import("@/lib/tauri");
     await tauriCommands.openDesktopWindowWithButton(cloudUrl);
   };
 

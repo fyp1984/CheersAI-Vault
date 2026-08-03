@@ -36,7 +36,7 @@
 
 ### 安装
 
-1. 下载 `CheersAI Desktop_x.x.x_x64-setup.exe`
+1. 下载 `CheersAI Vault_x.x.x_x64-setup.exe`
 2. 双击运行安装程序
 3. 按照向导完成安装
 

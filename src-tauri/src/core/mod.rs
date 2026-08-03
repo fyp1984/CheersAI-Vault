@@ -9,3 +9,4 @@ pub mod ner;
 pub mod gitea;
 pub mod file_manager;
 pub mod dpapi;
+pub mod filebay_credentials;

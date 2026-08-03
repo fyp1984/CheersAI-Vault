@@ -11,35 +11,62 @@ pub struct SandboxFile {
 }
 
 use crate::core::dpapi;
+use sandbox_core::{PinBackend, PinController, SandboxError};
+
+/// 桌面沙箱 PIN 状态机：共享 `sandbox-core` 状态转换规则 + 桌面 Keychain/DPAPI
+/// 存储后端。`has_pin`/`verify_pin` 通过它复用共享的校验与长度语义；
+/// `set_pin`/`clear_pin` 保留桌面原有的调用参数与无需校验旧 PIN 的行为
+/// （详见下方两个命令的说明），因此直接使用 `DesktopPinBackend`，不经过
+/// `PinController` 的"替换/清除必须先验证当前 PIN"规则。
+fn desktop_pin_controller() -> PinController<dpapi::DesktopPinBackend> {
+    PinController::new(dpapi::DesktopPinBackend)
+}
+
+fn sandbox_error_to_string(error: SandboxError) -> String {
+    match error {
+        SandboxError::NotConfigured => "尚未设置 PIN，请先设置".to_string(),
+        SandboxError::InvalidLength => "PIN 长度不符合要求（4～128 位）".to_string(),
+        SandboxError::InvalidPin => "PIN 错误".to_string(),
+        SandboxError::Backend(e) => e.to_string(),
+    }
+}
 
 /// 检查是否已设置 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
 #[tauri::command]
 pub async fn has_pin() -> Result<bool, String> {
-    Ok(dpapi::has_pin())
+    desktop_pin_controller()
+        .has_pin()
+        .map_err(sandbox_error_to_string)
 }
 
 /// 验证 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
 #[tauri::command]
 pub async fn verify_pin(pin: String) -> Result<bool, String> {
-    if !dpapi::has_pin() {
-        return Err("尚未设置 PIN，请先设置".to_string());
-    }
-    dpapi::verify_pin(&pin)
+    desktop_pin_controller()
+        .verify_pin(&pin)
+        .map_err(sandbox_error_to_string)
 }
 
-/// 设置 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）
+/// 设置/重新设置 PIN（Windows 使用 DPAPI，macOS 使用 Keychain）。
+///
+/// 桌面端沿用原有调用参数和行为：不要求提供旧 PIN 即可覆盖——
+/// `SandboxManagerDesktop` 页面从未收集"当前 PIN"用于重新设置，此处保持
+/// 与迁移前完全一致，不在本任务中改变桌面既有交互。存储仍通过与共享状态机
+/// 相同的 `DesktopPinBackend`。
 #[tauri::command]
 pub async fn set_pin(pin: String) -> Result<(), String> {
-    if pin.len() < 4 {
+    if pin.chars().count() < sandbox_core::MIN_PIN_LEN {
         return Err("PIN 至少需要 4 位".to_string());
     }
-    dpapi::save_pin(&pin)
+    dpapi::DesktopPinBackend
+        .save_pin(&pin)
+        .map_err(|e| e.to_string())
 }
 
-/// 清除 PIN
+/// 清除 PIN。桌面端沿用原有调用参数：不要求提供当前 PIN，与迁移前行为一致。
 #[tauri::command]
 pub async fn clear_pin() -> Result<(), String> {
-    dpapi::clear_pin()
+    dpapi::DesktopPinBackend.clear_pin().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

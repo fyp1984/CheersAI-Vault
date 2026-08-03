@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
-use tokio::process::Command;
-
-use component_runtime::{OcrConfig, OcrComponentStatus, preflight_check};
+use component_runtime::{OcrConfig, OcrComponentStatus};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -22,31 +20,6 @@ fn get_ocr_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map(|dir| dir.join("ocr-package"))
         .map_err(|e| format!("Failed to get app data dir: {}", e))
-}
-
-fn get_ocr_dir_from_env() -> PathBuf {
-    dirs_next::data_dir()
-        .map(|dir| dir.join("com.cheersai.vault").join("ocr-package"))
-        .unwrap_or_else(|| PathBuf::from(".").join("ocr-package"))
-}
-
-fn get_ocr_python_candidates(ocr_dir: &PathBuf) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        candidates.push(ocr_dir.join("python").join("python.exe"));
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        candidates.push(ocr_dir.join("venv").join("bin").join("python3"));
-        candidates.push(ocr_dir.join("venv").join("bin").join("python"));
-        candidates.push(ocr_dir.join("python").join("bin").join("python3"));
-        candidates.push(ocr_dir.join("python").join("bin").join("python"));
-    }
-
-    candidates
 }
 
 fn find_system_python() -> Option<PathBuf> {
@@ -75,40 +48,14 @@ fn find_system_python() -> Option<PathBuf> {
     None
 }
 
-fn find_existing_ocr_python(ocr_dir: &PathBuf) -> Option<PathBuf> {
-    get_ocr_python_candidates(ocr_dir)
-        .into_iter()
-        .find(|path| path.exists())
-}
-
-pub(crate) fn resolve_ocr_runtime_from_env() -> Option<(PathBuf, PathBuf)> {
-    let ocr_dir = get_ocr_dir_from_env();
-    let script_path = ocr_dir.join("pdf_ocr.py");
-
-    if let Some(python) = find_existing_ocr_python(&ocr_dir) {
-        if script_path.exists() {
-            if let Err(e) = ensure_ocr_script_current(&script_path) {
-                eprintln!("⚠️ Failed to refresh OCR script: {}", e);
-            }
-            return Some((python, script_path));
-        }
-    }
-
-    None
-}
-
 /// Build an `OcrConfig` from the current environment, or return `None`
 /// when no OCR runtime is discoverable.
+///
+/// Delegates to `component_runtime::resolve_ocr_config` so the desktop app
+/// and the enterprise Runtime use exactly the same discovery order and
+/// preflight semantics.
 pub(crate) fn ocr_config_from_env() -> Option<OcrConfig> {
-    let (python_path, script_path) = resolve_ocr_runtime_from_env()?;
-    let model_dir = get_ocr_dir_from_env().join("model");
-    let model_dir = if model_dir.exists() { Some(model_dir) } else { None };
-    Some(OcrConfig {
-        python_path,
-        script_path,
-        model_dir,
-        ..Default::default()
-    })
+    component_runtime::resolve_ocr_config()
 }
 
 /// Return a user-friendly label for the OCR component status.
@@ -141,37 +88,9 @@ fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
 /// 检查 OCR 是否已安装（使用共享组件预检）
 #[tauri::command]
 pub async fn check_ocr_installed(app: AppHandle) -> Result<bool, String> {
-    let ocr_dir = get_ocr_dir(&app)?;
-    let script_path = ocr_dir.join("pdf_ocr.py");
-
-    if !script_path.exists() {
-        return Ok(false);
-    }
-
-    if let Some(python) = find_existing_ocr_python(&ocr_dir) {
-        let config = OcrConfig {
-            python_path: python,
-            script_path,
-            model_dir: Some(ocr_dir.join("model")),
-            ..Default::default()
-        };
-        let status = component_runtime::preflight_check(&config);
-        return Ok(status == OcrComponentStatus::Ready);
-    }
-
-    if let Some(system_python) = find_system_python() {
-        let script_path = ocr_dir.join("pdf_ocr.py");
-        let config = OcrConfig {
-            python_path: system_python,
-            script_path,
-            model_dir: Some(ocr_dir.join("model")),
-            ..Default::default()
-        };
-        let status = component_runtime::preflight_check(&config);
-        return Ok(status == OcrComponentStatus::Ready);
-    }
-
-    Ok(false)
+    Ok(ocr_config_from_env()
+        .map(|config| component_runtime::preflight_check(&config) == OcrComponentStatus::Ready)
+        .unwrap_or(false))
 }
 
 /// 获取 OCR 安装路径
