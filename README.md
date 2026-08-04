@@ -12,6 +12,6 @@
 
 ### Linux 内网客户测试部署
 
-客户浏览器入口是本仓库根目录的原 Vault 前端（本 `vite.config.ts` 构建），不是 `apps/vault-pro-web`。Linux 内网客户测试部署材料（systemd、Nginx、Runtime 环境变量模板、黑盒 smoke 测试脚本）见 [`deploy/linux/`](deploy/linux/)，完整拓扑与安全边界说明见 `DEPLOYMENT.md` 第 0 节与 `deploy/linux/README.md`。
+客户浏览器入口是本仓库根目录的原 Vault 前端（本 `vite.config.ts` 构建），为唯一客户入口。Linux 内网客户测试部署材料（systemd、Nginx、Runtime 环境变量模板、黑盒 smoke 测试脚本）见 [`deploy/linux/`](deploy/linux/)，完整拓扑与安全边界说明见 `DEPLOYMENT.md` 第 0 节与 `deploy/linux/README.md`。
 
 本版本按**单一系统用户**交付（无账号/RBAC/多租户），仅面向企业内网使用，没有应用层鉴权；**真实 Linux 实机部署与真实 FileBay 远端闭环尚未验收**，本机 macOS 与 fake transport 结果不得当作已通过证据。

@@ -2,7 +2,7 @@
  * 浏览器 HTTP 适配器使用的 Runtime 响应类型。
  *
  * 字段与 `apps/vault-runtime-api` 的 `HealthResponse` / `OcrStatusResponse`
- * 保持一致（见 `service-contracts` 与 `apps/vault-pro-web/src/types.ts`），
+ * 保持一致（见 `service-contracts`），
  * 仅用于承载服务端返回的已有安全状态字段，不新增任何服务端未提供的判断。
  */
 
@@ -23,7 +23,7 @@ export interface RuntimeOcrStatusResponse {
  *
  * 字段与 `service-contracts`（`FileStatus`/`BatchStatus`/`RulesResponse`/
  * `CreateBatchResponse`/`BatchSummary`/`BatchDetail`/`BatchFile`/
- * `RetryResponse`/`ErrorResponse`）以及 `apps/vault-pro-web/src/types.ts`
+ * `RetryResponse`/`ErrorResponse`）
  * 逐字段保持一致，只做类型层面的浏览器侧投影，不新增服务端未提供的字段
  * 或状态枚举。
  */

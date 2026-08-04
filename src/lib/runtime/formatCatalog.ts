@@ -1,9 +1,8 @@
 /**
  * 浏览器多文件脱敏链路使用的格式白名单投影。
  *
- * 允许格式必须与当前企业 Runtime 一致——本清单逐项镜像
- * `apps/vault-pro-web/src/formatCatalog.ts`（该文件本身即 Runtime/
- * engine-core 格式边界在 Web 侧的既有投影），不新增、不放宽任何格式。
+ * 允许格式必须与当前企业 Runtime 一致——本清单逐项镜像 Runtime/
+ * engine-core 格式边界在 Web 侧的既有投影，不新增、不放宽任何格式。
  * 前端校验只是提示，Runtime 仍是最终安全门禁，不因这里的判断而跳过
  * 服务端校验。
  */
