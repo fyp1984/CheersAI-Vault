@@ -34,6 +34,7 @@ import json
 import math
 import os
 import sys
+import time
 
 
 def eprint(*args, **kwargs):
@@ -162,12 +163,20 @@ def ocr_page_easyocr(reader, page, page_num, dpi):
 
     zoom = dpi / 72.0
     mat = fitz.Matrix(zoom, zoom)
+    t_render = time.time()
     pix = page.get_pixmap(matrix=mat)
     img_data = pix.tobytes("png")
     img = Image.open(BytesIO(img_data))
     img_array = np.array(img)
+    eprint(
+        f"[ocr-stage] page{page_num + 1} render elapsed={time.time() - t_render:.1f}s"
+    )
 
+    t_ocr = time.time()
     results = reader.readtext(img_array)
+    eprint(
+        f"[ocr-stage] page{page_num + 1} readtext elapsed={time.time() - t_ocr:.1f}s"
+    )
     blocks = []
     for detection in results:
         bbox_pts = detection[0]
@@ -192,12 +201,14 @@ def ocr_with_easyocr(doc, start_idx, end_idx, model_dir, dpi):
 
     Returns (pages, quality).
     """
-    eprint("Initializing EasyOCR (model dir: {})".format(model_dir or "default"))
+    eprint("Initializing EasyOCR...")
 
+    t_init = time.time()
     try:
         reader = _build_reader(model_dir, download_enabled=False)
     except Exception as exc:
         raise RuntimeError(f"EasyOCR offline init failed: {exc}")
+    eprint(f"[ocr-stage] reader_init elapsed={time.time() - t_init:.1f}s")
 
     pages = []
     total_confidence = 0.0
@@ -305,6 +316,8 @@ def main():
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 
+    t_start = time.time()
+
     pdf_path = args.pdf_path
     if not os.path.exists(pdf_path):
         eprint(f"File not found: {pdf_path}")
@@ -355,7 +368,9 @@ def main():
 
     # Step 1: Try PyMuPDF text extraction
     eprint("Trying text-layer extraction...")
+    t_text = time.time()
     pages, quality = extract_text_pymupdf(doc, start_idx, end_idx)
+    eprint(f"[ocr-stage] text_extract elapsed={time.time() - t_text:.1f}s")
 
     has_text = any(
         bool(p["blocks"]) and any(b["text"].strip() for b in p["blocks"])
@@ -400,6 +415,8 @@ def main():
             sys.exit(4)
 
     doc.close()
+
+    eprint(f"[ocr-stage] total elapsed={time.time() - t_start:.1f}s")
 
     result = {
         "schema_version": "1.0",

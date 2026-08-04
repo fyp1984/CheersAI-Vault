@@ -465,6 +465,31 @@ impl Database {
         
         Ok(history)
     }
+
+    /// Resolve one processing record for the FileBay upload boundary.
+    pub async fn get_processing_history_by_id(&self, id: &str) -> Result<Option<ProcessingHistory>> {
+        let row = sqlx::query(
+            r#"SELECT id, file_path, output_path, rule_ids, file_size, masked_count,
+                      processing_time_ms, status, error_message, created_at
+               FROM processing_history WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| ProcessingHistory {
+            id: row.get("id"),
+            file_path: row.get("file_path"),
+            output_path: row.get("output_path"),
+            rule_ids: row.get("rule_ids"),
+            file_size: row.get("file_size"),
+            masked_count: row.get("masked_count"),
+            processing_time_ms: row.get("processing_time_ms"),
+            status: row.get("status"),
+            error_message: row.get("error_message"),
+            created_at: row.get("created_at"),
+        }))
+    }
     
     /// 获取统计信息
     pub async fn get_statistics(&self) -> Result<serde_json::Value> {
@@ -716,7 +741,7 @@ impl Database {
     pub async fn get_filebay_config(&self) -> Result<Option<FileBayConfig>> {
         let config = sqlx::query_as::<_, FileBayConfig>(
             r#"
-            SELECT id, url, token, owner, repo, enabled, created_at, updated_at
+            SELECT id, url, '' AS token, owner, repo, enabled, created_at, updated_at
             FROM filebay_config
             WHERE id = 1
             "#,
@@ -756,13 +781,33 @@ impl Database {
             "#,
         )
         .bind(url)
-        .bind(token)
+        // The legacy parameter is retained for command compatibility, but a
+        // credential must never be persisted in SQLite.
+        .bind("")
         .bind(owner)
         .bind(repo)
         .bind(enabled)
         .execute(&self.pool)
         .await?;
 
+        Ok(())
+    }
+
+    /// Read a legacy token only for the one-time migration path.  Callers
+    /// must immediately move it to the OS credential store and clear it.
+    pub async fn get_legacy_filebay_token(&self) -> Result<Option<String>> {
+        let token: Option<String> = sqlx::query_scalar(
+            "SELECT token FROM filebay_config WHERE id = 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(token.filter(|value| !value.trim().is_empty()))
+    }
+
+    pub async fn clear_legacy_filebay_token(&self) -> Result<()> {
+        sqlx::query("UPDATE filebay_config SET token = '' WHERE id = 1")
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
     

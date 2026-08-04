@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::core::{masking_engine, file_parser, ner, crypto, database};
-use engine_core::{DeterministicFinding, MaskingSession};
+use engine_core::{DeterministicFinding, MaskingSession, SensitiveTermDefinition};
 use uuid::Uuid;
 
 /// 获取文件的总页数
@@ -14,10 +14,24 @@ pub async fn get_file_page_count(file_path: String) -> Result<usize, String> {
 async fn load_sensitive_terms() -> Result<Vec<database::SensitiveTerm>, String> {
     let db = database::Database::new().await
         .map_err(|e| format!("Failed to initialize database: {}", e))?;
-    
+
     // 只加载启用的敏感词
     db.get_sensitive_terms(None, true).await
         .map_err(|e| format!("Failed to load sensitive terms: {}", e))
+}
+
+/// 把桌面数据库记录投影为 engine-core 的纯数据定义，供唯一的共享规则构造
+/// 函数 `engine_core::sensitive_term_rules` 使用；不在本文件重复构造规则。
+fn sensitive_term_definitions(terms: &[database::SensitiveTerm]) -> Vec<SensitiveTermDefinition> {
+    terms
+        .iter()
+        .map(|term| SensitiveTermDefinition {
+            id: term.id.clone(),
+            term: term.term.clone(),
+            category: term.category.clone(),
+            enabled: term.enabled,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,42 +362,14 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
     let mut counter = 0usize;
     let mut shared_masked_entity_count = None;
     
-    // 1. 检查是否启用敏感词库
+    // 1. 检查是否启用敏感词库；转换为规则统一调用共享构造函数（B1）
     let use_sensitive_terms = options.rule_ids.contains(&"use_sensitive_terms".to_string());
     let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
-        // 加载敏感词库
         let sensitive_terms = load_sensitive_terms().await?;
-        
-        // 将敏感词转换为脱敏规则
-        sensitive_terms
-            .iter()
-            .map(|term| {
-                // 使用精确匹配的正则表达式（转义特殊字符）
-                let escaped_term = regex::escape(&term.term);
-                // 对于中文，不使用词边界；对于英文，使用词边界
-                let pattern = if term.term.chars().any(|c| c > '\u{4E00}' && c < '\u{9FA5}') {
-                    // 包含中文字符，不使用词边界
-                    escaped_term
-                } else {
-                    // 纯英文或数字，使用词边界
-                    format!(r"\b{}\b", escaped_term)
-                };
-                
-                masking_engine::MaskingRule {
-                    id: format!("sensitive_term_{}", term.id),
-                    name: format!("{} ({})", term.term, term.category),
-                    pattern,
-                    replacement_template: format!("[{}]", term.category),
-                    use_counter: false, // 敏感词使用固定替换
-                    enabled: term.enabled,
-                    builtin: false,
-                }
-            })
-            .collect()
+        engine_core::sensitive_term_rules(&sensitive_term_definitions(&sensitive_terms))
     } else {
         Vec::new()
     };
-    
 
     // 2. 合并 builtin + custom + sensitive_term 规则
     let builtin = masking_engine::get_builtin_rules();
@@ -401,7 +387,7 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
             builtin: false,
         })
         .collect();
-    
+
     let mut all_combined: Vec<masking_engine::MaskingRule> = builtin.to_vec();
     all_combined.append(&mut custom_masking_rules);
     all_combined.extend(sensitive_term_rules); // 添加敏感词规则
@@ -419,10 +405,10 @@ pub async fn mask_file(options: MaskFileOptions) -> Result<MaskResult, String> {
         })
         .map(|r| { let mut rule = r.clone(); rule.enabled = true; rule })
         .collect();
-    
+
     for rule in &active_rules {
     }
-    
+
     // 创建 NER 检测器（根据选项决定是否启用 AI 检测）
     let use_ai = options.use_ai_validation.unwrap_or(false);
     let ner_detector = if use_ai {
@@ -765,42 +751,16 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
     let format = file_parser::detect_format(&options.file_path);
     let max_rows = options.max_rows.unwrap_or(10);
     
-    // 1. 检查是否启用敏感词库
+    // 1. 检查是否启用敏感词库；转换为规则统一调用共享构造函数（B1）
     let use_sensitive_terms = options.rule_ids.contains(&"use_sensitive_terms".to_string());
-    
+
     let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
-        // 加载敏感词库
         let sensitive_terms = load_sensitive_terms().await?;
-        
-        // 将敏感词转换为脱敏规则
-        sensitive_terms
-            .iter()
-            .map(|term| {
-                let escaped_term = regex::escape(&term.term);
-                // 对于中文，不使用词边界；对于英文，使用词边界
-                let pattern = if term.term.chars().any(|c| c > '\u{4E00}' && c < '\u{9FA5}') {
-                    // 包含中文字符，不使用词边界
-                    escaped_term
-                } else {
-                    // 纯英文或数字，使用词边界
-                    format!(r"\b{}\b", escaped_term)
-                };
-                
-                masking_engine::MaskingRule {
-                    id: format!("sensitive_term_{}", term.id),
-                    name: format!("{} ({})", term.term, term.category),
-                    pattern,
-                    replacement_template: format!("[{}]", term.category),
-                    use_counter: false,
-                    enabled: term.enabled,
-                    builtin: false,
-                }
-            })
-            .collect()
+        engine_core::sensitive_term_rules(&sensitive_term_definitions(&sensitive_terms))
     } else {
         Vec::new()
     };
-    
+
     // 2. 合并 builtin + custom + sensitive_term 规则
     let builtin = masking_engine::get_builtin_rules();
     let mut custom_masking_rules: Vec<masking_engine::MaskingRule> = options.custom_rules
@@ -1181,38 +1141,15 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
     let masked_file_name = if let Some(preview_file_stem) = options.masked_file_stem.as_deref() {
         preview_file_stem.to_string()
     } else if let Some(rule_ids) = &options.rule_ids {
-        // 1. 检查是否启用敏感词库
+        // 1. 检查是否启用敏感词库；转换为规则统一调用共享构造函数（B1）
         let use_sensitive_terms = rule_ids.contains(&"use_sensitive_terms".to_string());
         let sensitive_term_rules: Vec<masking_engine::MaskingRule> = if use_sensitive_terms {
-            // 加载敏感词库
             let sensitive_terms = load_sensitive_terms().await?;
-            
-            // 将敏感词转换为脱敏规则
-            sensitive_terms
-                .iter()
-                .map(|term| {
-                    let escaped_term = regex::escape(&term.term);
-                    let pattern = if term.term.chars().any(|c| c > '\u{4E00}' && c < '\u{9FA5}') {
-                        escaped_term
-                    } else {
-                        format!(r"\b{}\b", escaped_term)
-                    };
-                    
-                    masking_engine::MaskingRule {
-                        id: format!("sensitive_term_{}", term.id),
-                        name: format!("{} ({})", term.term, term.category),
-                        pattern,
-                        replacement_template: format!("[{}]", term.category),
-                        use_counter: false,
-                        enabled: term.enabled,
-                        builtin: false,
-                    }
-                })
-                .collect()
+            engine_core::sensitive_term_rules(&sensitive_term_definitions(&sensitive_terms))
         } else {
             Vec::new()
         };
-        
+
         // 2. 合并 builtin + custom + sensitive_term 规则
         let builtin = masking_engine::get_builtin_rules();
         let mut custom_masking_rules: Vec<masking_engine::MaskingRule> = options.custom_rules

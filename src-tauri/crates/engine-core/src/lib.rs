@@ -141,6 +141,60 @@ pub fn get_builtin_rules() -> &'static Vec<MaskingRule> {
     &BUILTIN_RULES
 }
 
+/// A single sensitive-term library entry, in the plain, I/O-free shape the
+/// rule constructor below needs. Callers (desktop `commands/masking.rs` and
+/// the enterprise Runtime) each own their own persistence and map their
+/// stored records into this shape; this crate never reads a database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SensitiveTermDefinition {
+    pub id: String,
+    pub term: String,
+    pub category: String,
+    pub enabled: bool,
+}
+
+/// The single, shared construction of sensitive-term entries into
+/// [`MaskingRule`]s. Both the desktop `commands/masking.rs` and the
+/// enterprise Runtime's `processing::process_input` must call this — never
+/// duplicate the pattern/replacement logic elsewhere (B1/B2).
+///
+/// Preserves the desktop's pre-existing replacement semantics exactly:
+/// - only enabled entries produce a rule;
+/// - regex metacharacters in the term are escaped to a literal match;
+/// - a term containing any character in `('\u{4E00}', '\u{9FA5}')` (exclusive
+///   both ends — the desktop's original boundary, kept as-is rather than
+///   "fixed" to an inclusive CJK range) is matched exactly, with no word
+///   boundary; all other terms use `\b...\b` word-boundary matching;
+/// - replacement is the fixed `[category]` text, never a counted placeholder.
+pub fn sensitive_term_rules(terms: &[SensitiveTermDefinition]) -> Vec<MaskingRule> {
+    terms
+        .iter()
+        .filter(|term| term.enabled)
+        .map(|term| {
+            let escaped_term = regex::escape(&term.term);
+            let pattern = if term
+                .term
+                .chars()
+                .any(|c| c > '\u{4E00}' && c < '\u{9FA5}')
+            {
+                escaped_term
+            } else {
+                format!(r"\b{}\b", escaped_term)
+            };
+
+            MaskingRule {
+                id: format!("sensitive_term_{}", term.id),
+                name: format!("{} ({})", term.term, term.category),
+                pattern,
+                replacement_template: format!("[{}]", term.category),
+                enabled: true,
+                builtin: false,
+                use_counter: false,
+            }
+        })
+        .collect()
+}
+
 pub struct MaskingService;
 
 impl MaskingService {
@@ -567,5 +621,87 @@ mod tests {
             println!("       This is a non-baseline environment ({os}).  Re-run on Windows");
             println!("       10/11 x64, 8C, 16 GB, SSD for a binding result.");
         }
+    }
+
+    fn sensitive_term(id: &str, term: &str, category: &str, enabled: bool) -> SensitiveTermDefinition {
+        SensitiveTermDefinition {
+            id: id.into(),
+            term: term.into(),
+            category: category.into(),
+            enabled,
+        }
+    }
+
+    /// B3: a term containing CJK characters is matched exactly, with no word
+    /// boundary — mirroring the desktop's original character-range check.
+    #[test]
+    fn sensitive_term_rules_matches_chinese_terms_exactly_without_word_boundary() {
+        let rules = sensitive_term_rules(&[sensitive_term("t1", "张三", "姓名", true)]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "张三");
+        assert_eq!(rules[0].replacement_template, "[姓名]");
+        assert!(!rules[0].use_counter);
+        assert!(rules[0].enabled);
+        assert!(!rules[0].builtin);
+
+        let result = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: "联系人张三先生，另有张三丰".into(),
+            rules,
+            deterministic_findings: vec![],
+        })
+        .unwrap();
+        assert_eq!(result.markdown, "联系人[姓名]先生，另有[姓名]丰");
+        assert_eq!(result.masked_entity_count, 2);
+    }
+
+    /// B3: a pure English/digit term keeps existing word-boundary semantics
+    /// — "CEO" matches as a whole word but not inside "CEOs".
+    #[test]
+    fn sensitive_term_rules_matches_english_terms_with_word_boundary() {
+        let rules = sensitive_term_rules(&[sensitive_term("t2", "CEO", "职位", true)]);
+        assert_eq!(rules[0].pattern, r"\bCEO\b");
+
+        let result = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: "our CEO said; CEOs elsewhere agree".into(),
+            rules,
+            deterministic_findings: vec![],
+        })
+        .unwrap();
+        assert_eq!(result.markdown, "our [职位] said; CEOs elsewhere agree");
+        assert_eq!(result.masked_entity_count, 1);
+    }
+
+    /// B2/安全约束5: regex metacharacters in a term are escaped to a literal
+    /// match, never interpreted as a pattern — prevents regex injection.
+    #[test]
+    fn sensitive_term_rules_escapes_regex_metacharacters() {
+        let rules = sensitive_term_rules(&[sensitive_term("t3", "a.b*c", "内部代号", true)]);
+        let result = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: "code a.b*c here, but not axbyyc".into(),
+            rules,
+            deterministic_findings: vec![],
+        })
+        .unwrap();
+        assert_eq!(result.markdown, "code [内部代号] here, but not axbyyc");
+        assert_eq!(result.masked_entity_count, 1);
+    }
+
+    /// 只转换启用词条: disabled entries produce no rule at all.
+    #[test]
+    fn sensitive_term_rules_skips_disabled_terms() {
+        let rules = sensitive_term_rules(&[
+            sensitive_term("t4", "启用词", "分类", true),
+            sensitive_term("t5", "禁用词", "分类", false),
+        ]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "sensitive_term_t4");
+    }
+
+    #[test]
+    fn sensitive_term_rules_returns_empty_for_empty_input() {
+        assert!(sensitive_term_rules(&[]).is_empty());
     }
 }

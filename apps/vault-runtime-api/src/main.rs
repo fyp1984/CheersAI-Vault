@@ -3,6 +3,31 @@ use std::{net::Ipv4Addr, path::PathBuf};
 use vault_runtime_api::{routes, Limits, Runtime};
 use warp::Filter;
 
+/// 等待 Ctrl-C（SIGINT）或——仅 Unix 平台——SIGTERM，任一到达即返回，
+/// 供 `bind_with_graceful_shutdown` 触发停止监听。systemd 默认用 SIGTERM
+/// 停止服务，因此 Linux 部署必须同时响应二者，不能只等 Ctrl-C。
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("vault-runtime-api received SIGINT, shutting down");
+            }
+            _ = sigterm.recv() => {
+                println!("vault-runtime-api received SIGTERM, shutting down");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        println!("vault-runtime-api received Ctrl-C, shutting down");
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let data_root = std::env::var_os("VAULT_RUNTIME_DATA_DIR")
@@ -35,15 +60,14 @@ async fn main() {
     let cors = warp::cors()
         .allow_origins(allowed_origins.iter().map(String::as_str))
         .allow_headers(vec!["content-type"])
-        .allow_methods(vec!["GET", "POST"])
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE"])
         .expose_header("X-Restored-Entity-Count");
     let api = routes(runtime).with(cors);
     let address = (Ipv4Addr::LOCALHOST, port);
     println!("vault-runtime-api listening on http://127.0.0.1:{port}");
     warp::serve(api)
-        .bind_with_graceful_shutdown(address, async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .bind_with_graceful_shutdown(address, shutdown_signal())
         .1
         .await;
+    println!("vault-runtime-api stopped");
 }

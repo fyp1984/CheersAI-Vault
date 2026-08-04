@@ -1,0 +1,64 @@
+# CheersAI Vault Runtime — systemd 单元模板（Linux 内网客户测试部署）
+#
+# 这是一个模板，不能直接使用：所有 <尖括号> 占位符必须由部署管理员在目标
+# Linux 主机上替换为真实值。本文件不含任何真实凭据或路径。
+#
+# 安装步骤（部署管理员在隔离 Linux 主机上执行）：
+#   1. 用 `useradd --system --no-create-home --shell /usr/sbin/nologin vault-runtime`
+#      （或等效命令）创建一个专用非 root 系统账户，不要用 root 或个人账户运行。
+#   2. 把编译好的 release 二进制（`cargo build --release --manifest-path
+#      apps/vault-runtime-api/Cargo.toml` 产物 target/release/vault-runtime-api）
+#      拷贝到 <RUNTIME_BIN_PATH>，并 `chown vault-runtime:vault-runtime`。
+#   3. 创建数据目录 <RUNTIME_DATA_DIR>，`chown vault-runtime:vault-runtime`，
+#      `chmod 700`（该目录含 SQLite 数据库、原始输入、脱敏产物和映射文件，
+#      绝不能放在 Nginx Web root 下，也不能被其他用户读取）。
+#   4. 复制 runtime.env.example 为 <RUNTIME_ENV_FILE>（例如
+#      /etc/vault-runtime-api/runtime.env），按实际情况填值，
+#      `chown vault-runtime:vault-runtime`，`chmod 600`。
+#   5. 把本文件拷贝到 /etc/systemd/system/vault-runtime-api.service，
+#      替换全部 <尖括号> 占位符。
+#   6. `systemctl daemon-reload && systemctl enable --now vault-runtime-api`。
+#
+# 停止验证：`systemctl stop vault-runtime-api` 后，`ss -ltnp | grep 8787`
+# （或实际端口）应无输出，`journalctl -u vault-runtime-api` 应看到 Runtime
+# 自行打印的 "received SIGTERM" 与 "stopped" 日志（systemd 默认用 SIGTERM
+# 停止服务）。
+
+[Unit]
+Description=CheersAI Vault Runtime API (enterprise intranet customer test)
+Documentation=file:///<REPO_CHECKOUT_PATH>/docs/enterprise/DEPLOYMENT.md
+After=network.target
+
+[Service]
+Type=simple
+
+# 专用非 root 系统账户；不要用 root。
+User=<RUNTIME_SERVICE_USER>
+Group=<RUNTIME_SERVICE_GROUP>
+
+# 环境变量文件，权限须为 600，属主须为上面的服务账户。
+# 内容参考 runtime.env.example（同目录）。
+EnvironmentFile=<RUNTIME_ENV_FILE>
+
+# 工作目录与二进制路径需与实际部署一致。
+WorkingDirectory=<RUNTIME_WORKING_DIR>
+ExecStart=<RUNTIME_BIN_PATH>
+
+# systemd 默认发送 SIGTERM 停止服务；Runtime 已实现 SIGTERM 优雅停机
+# （见 apps/vault-runtime-api/src/main.rs 的 shutdown_signal()），
+# 因此不需要额外的 ExecStop 或自定义 KillSignal。
+Restart=on-failure
+RestartSec=2
+
+# 收紧文件创建权限：Runtime 写入的数据库/产物/日志文件默认不对组或其他
+# 用户开放读写权限（配合数据目录本身的 700 权限双重保护）。
+UMask=0077
+
+# 可选的额外系统级加固（不改变本任务范围内的应用行为，按需启用）：
+# NoNewPrivileges=true
+# PrivateTmp=true
+# ProtectSystem=strict
+# ReadWritePaths=<RUNTIME_DATA_DIR>
+
+[Install]
+WantedBy=multi-user.target

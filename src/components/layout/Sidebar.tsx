@@ -17,7 +17,9 @@ import {
 import { cn } from "@/lib/utils";
 import { getBuildVersion, getAppVersion } from "@/lib/version";
 import { useAppStore } from "@/store/appStore";
+import { useRuntimeHealthStore } from "@/store/runtimeStore";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isTauriHost } from "@/lib/runtime/host";
 
 const HELP_WIKI_URL =
   "https://dcnd0q32i5v3.feishu.cn/wiki/TVChw3onji9mVdkx96tcXsSYnlf?from=from_copylink";
@@ -37,10 +39,14 @@ const navItems = [
 
 
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, activePreviewId } = useAppStore();
   const location = useLocation();
   const [appVersion, setAppVersion] = useState(`v${getBuildVersion()}`);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  const isDesktop = isTauriHost();
+  // 浏览器宿主：底部"Runtime 状态"来自单一事实源 store（与 MainLayout 同源），
+  // 不得各自本地健康检查；桌面宿主保持既有"运行正常"语义。
+  const browserRuntimeStatus = useRuntimeHealthStore((state) => state.status);
 
   useEffect(() => {
     let active = true;
@@ -61,6 +67,12 @@ export function Sidebar() {
   }, [sidebarCollapsed]);
 
   const handleOpenHelpWiki = async () => {
+    // 浏览器宿主直接用标准浏览器能力打开，不尝试任何 Tauri 调用。
+    if (!isDesktop) {
+      window.open(HELP_WIKI_URL, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(HELP_WIKI_URL);
@@ -86,7 +98,9 @@ export function Sidebar() {
         <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg shrink-0" />
         {!sidebarCollapsed && (
           <div className="min-w-0">
-            <div className="truncate text-base font-medium text-white">CheersAI Desktop</div>
+            <div className="truncate text-base font-medium text-white">
+              {isDesktop ? "CheersAI Vault" : "CheersAI Vault Pro"}
+            </div>
             <div className="truncate text-[11px] text-slate-400">智享AI，安全随行</div>
           </div>
         )}
@@ -95,6 +109,10 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className={cn("flex-1 overflow-y-auto", sidebarCollapsed ? "px-2 py-3" : "px-3 py-2")}>
         {navItems.map(({ to, icon: Icon, label, description }) => {
+          // 浏览器会话中存在活动 preview 时，"文件脱敏"入口恢复到该 preview，
+          // 避免切页后丢失活动预览入口；其余链接保持固定路径。
+          const resolvedTo =
+            to === "/process" && activePreviewId ? `/process?preview=${encodeURIComponent(activePreviewId)}` : to;
           const isActive = location.pathname === to || location.pathname.startsWith(to + '/');
           return (
           <Tooltip
@@ -104,7 +122,7 @@ export function Sidebar() {
           >
             <TooltipTrigger asChild>
               <NavLink
-                to={to}
+                to={resolvedTo}
                 onMouseEnter={() => setHoveredItem(to)}
                 onMouseLeave={() => setHoveredItem(null)}
                 onFocus={() => setHoveredItem(to)}
@@ -155,11 +173,34 @@ export function Sidebar() {
         {!sidebarCollapsed && (
           <div className="px-3 py-2 mb-3 space-y-3">
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                <div className="text-xs text-slate-400">系统状态</div>
-              </div>
-              <div className="text-xs text-slate-300">运行正常</div>
+              {isDesktop ? (
+                <>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                    <div className="text-xs text-slate-400">系统状态</div>
+                  </div>
+                  <div className="text-xs text-slate-300">运行正常</div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className={cn(
+                        "w-2 h-2 rounded-full",
+                        browserRuntimeStatus === "online" && "bg-green-400 animate-pulse",
+                        browserRuntimeStatus === "offline" && "bg-red-400",
+                        browserRuntimeStatus === "checking" && "bg-slate-500 animate-pulse"
+                      )}
+                    />
+                    <div className="text-xs text-slate-400">Runtime 状态</div>
+                  </div>
+                  <div className="text-xs text-slate-300">
+                    {browserRuntimeStatus === "online" && "已连接"}
+                    {browserRuntimeStatus === "offline" && "未连接，请确认服务器 Runtime 已启动"}
+                    {browserRuntimeStatus === "checking" && "正在检测..."}
+                  </div>
+                </>
+              )}
               <div className="text-xs text-slate-500 mt-0.5">版本 {appVersion}</div>
             </div>
             <button

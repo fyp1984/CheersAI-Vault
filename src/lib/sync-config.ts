@@ -20,7 +20,6 @@ import type { SyncConfigRequest } from '@/types/commands';
  *   username: 'your_username',
  *   repo_name: 'workspace',
  *   email: 'your@email.com',
- *   token: 'your_token',
  *   user_id: 'optional_user_id'
  * })
  * ```
@@ -59,7 +58,6 @@ export async function syncConfigFromLocalStorage(): Promise<string> {
       username: filebayConfig.username,
       repo_name: filebayConfig.repo_name || 'workspace',
       email: filebayConfig.email,
-      token: filebayConfig.token,
       user_id: filebayConfig.user_id,
     };
   } else if (userStr) {
@@ -70,7 +68,6 @@ export async function syncConfigFromLocalStorage(): Promise<string> {
       username: user.username || user.name,
       repo_name: 'workspace',
       email: user.email,
-      token: user.token || '',
       user_id: user.id,
     };
   } else {
@@ -108,7 +105,6 @@ export async function syncConfigFromAPI(): Promise<string> {
     }
     
     const profileData = await profileResponse.json();
-    console.log('User profile:', profileData);
     
     // 获取 FileBay 配置
     const giteaResponse = await fetch('http://localhost:5001/console/api/account/gitea-settings', {
@@ -118,7 +114,6 @@ export async function syncConfigFromAPI(): Promise<string> {
     let giteaConfig: any = null;
     if (giteaResponse.ok) {
       giteaConfig = await giteaResponse.json();
-      console.log('Gitea config:', giteaConfig);
     }
     
     // 构建配置对象
@@ -127,7 +122,6 @@ export async function syncConfigFromAPI(): Promise<string> {
       username: giteaConfig?.username || profileData.name || profileData.email?.split('@')[0] || '',
       repo_name: giteaConfig?.repo_name || 'workspace',
       email: profileData.email || '',
-      token: giteaConfig?.token || '',
       user_id: profileData.id,
     };
     
@@ -136,11 +130,6 @@ export async function syncConfigFromAPI(): Promise<string> {
       throw new Error('配置不完整：缺少用户名或邮箱');
     }
     
-    if (!config.token) {
-      throw new Error('未找到 Access Token，请先在 FileBay 设置中配置');
-    }
-    
-    console.log('Syncing config:', config);
     return await syncConfigFromDesktop(config);
   } catch (error: any) {
     console.error('Failed to sync config from API:', error);
@@ -184,7 +173,6 @@ await syncConfigFromDesktop({
   username: 'your_username',
   repo_name: 'workspace',
   email: 'your@email.com',
-  token: 'your_token'
 })
 %c
 `, 

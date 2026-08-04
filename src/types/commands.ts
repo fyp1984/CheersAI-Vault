@@ -167,7 +167,7 @@ export interface FileBayConfig {
   username: string;
   repoName: string;
   email: string;
-  token: string;
+  hasToken: boolean;
   downloadedAt: string;
   version: string;
 }
@@ -175,7 +175,6 @@ export interface FileBayConfig {
 export interface FileBayConfigStatus {
   exists: boolean;
   config?: FileBayConfig;
-  filePath?: string;
   lastModified?: string;
 }
 
@@ -224,6 +223,6 @@ export interface SyncConfigRequest {
   username: string;
   repo_name: string;
   email: string;
-  token: string;
+  token?: string;
   user_id?: string;
 }

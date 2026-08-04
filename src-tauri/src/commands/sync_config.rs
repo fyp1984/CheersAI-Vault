@@ -1,12 +1,7 @@
-/// 从 Desktop 在线工作区同步配置到本地
-/// 
-/// 这个命令可以从 Desktop 的 localStorage/cookies 中读取当前用户的配置
-/// 并同步到本地的 Vault 数据库和配置文件
-
+use crate::core::filebay_credentials;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
 use std::path::PathBuf;
-use std::fs;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncConfigRequest {
@@ -14,145 +9,65 @@ pub struct SyncConfigRequest {
     pub username: String,
     pub repo_name: String,
     pub email: String,
-    pub token: String,
+    pub token: Option<String>,
     pub user_id: Option<String>,
 }
 
-/// 从 Desktop 在线工作区同步配置
-/// 
-/// 这个命令接收从 Desktop 前端传递的配置信息，并同步到：
-/// 1. Vault Bridge 数据库 (~/.cheersai/vault.db)
-/// 2. Gitea 配置文件 (gitea_config.json)
-/// 3. FileBay 配置文件 (filebay-config.json)
+fn require_https(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "FILEBAY_HTTPS_REQUIRED")?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() { return Err("FILEBAY_HTTPS_REQUIRED".to_string()); }
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn sync_config_from_desktop(
-    app: AppHandle,
-    config: SyncConfigRequest,
-) -> Result<String, String> {
-    use sqlx::sqlite::SqlitePool;
+pub async fn sync_config_from_desktop(app: AppHandle, config: SyncConfigRequest) -> Result<String, String> {
+    require_https(&config.url)?;
+    if let Some(token) = config.token.as_deref().filter(|value| !value.trim().is_empty()) {
+        filebay_credentials::set_token(token).map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED")?;
+        if filebay_credentials::get_token().map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED")?.as_deref() != Some(token) { return Err("FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string()); }
+    }
 
-
-
-
-
-    // 1. 更新 Vault Bridge 数据库
-    let vault_db_path = get_vault_db_path();
-    if vault_db_path.exists() {
-
-        let db_url = format!("sqlite://{}", vault_db_path.to_string_lossy());
-        let pool = SqlitePool::connect(&db_url)
-            .await
-            .map_err(|e| format!("无法打开 Vault 数据库: {}", e))?;
-        
-        // 检查是否已存在配置
-        let existing: Option<(String,)> = sqlx::query_as(
-            "SELECT user_id FROM filebay_configs WHERE email = ? OR username = ?"
-        )
-        .bind(&config.email)
-        .bind(&config.username)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| format!("查询失败: {}", e))?;
-        
+    let vault_path = get_vault_db_path();
+    if vault_path.exists() {
+        let pool = sqlx::sqlite::SqlitePool::connect(&format!("sqlite://{}", vault_path.to_string_lossy())).await.map_err(|_| "FILEBAY_DATABASE_FAILED")?;
+        let existing: Option<(String,)> = sqlx::query_as("SELECT user_id FROM filebay_configs WHERE email = ? OR username = ?")
+            .bind(&config.email).bind(&config.username).fetch_optional(&pool).await.map_err(|_| "FILEBAY_DATABASE_FAILED")?;
         if let Some((user_id,)) = existing {
-            // 更新现有配置
-
-            sqlx::query(
-                "UPDATE filebay_configs 
-                 SET url = ?, username = ?, repo_name = ?, email = ?, token = ?, updated_at = datetime('now')
-                 WHERE user_id = ?"
-            )
-            .bind(&config.url)
-            .bind(&config.username)
-            .bind(&config.repo_name)
-            .bind(&config.email)
-            .bind(&config.token)
-            .bind(&user_id)
-            .execute(&pool)
-            .await
-            .map_err(|e| format!("更新配置失败: {}", e))?;
+            sqlx::query("UPDATE filebay_configs SET url = ?, username = ?, repo_name = ?, email = ?, token = '', updated_at = datetime('now') WHERE user_id = ?")
+                .bind(&config.url).bind(&config.username).bind(&config.repo_name).bind(&config.email).bind(user_id).execute(&pool).await.map_err(|_| "FILEBAY_DATABASE_FAILED")?;
         } else {
-            // 插入新配置
             let user_id = config.user_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-            sqlx::query(
-                "INSERT INTO filebay_configs (user_id, url, username, repo_name, email, token, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
-            )
-            .bind(&user_id)
-            .bind(&config.url)
-            .bind(&config.username)
-            .bind(&config.repo_name)
-            .bind(&config.email)
-            .bind(&config.token)
-            .execute(&pool)
-            .await
-            .map_err(|e| format!("插入配置失败: {}", e))?;
+            sqlx::query("INSERT INTO filebay_configs (user_id, url, username, repo_name, email, token, updated_at) VALUES (?, ?, ?, ?, ?, '', datetime('now'))")
+                .bind(user_id).bind(&config.url).bind(&config.username).bind(&config.repo_name).bind(&config.email).execute(&pool).await.map_err(|_| "FILEBAY_DATABASE_FAILED")?;
         }
-        
         pool.close().await;
-
-    } else {
-
     }
-    
-    // 2. 更新 Gitea 配置文件
-    let gitea_config_path = get_gitea_config_path()?;
-    let gitea_config = serde_json::json!({
-        "url": config.url,
-        "token": config.token,
-        "owner": config.username,
-        "repo": config.repo_name,
-        "enabled": true
-    });
-    
-    std::fs::write(&gitea_config_path, serde_json::to_string_pretty(&gitea_config).unwrap())
-        .map_err(|e| format!("写入 Gitea 配置失败: {}", e))?;
 
-    // 3. 更新 FileBay 配置文件
-    let filebay_config_path = get_filebay_config_path(&app)?;
+    let gitea_path = get_gitea_config_path()?;
+    let gitea_config = serde_json::json!({ "url": config.url, "owner": config.username, "repo": config.repo_name, "enabled": true });
+    std::fs::write(gitea_path, serde_json::to_vec_pretty(&gitea_config).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?;
+
+    let filebay_path = get_filebay_config_path(&app)?;
+    if let Some(parent) = filebay_path.parent() { std::fs::create_dir_all(parent).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?; }
     let filebay_config = serde_json::json!({
-        "url": config.url,
-        "username": config.username,
-        "repoName": config.repo_name,
-        "email": config.email,
-        "token": config.token,
-        "downloadedAt": chrono::Utc::now().to_rfc3339(),
-        "version": "1.0.0"
+        "url": config.url, "username": config.username, "repoName": config.repo_name,
+        "email": config.email, "hasToken": filebay_credentials::has_token().map_err(|_| "FILEBAY_CREDENTIAL_STORE_UNAVAILABLE")?,
+        "downloadedAt": chrono::Utc::now().to_rfc3339(), "version": "1.0.0"
     });
-    
-    // 确保目录存在
-    if let Some(parent) = filebay_config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
-    }
-    
-    std::fs::write(&filebay_config_path, serde_json::to_string_pretty(&filebay_config).unwrap())
-        .map_err(|e| format!("写入 FileBay 配置失败: {}", e))?;
-
-    Ok(format!(
-        "配置同步成功！\n\n用户: {} ({})\n仓库: {}\n服务器: {}",
-        config.username, config.email, config.repo_name, config.url
-    ))
+    std::fs::write(filebay_path, serde_json::to_vec_pretty(&filebay_config).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?;
+    Ok("FILEBAY_CONFIG_SYNCED".to_string())
 }
 
 fn get_vault_db_path() -> PathBuf {
-    let home = dirs_next::home_dir().expect("Failed to get home directory");
-    home.join(".cheersai").join("vault.db")
+    dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("." )).join(".cheersai").join("vault.db")
 }
 
 fn get_gitea_config_path() -> Result<PathBuf, String> {
-    let temp_dir = std::env::temp_dir();
-    let config_dir = temp_dir.join("cheersai-vault");
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("创建配置目录失败: {}", e))?;
-    Ok(config_dir.join("gitea_config.json"))
+    let dir = std::env::temp_dir().join("cheersai-vault");
+    std::fs::create_dir_all(&dir).map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?;
+    Ok(dir.join("gitea_config.json"))
 }
 
 fn get_filebay_config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
-    let downloads_dir = app_data_dir.join("downloads");
-    Ok(downloads_dir.join("filebay-config.json"))
+    Ok(app.path().app_data_dir().map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED")?.join("downloads").join("filebay-config.json"))
 }

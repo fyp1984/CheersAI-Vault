@@ -11,7 +11,6 @@ pub struct ExtractedConfig {
     pub email: String,
     pub repo_name: String,
     pub url: String,
-    pub token: String,
     pub user_id: Option<String>,
 }
 
@@ -76,35 +75,24 @@ pub async fn extract_config_from_desktop_webview(app: AppHandle) -> Result<Strin
                         repo_name: config.repo_name
                     });
                     
-                    // 通过 Tauri 事件发送配置
+                    // 只发送非敏感元数据；Token 直接交给后端凭据迁移命令。
                     if (window.__TAURI__) {
-                        await window.__TAURI__.event.emit('desktop-config-extracted', config);
-                        console.log('[AutoSync] Config sent to Tauri');
-                    }
-                    
-                    // 同时通过 Vault API 直接同步
-                    try {
-                        const response = await fetch('http://localhost:7788/api/v1/filebay/config', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify(config)
+                        await window.__TAURI__.event.emit('desktop-config-extracted', {
+                            username: config.username,
+                            email: config.email,
+                            repo_name: config.repo_name,
+                            url: config.url,
+                            user_id: config.user_id
                         });
-                        const result = await response.json();
-                        console.log('[AutoSync] Synced to Vault API:', result);
-                        
-                        // 显示成功消息
-                        const msg = `配置已自动同步！\n\n用户: ${config.username}\n邮箱: ${config.email}\n仓库: ${config.repo_name}`;
-                        console.log('[AutoSync] ' + msg);
-                        
-                        // 尝试显示通知（可能会被阻止）
-                        try {
-                            if (window.Notification && Notification.permission === 'granted') {
-                                new Notification('配置同步成功', { body: msg });
-                            }
-                        } catch(e) {}
-                        
-                    } catch (apiError) {
-                        console.error('[AutoSync] Failed to sync to Vault API:', apiError);
+                    }
+
+                    if (window.__TAURI_INTERNALS__?.invoke) {
+                        await window.__TAURI_INTERNALS__.invoke('sync_filebay_config_from_desktop', {
+                            url: config.url,
+                            token: config.token,
+                            owner: config.username,
+                            repo: config.repo_name
+                        });
                     }
                 } else {
                     console.error('[AutoSync] No config found in localStorage');

@@ -260,3 +260,31 @@ fn run_macos_security_command(args: &[&str]) -> Result<std::process::Output, Str
         .output()
         .map_err(|e| format!("调用 macOS security 命令失败: {}", e))
 }
+
+// ============ sandbox-core PinBackend adapter ============
+
+/// The desktop's [`sandbox_core::PinBackend`] implementation. Delegates to
+/// the functions above unchanged — macOS Keychain, Windows DPAPI, or the
+/// non-Windows Base64 fallback. This is a thin wiring adapter only: it does
+/// not change how or where the PIN is stored, only lets the shared
+/// `sandbox-core` state-transition rules (`has_pin`/`verify_pin`) be reused
+/// on the desktop host without a second implementation of that logic.
+pub struct DesktopPinBackend;
+
+impl sandbox_core::PinBackend for DesktopPinBackend {
+    fn has_pin(&self) -> Result<bool, sandbox_core::PinBackendError> {
+        Ok(has_pin())
+    }
+
+    fn save_pin(&self, new_pin: &str) -> Result<(), sandbox_core::PinBackendError> {
+        save_pin(new_pin).map_err(sandbox_core::PinBackendError)
+    }
+
+    fn verify_pin(&self, pin: &str) -> Result<bool, sandbox_core::PinBackendError> {
+        verify_pin(pin).map_err(sandbox_core::PinBackendError)
+    }
+
+    fn clear_pin(&self) -> Result<(), sandbox_core::PinBackendError> {
+        clear_pin().map_err(sandbox_core::PinBackendError)
+    }
+}

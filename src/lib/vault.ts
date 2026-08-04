@@ -12,13 +12,12 @@ export interface VaultFileBayConfig {
   username: string;
   repo_name: string;
   email: string;
-  token: string;
+  has_token: boolean;
   updated_at: string;
 }
 
 export interface VaultDbStats {
   exists: boolean;
-  path: string;
   config_count: number;
   last_updated: string | null;
 }
@@ -49,13 +48,6 @@ export async function getVaultConfigByEmail(email: string): Promise<VaultFileBay
  */
 export async function checkVaultDbExists(): Promise<boolean> {
   return await invoke<boolean>('check_vault_db_exists');
-}
-
-/**
- * 获取 Vault 数据库路径
- */
-export async function getVaultDbPath(): Promise<string> {
-  return await invoke<string>('get_vault_db_path_string');
 }
 
 /**

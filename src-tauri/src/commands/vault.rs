@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::core::filebay_credentials;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VaultFileBayConfig {
@@ -15,7 +16,7 @@ pub struct VaultFileBayConfig {
     pub username: String,
     pub repo_name: String,
     pub email: String,
-    pub token: String,
+    pub has_token: bool,
     pub updated_at: String,
 }
 
@@ -63,16 +64,23 @@ pub async fn list_vault_configs() -> Result<Vec<VaultFileBayConfig>, String> {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string(),
-                                token: config_value.get("token")
+                                has_token: config_value.get("token")
                                     .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
+                                    .is_some_and(|value| !value.trim().is_empty()),
                                 updated_at: config_value.get("downloaded_at")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string(),
                             };
 
+                            if let Some(token) = config_value.get("token").and_then(|value| value.as_str()).filter(|value| !value.trim().is_empty()) {
+                                filebay_credentials::set_token(token).map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+                                let verified = filebay_credentials::get_token().map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?.as_deref() == Some(token);
+                                if !verified { return Err("FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string()); }
+                                let mut safe_value = config_value.clone();
+                                if let Some(object) = safe_value.as_object_mut() { object.remove("token"); }
+                                db.save_setting("filebay_config", &safe_value.to_string()).await.map_err(|_| "FILEBAY_CONFIG_STORAGE_FAILED".to_string())?;
+                            }
                             return Ok(vec![config]);
                         }
                         Err(e) => {
@@ -118,8 +126,20 @@ pub async fn list_vault_configs() -> Result<Vec<VaultFileBayConfig>, String> {
     .await
     .map_err(|e| format!("查询失败: {}", e))?;
     
+    for (user_id, _, _, _, _, token, _) in &configs {
+        if !token.trim().is_empty() {
+            filebay_credentials::set_token(token).map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+            let verified = filebay_credentials::get_token().map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?.as_deref() == Some(token.as_str());
+            if !verified { return Err("FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string()); }
+            sqlx::query("UPDATE filebay_configs SET token = '' WHERE user_id = ?")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+        }
+    }
     pool.close().await;
-    
+
     if configs.is_empty() {
         return Err(
             "数据库中没有配置\n\n请先在 Desktop 的 FileBay 设置页面配置，配置会自动同步到本地。\n\n或者在 Vault 系统中登录并同步配置:\nhttp://localhost:3000/sync-config".to_string()
@@ -129,13 +149,14 @@ pub async fn list_vault_configs() -> Result<Vec<VaultFileBayConfig>, String> {
     let result: Vec<VaultFileBayConfig> = configs
         .into_iter()
         .map(|(user_id, url, username, repo_name, email, token, updated_at)| {
+            let has_token = !token.trim().is_empty();
             VaultFileBayConfig {
                 user_id,
                 url,
                 username,
                 repo_name,
                 email,
-                token,
+                has_token,
                 updated_at,
             }
         })
@@ -170,17 +191,26 @@ pub async fn get_vault_config_by_user_id(user_id: String) -> Result<VaultFileBay
     .await
     .map_err(|e| format!("查询失败: {}", e))?;
     
+    if let Some((user_id, _, _, _, _, token, _)) = config.as_ref() {
+        if !token.trim().is_empty() {
+            filebay_credentials::set_token(token).map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+            let verified = filebay_credentials::get_token().map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?.as_deref() == Some(token.as_str());
+            if !verified { return Err("FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string()); }
+            sqlx::query("UPDATE filebay_configs SET token = '' WHERE user_id = ?").bind(user_id).execute(&pool).await.map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+        }
+    }
     pool.close().await;
-    
+
     match config {
         Some((user_id, url, username, repo_name, email, token, updated_at)) => {
+            let has_token = !token.trim().is_empty();
             Ok(VaultFileBayConfig {
                 user_id,
                 url,
                 username,
                 repo_name,
                 email,
-                token,
+                has_token,
                 updated_at,
             })
         }
@@ -214,17 +244,26 @@ pub async fn get_vault_config_by_email(email: String) -> Result<VaultFileBayConf
     .await
     .map_err(|e| format!("查询失败: {}", e))?;
     
+    if let Some((user_id, _, _, _, _, token, _)) = config.as_ref() {
+        if !token.trim().is_empty() {
+            filebay_credentials::set_token(token).map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+            let verified = filebay_credentials::get_token().map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?.as_deref() == Some(token.as_str());
+            if !verified { return Err("FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string()); }
+            sqlx::query("UPDATE filebay_configs SET token = '' WHERE user_id = ?").bind(user_id).execute(&pool).await.map_err(|_| "FILEBAY_CREDENTIAL_MIGRATION_FAILED".to_string())?;
+        }
+    }
     pool.close().await;
     
     match config {
         Some((user_id, url, username, repo_name, email, token, updated_at)) => {
+            let has_token = !token.trim().is_empty();
             Ok(VaultFileBayConfig {
                 user_id,
                 url,
                 username,
                 repo_name,
                 email,
-                token,
+                has_token,
                 updated_at,
             })
         }
@@ -239,13 +278,6 @@ pub async fn check_vault_db_exists() -> Result<bool, String> {
     Ok(db_path.exists())
 }
 
-/// 获取 Vault 数据库路径
-#[tauri::command]
-pub async fn get_vault_db_path_string() -> Result<String, String> {
-    let db_path = get_vault_db_path();
-    Ok(db_path.to_string_lossy().to_string())
-}
-
 /// 获取 Vault 数据库统计信息
 #[tauri::command]
 pub async fn get_vault_db_stats() -> Result<VaultDbStats, String> {
@@ -256,7 +288,6 @@ pub async fn get_vault_db_stats() -> Result<VaultDbStats, String> {
     if !db_path.exists() {
         return Ok(VaultDbStats {
             exists: false,
-            path: db_path.to_string_lossy().to_string(),
             config_count: 0,
             last_updated: None,
         });
@@ -285,7 +316,6 @@ pub async fn get_vault_db_stats() -> Result<VaultDbStats, String> {
     
     Ok(VaultDbStats {
         exists: true,
-        path: db_path.to_string_lossy().to_string(),
         config_count: count.0 as usize,
         last_updated: last_updated.map(|(time,)| time),
     })
@@ -294,7 +324,6 @@ pub async fn get_vault_db_stats() -> Result<VaultDbStats, String> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VaultDbStats {
     pub exists: bool,
-    pub path: String,
     pub config_count: usize,
     pub last_updated: Option<String>,
 }

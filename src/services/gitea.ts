@@ -30,12 +30,12 @@ export async function createGiteaRepo(isPrivate: boolean = true): Promise<string
  * 上传单个文件到 Gitea
  */
 export async function uploadToGitea(
-  filePath: string,
+  historyId: string,
   remotePath: string,
   message?: string
 ): Promise<UploadResult> {
   return await invoke<UploadResult>('upload_to_gitea', {
-    filePath,
+    historyId,
     remotePath,
     message,
   });
@@ -45,7 +45,7 @@ export async function uploadToGitea(
  * 批量上传文件到 Gitea
  */
 export async function uploadBatchToGitea(
-  files: Array<[string, string]>, // [本地路径, 远程路径]
+  files: Array<[string, string]>, // [成功处理历史 ID, masked/ 远程路径]
   message?: string
 ): Promise<UploadResult> {
   return await invoke<UploadResult>('upload_batch_to_gitea', {

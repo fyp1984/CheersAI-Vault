@@ -9,7 +9,6 @@ import { useEffect, useState } from 'react';
 import { 
   listVaultConfigs, 
   checkVaultDbExists, 
-  getVaultDbPath, 
   getVaultDbStats,
   VaultFileBayConfig,
   VaultDbStats 
@@ -103,10 +102,6 @@ export function VaultConfigSelector({
               <span className="text-xs font-medium text-gray-700 uppercase tracking-wide">数据库信息</span>
             </div>
             <div className="space-y-1.5 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600">路径:</span>
-                <code className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-700">{stats.path}</code>
-              </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">状态:</span>
                 <span className={`text-xs font-medium ${stats.exists ? 'text-success' : 'text-error'}`}>
@@ -241,7 +236,6 @@ export function VaultConfigSelector({
             <Database className="w-3.5 h-3.5" />
             <span className="font-medium">数据库位置</span>
           </div>
-          <div className="break-all font-mono">{stats.path}</div>
         </div>
       )}
     </div>
