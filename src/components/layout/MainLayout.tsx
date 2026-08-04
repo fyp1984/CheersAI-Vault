@@ -10,7 +10,7 @@ import type { RuntimeFileBayConfigStatus } from "@/types/runtime";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
   "/cloud": {
-    title: "CheersAI Desktop 在线工作区",
+    title: "CheersAI 云端工作区",
     description: "把敏感数据留在本地，让AI能力触手可及。",
   },
   "/process": {
@@ -100,7 +100,12 @@ export function MainLayout() {
     title: isDesktopHost ? "CheersAI Vault" : "CheersAI Vault Pro",
     description: "把敏感数据留在本地，让AI能力触手可及。",
   };
-  const headerTitle = isDesktopWorkspace ? "CheersAI Desktop 在线工作区" : meta.title;
+  // 浏览器宿主页头不得出现 "CheersAI Desktop"（该名称仅指智能体工作台，
+  // 不得用于本项目浏览器版）；桌面宿主 `/cloud` 内嵌的正是智能体工作台
+  // 子 WebView，保留其原名属已确认的指向性用法。
+  const headerTitle = isDesktopWorkspace
+    ? (isDesktopHost ? "CheersAI Desktop 在线工作区" : "CheersAI 云端工作区")
+    : meta.title;
 
   const runtimeStatus = useRuntimeHealthStore((state) => state.status);
   const refreshRuntime = useRuntimeHealthStore((state) => state.refresh);

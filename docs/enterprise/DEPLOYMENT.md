@@ -6,7 +6,7 @@
 
 ## 0. 客户入口：原 Vault 根前端 + Linux 内网部署（本文档的主线）
 
-**面向客户交付时，浏览器端入口是仓库根目录的原 Vault 前端（本仓库根 `vite.config.ts` 构建的 React 应用），不是 `apps/vault-pro-web`。** `apps/vault-pro-web` 仍保留在仓库中，但本轮明确不作为客户入口，也未做任何扩建（老师决策，见 `.codex-local/规则/决策说明.md`）。
+**面向客户交付时，浏览器端入口是仓库根目录的原 Vault 前端（本仓库根 `vite.config.ts` 构建的 React 应用），这是唯一客户入口。** 不存在第二套客户入口。
 
 ```text
 浏览器 / 企业内网系统
@@ -23,14 +23,14 @@ Nginx（内网地址 + 客户 CIDR 白名单，唯一入口）
 - 四项客户可调用的 HTTP API（批量提交、进度查询/失败信息、结果下载、健康检查）的完整字段说明见 [API_REFERENCE.md](./API_REFERENCE.md)；Runtime 实际还有更多接口供原 Vault 前端自身使用，但不在本次客户测试的承诺范围内。
 - **FileBay 浏览器上传（单系统用户 MVP）**：`VAULT_FILEBAY_URL`/`_TOKEN`/`_OWNER`/`_REPO` 四项由部署管理员在 Runtime 环境文件配置（启动时读取一次，修改后重启生效）；浏览器 `/gitea` 只显示安全状态并允许显式测试连接、创建固定私有仓库，`/files` 只允许确认上传 `Completed` 脱敏 Markdown。配置与操作详见第 5.2 节。
 
-本文档第 1-9 节沿用此前单机 MVP 阶段积累的 Runtime/OCR/LibreOffice/环境变量/排障说明（大多数内容与部署拓扑无关，继续适用），第 1 节的组件关系图与第 5 节的启动命令已更新为反映"原 Vault 根前端 + Nginx + Runtime"这一客户交付拓扑；仍保留 `apps/vault-pro-web` 的构建方式作为该应用自身的开发说明，但不代表客户部署路径。
+本文档第 1-9 节沿用此前单机 MVP 阶段积累的 Runtime/OCR/LibreOffice/环境变量/排障说明（大多数内容与部署拓扑无关，继续适用），第 1 节的组件关系图与第 5 节的启动命令已更新为反映"原 Vault 根前端 + Nginx + Runtime"这一客户交付拓扑。
 
 ## 本版本包含什么
 
 本次提交范围：
 
 - 共享脱敏/解析核心（`src-tauri/crates/engine-core`）与 OCR 组件封装（`src-tauri/crates/component-runtime`）。
-- 企业端 Runtime（`apps/vault-runtime-api`）；客户浏览器入口为仓库根目录原 Vault 前端，`apps/vault-pro-web` 保留但不是客户入口。
+- 企业端 Runtime（`apps/vault-runtime-api`）；客户浏览器入口为仓库根目录原 Vault 前端（唯一客户入口）。
 - 桌面端为兼容共享核心所做的必要适配（`src-tauri/src/`、`src/`）。
 - 浏览器 FileBay 上传（单系统用户 MVP）：管理员通过 `VAULT_FILEBAY_URL`/`_TOKEN`/`_OWNER`/`_REPO` 四个环境变量配置固定 HTTPS 目标私有仓库；浏览器只查看安全状态，并显式触发测试连接、创建私有仓库、确认上传已完成脱敏 Markdown（见第 5.2 节）。共享 `filebay-core` 供桌面与 Runtime 复用。
 - 企业端部署与操作文档（`docs/enterprise/`）及相关配置样例（`.env.example`、`requirements-ocr.txt`）、Linux 交付材料（`deploy/linux/`）。
@@ -70,7 +70,7 @@ Nginx
 | 组件 | 用途 | 本机验证版本 | 说明 |
 |---|---|---|---|
 | Rust / Cargo | 编译 `engine-core`、`component-runtime`、`vault-runtime-api` | `rustc 1.97.0`、`cargo 1.97.0` | 各 crate `Cargo.toml` 声明 `edition = "2021"`；间接依赖 `lopdf-parang` 要求 `rust-version 1.85`，建议使用 1.85 及以上工具链 |
-| Node.js / pnpm | 构建**客户入口**（仓库根目录原 Vault 前端）；也可用于构建 `apps/vault-pro-web`（不用于客户部署，仅该应用自身开发用） | `node v22.16.0`、`pnpm 11.17.0`（由根 `package.json` 的 `"packageManager"` 字段精确声明；未全局安装 pnpm 时用 `corepack pnpm` 调用会自动解析出这个版本） | 根前端构建命令见第 5 节；Vite 7 通常要求 Node 18+（**未在其他版本上验证**，仅记录本机实测版本）。统一用 pnpm，不使用 npm |
+| Node.js / pnpm | 构建**客户入口**（仓库根目录原 Vault 前端） | `node v22.16.0`、`pnpm 11.17.0`（由根 `package.json` 的 `"packageManager"` 字段精确声明；未全局安装 pnpm 时用 `corepack pnpm` 调用会自动解析出这个版本） | 根前端构建命令见第 5 节；Vite 7 通常要求 Node 18+（**未在其他版本上验证**，仅记录本机实测版本）。统一用 pnpm，不使用 npm |
 | Python | 运行 OCR 组件（`pdf_ocr.py`） | `Python 3.13.3` | 见第 3 节 |
 | LibreOffice | 旧版 `.ppt` → `.pptx` 转换 | `LibreOffice 26.2.4.2`（macOS 便携版，路径见第 3.4 节，`soffice --version` 实测输出）；**Linux 上须用发行版包管理器正式安装**（如 `apt install libreoffice` / `dnf install libreoffice`），见第 3.4 节 | 企业端特有依赖，个人端不支持旧版 `.ppt`（见第 9 节已知限制） |
 | Nginx | Linux 内网客户测试部署的唯一入口（托管前端 + 反代 Runtime + CIDR 访问控制） | 本机 macOS 补充验证用 `nginx/1.31.3`（Homebrew，仅用于模板 `nginx -t` 语法检查，非 Linux 替代） | 见 [`deploy/linux/nginx-cheersai-vault.conf`](../../deploy/linux/nginx-cheersai-vault.conf)；Linux 生产路径需在隔离 Linux 主机安装发行版自带的 Nginx |
@@ -179,8 +179,6 @@ diff <(/path/to/ocr-venv/bin/pip freeze | sort) \
 |---|---|---|---|
 | `VITE_RUNTIME_API_URL` | 前端访问 Runtime API 的基地址 | 未设置时，生产构建走**同源 `/api`**（由 Nginx 反代到 Runtime，见第 0 节拓扑），本机开发默认回落到 `http://127.0.0.1:8787` | 客户 Linux 部署**不应设置**此变量——前端应始终用同源 `/api` 经 Nginx 访问 Runtime，不要在前端里写死服务器 IP。仅本机开发或需要跨源直连 Runtime 调试时才显式设置；设置时必须是 `http://` + loopback 地址（`127.0.0.1`/`localhost`/`[::1]`），否则前端启动即抛错（`src/lib/runtime/client.ts` `validateBaseUrl()`） |
 
-> `apps/vault-pro-web` 有自己独立的同名变量与 `client.ts`（`apps/vault-pro-web/src/api/client.ts`），只影响该应用自身，与客户交付路径（仓库根前端）无关。
-
 ### 4.3 LibreOffice 覆盖变量（1 个，Runtime 进程读取）
 
 | 变量 | 用途 | 默认值 | 是否必填 |
@@ -214,7 +212,7 @@ diff <(/path/to/ocr-venv/bin/pip freeze | sort) \
 # 1. 构建 Runtime release 二进制
 cargo build --release --manifest-path apps/vault-runtime-api/Cargo.toml
 
-# 2. 构建仓库根目录原 Vault 前端（客户入口，不是 apps/vault-pro-web）
+# 2. 构建仓库根目录原 Vault 前端（唯一客户入口）
 pnpm install --frozen-lockfile
 pnpm exec vite build
 # 产物在仓库根 dist/，交给 Nginx 托管，不要单独用 `pnpm dev`/临时静态服务器对外提供服务
@@ -285,64 +283,6 @@ pnpm exec vite build
 步骤与本节 FileBay 远端闭环都尚未在真实 Linux 主机或真实 FileBay 上验收（当前
 无隔离 Linux 主机与专用测试凭据），不得把本机 macOS 或 fake transport 测试结果
 当作真实远端已通过的证据。
-
-### 5.3 历史参考：`apps/vault-pro-web` 本机构建验证记录（非客户部署路径）
-
-以下内容是本项目更早阶段针对 `apps/vault-pro-web`（企业 Web，单机 macOS MVP 阶段的浏览器前端）积累的构建验证记录，继续保留供该应用自身开发参考，**不代表 Linux 客户测试部署路径**——客户浏览器入口请参见 5.1 节的仓库根前端。
-
-```bash
-# 1. 构建并启动 Runtime（先于 Web，Web 依赖 Runtime 的 HTTP API）
-cd apps/vault-runtime-api
-cargo build --release
-
-VAULT_RUNTIME_DATA_DIR=/path/to/enterprise-data \
-VAULT_OCR_PYTHON=/path/to/ocr-venv/bin/python3 \
-VAULT_OCR_SCRIPT=/path/to/CheersAI-Vault/src-tauri/scripts/pdf_ocr.py \
-VAULT_OCR_MODEL_DIR=/path/to/ocr-models \
-CHEERSAI_LIBREOFFICE_PATH=/path/to/soffice \
-  ./target/release/vault-runtime-api
-# 输出：vault-runtime-api listening on http://127.0.0.1:8787
-
-# 2. 构建企业 Web（另一个终端，从仓库根目录开始）
-cd apps/vault-pro-web
-pnpm install --frozen-lockfile
-VITE_RUNTIME_API_URL=http://127.0.0.1:8787 pnpm build
-# 产物在 dist/，用任意静态文件服务器托管，或本地用 `pnpm dev` 直接预览
-```
-
-企业 Web 统一使用 pnpm（app-local `package.json` + `pnpm-lock.yaml` + `pnpm-workspace.yaml`），不使用 npm。`apps/vault-pro-web/package.json` 精确声明了 `"packageManager": "pnpm@11.17.0"`；若本机未全局安装 pnpm，可用 `corepack pnpm ...` 代替上述 `pnpm ...` 命令——Node.js 自带的 corepack 会读取这个字段，自动获取并使用**该精确版本**的 pnpm，而不是"某个可用版本"，因此任何人 clone 仓库后用 `corepack pnpm` 执行都会得到与本文档实测相同的 pnpm 版本。
-
-**本机实际验证**（全新隔离临时目录，仅复制 `apps/vault-pro-web` 的 `package.json`（含 `packageManager` 字段）、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`index.html`、`src/`、`public/`、`tsconfig.json`、`vite.config.ts`，不复用仓库内已有的 `node_modules`）：
-
-```
-$ node --version
-v22.16.0
-
-$ corepack pnpm --version
-11.17.0
-```
-
-`corepack pnpm --version` 输出与 `package.json` 里 `"packageManager": "pnpm@11.17.0"` 精确一致——证明 Corepack 确实是按该字段解析出这个版本，而不是解析到本机偶然安装的某个 pnpm。
-
-```
-$ corepack pnpm install --frozen-lockfile
-Lockfile is up to date, resolution step is skipped
-Packages: +78
-...
-Done in 1.2s using pnpm v11.17.0
-
-$ VITE_RUNTIME_API_URL=http://127.0.0.1:8787 corepack pnpm build
-$ tsc --noEmit && vite build
-✓ 1764 modules transformed.
-dist/index.html                   0.54 kB
-dist/assets/index-*.css          12.75 kB
-dist/assets/index-*.js          258.46 kB
-✓ built in 1.23s
-```
-
-三条命令退出码均为 `0`，证明 `pnpm-lock.yaml` 与 `package.json` 一致（冻结安装未触发任何依赖版本变化）、`pnpm-workspace.yaml` 的 `allowBuilds.esbuild: true` 配置有效（esbuild 的 postinstall 脚本被正确批准执行）。
-
-**本机实测**：按上述方式启动 Runtime（含 OCR 与 LibreOffice 覆盖变量），`curl http://127.0.0.1:8787/api/v1/health` 返回 `{"status":"ready","version":"0.1.0"}`。
 
 ## 6. 数据目录与 `.cmap` 隐私边界
 
