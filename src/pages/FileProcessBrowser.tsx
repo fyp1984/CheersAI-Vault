@@ -152,11 +152,11 @@ export default function FileProcessBrowser() {
 
 
   // URL 与全局 store/sessionStorage 的同步：
-  // - 首次加载时，若 URL 带合法 preview_id 且 store 为空，则从 URL 恢复（支持
-  //   直接刷新 `#/process?preview=<id>`）。
-  // - 此后以 store 为唯一来源：store 变化时同步到 URL；store 被显式清空时
-  //   URL 也清空，避免 cancel/confirm 后被 URL sync 自动恢复回来。
+  // - 合法的显式 URL preview 是当前导航的权威来源，即使 session 中已有旧值；
+  // - URL 没有 preview/batch 时才从 store/sessionStorage 恢复；
+  // - store 被显式清空时清掉 URL，避免 cancel/confirm 后又恢复旧 preview。
   const restoredFromUrlRef = useRef(false);
+  const previousUrlPreviewRef = useRef<string | null>(urlPreviewId);
   const pendingBatchIdRef = useRef<string | null>(null);
   useEffect(() => {
     // `setSearchParams` 的导航更新与 Zustand 的 preview 清空可能跨一个
@@ -173,13 +173,16 @@ export default function FileProcessBrowser() {
     // 活动 preview 并切换到 batch；此处必须让批次导航成为终态，不能被
     // preview 清理分支竞争性覆盖为无参数的 /process。
     if (batchId) return;
-    if (!restoredFromUrlRef.current) {
+    const urlPreviewChanged = previousUrlPreviewRef.current !== urlPreviewId;
+    previousUrlPreviewRef.current = urlPreviewId;
+    if (isValidPreviewId(urlPreviewId) && (!restoredFromUrlRef.current || urlPreviewChanged)) {
       restoredFromUrlRef.current = true;
-      if (isValidPreviewId(urlPreviewId) && !isValidPreviewId(activePreviewId)) {
+      if (activePreviewId !== urlPreviewId) {
         setActivePreviewId(urlPreviewId);
-        return;
       }
+      return;
     }
+    restoredFromUrlRef.current = true;
     if (isValidPreviewId(activePreviewId)) {
       if (urlPreviewId !== activePreviewId) {
         setSearchParams({ preview: activePreviewId }, { replace: true });
@@ -190,11 +193,13 @@ export default function FileProcessBrowser() {
   }, [batchId, urlPreviewId, activePreviewId, setActivePreviewId, setSearchParams]);
 
   // URL 参数优先；若 URL 没有但全局 store/sessionStorage 有活动 preview，则恢复。
-  const previewId = isValidPreviewId(urlPreviewId)
-    ? urlPreviewId
-    : isValidPreviewId(activePreviewId)
-      ? activePreviewId
-      : null;
+  const previewId = batchId
+    ? null
+    : isValidPreviewId(urlPreviewId)
+      ? urlPreviewId
+      : isValidPreviewId(activePreviewId)
+        ? activePreviewId
+        : null;
 
   const [queue, setQueue] = useState<QueuedFile[]>([]);
   const [addWarning, setAddWarning] = useState<string | null>(null);
@@ -257,6 +262,18 @@ export default function FileProcessBrowser() {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const previewActionGenerationRef = useRef(0);
+  const previewActionIdentityRef = useRef<string | null>(previewId);
+  const invalidatePreviewActions = (identity: string | null = null) => {
+    previewActionGenerationRef.current += 1;
+    previewActionIdentityRef.current = identity;
+    setConfirming(false);
+    setCancelling(false);
+  };
+
+  useEffect(() => {
+    invalidatePreviewActions(previewId);
+  }, [previewId]);
 
   const loadRules = useCallback(async () => {
     setRulesState({ kind: "loading" });
@@ -305,6 +322,9 @@ export default function FileProcessBrowser() {
 
     let cancelled = false;
     let timer: number | undefined;
+    setDetail(null);
+    setDetailError(null);
+    setConnection("ok");
 
     const poll = async () => {
       if (cancelled) return;
@@ -313,6 +333,12 @@ export default function FileProcessBrowser() {
 
       if (!result.ok) {
         if (result.reason === "http") {
+          if (result.status === 404) {
+            setDetail(null);
+            setDetailError("该批次不存在，请返回重新选择。");
+            setConnection("ok");
+            return;
+          }
           setDetailError(result.message ?? "批次查询失败，请稍后重试。");
         } else {
           setConnection("reconnecting");
@@ -356,6 +382,10 @@ export default function FileProcessBrowser() {
 
     let cancelled = false;
     let timer: number | undefined;
+    setPreviewDetail(null);
+    setPreviewDetailError(null);
+    setPreviewConnection("ok");
+    setLastUpdatedAt(null);
     // 新的 previewId 一律从干净状态重新开始：上一个预览会话残留的
     // confirm/cancel 错误提示不得挂在一个全新的预览会话上。
     setConfirmError(null);
@@ -546,17 +576,27 @@ export default function FileProcessBrowser() {
 
 
   const startNewBatch = () => {
+    pendingBatchIdRef.current = null;
     setDetail(null);
     setDetailError(null);
+    setActivePreviewId(null);
     setSearchParams({});
   };
 
   const confirmPreview = async () => {
     if (!previewId || confirming) return;
+    const requestGeneration = previewActionGenerationRef.current;
+    const requestPreviewId = previewId;
     setConfirming(true);
     setConfirmError(null);
     try {
-      const result = await confirmRuntimePreview(previewId);
+      const result = await confirmRuntimePreview(requestPreviewId);
+      if (
+        requestGeneration !== previewActionGenerationRef.current ||
+        requestPreviewId !== previewActionIdentityRef.current
+      ) {
+        return;
+      }
       if (!result.ok) {
         setConfirmError(
           result.reason === "http"
@@ -565,6 +605,7 @@ export default function FileProcessBrowser() {
         );
         return;
       }
+      invalidatePreviewActions(null);
       pendingBatchIdRef.current = result.data.batch_id;
       // 先提交批次 URL，再清空活动 preview。这样 URL 同步 effect 在同一
       // 次状态转移中先看到 batch 终态，不会把确认后的正式批次导航清回 /process。
@@ -577,16 +618,29 @@ export default function FileProcessBrowser() {
       setLastUpdatedAt(null);
       setSubmitPhase("idle");
     } finally {
-      setConfirming(false);
+      if (
+        requestGeneration === previewActionGenerationRef.current &&
+        requestPreviewId === previewActionIdentityRef.current
+      ) {
+        setConfirming(false);
+      }
     }
   };
 
   const cancelPreview = async () => {
     if (!previewId || cancelling) return;
+    const requestGeneration = previewActionGenerationRef.current;
+    const requestPreviewId = previewId;
     setCancelling(true);
     setCancelError(null);
     try {
-      const result = await cancelRuntimePreview(previewId);
+      const result = await cancelRuntimePreview(requestPreviewId);
+      if (
+        requestGeneration !== previewActionGenerationRef.current ||
+        requestPreviewId !== previewActionIdentityRef.current
+      ) {
+        return;
+      }
       if (!result.ok) {
         setCancelError(
           result.reason === "http"
@@ -595,6 +649,7 @@ export default function FileProcessBrowser() {
         );
         return;
       }
+      invalidatePreviewActions(null);
       // 保留 queue/selectedRuleIds：用户可以直接调整后重新生成预览。
       setPreviewDetail(null);
       setActivePreviewId(null);
@@ -603,13 +658,19 @@ export default function FileProcessBrowser() {
       setSubmitPhase("idle");
       setSearchParams({});
     } finally {
-      setCancelling(false);
+      if (
+        requestGeneration === previewActionGenerationRef.current &&
+        requestPreviewId === previewActionIdentityRef.current
+      ) {
+        setCancelling(false);
+      }
     }
   };
 
   /** 纯前端状态重置，不调用取消 API——用于预览已过期/Runtime 已重启的场景
    * （此时服务端会话本就不存在），以及页面顶部"重新选择文件"导航入口。 */
   const startOverFromPreview = () => {
+    invalidatePreviewActions(null);
     setPreviewDetail(null);
     setPreviewDetailError(null);
     setPreviewExpired(false);
@@ -679,9 +740,9 @@ export default function FileProcessBrowser() {
           {detailError && <Message type="error">{detailError}</Message>}
           {downloadError && <Message type="error" onClose={() => setDownloadError(null)}>{downloadError}</Message>}
 
-          {!detail ? (
+          {!detail && !detailError ? (
             <Loading text="正在加载批次状态…" />
-          ) : (
+          ) : detail ? (
             <>
               <Card className="p-5">
                 <div className="flex items-center justify-between flex-wrap gap-3">
@@ -776,7 +837,7 @@ export default function FileProcessBrowser() {
                 </table>
               </Card>
             </>
-          )}
+          ) : null}
         </div>
       </div>
     );

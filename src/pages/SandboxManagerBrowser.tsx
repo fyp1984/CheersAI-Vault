@@ -29,8 +29,38 @@ import {
 } from "@/lib/runtime/client";
 import type { RuntimeSandboxStatusResponse } from "@/types/runtime";
 
-type LoadState = "loading" | "ready" | "disconnected";
+type LoadState = "loading" | "ready" | "error";
 type ToastMessage = { message: string; type: "success" | "error" | "warning" };
+const CONNECTION_ERROR_TEXT = "无法连接本机 Runtime，请确认服务已启动后重试。";
+const LOAD_ERROR_TEXT = "沙箱状态加载失败，请稍后重试。";
+
+function describeSandboxFailure(
+  result: Extract<RuntimeFetchResult<unknown>, { ok: false }>,
+  fallback: string
+): string {
+  if (result.reason === "network") {
+    return CONNECTION_ERROR_TEXT;
+  }
+  if (result.reason === "http") {
+    if (result.code === "SANDBOX_PIN_RATE_LIMITED") {
+      return "验证过于频繁，沙箱已临时全局锁定，请稍后再试。";
+    }
+    if (result.code === "SANDBOX_PIN_INVALID") {
+      return "PIN 不正确，请重试。";
+    }
+    if (result.code === "SANDBOX_PIN_NOT_CONFIGURED") {
+      return "尚未设置 PIN。";
+    }
+    return result.message ?? fallback;
+  }
+  return fallback;
+}
+
+function describeSandboxLoadFailure(
+  result: Extract<RuntimeFetchResult<unknown>, { ok: false }>
+): string {
+  return result.reason === "network" ? CONNECTION_ERROR_TEXT : LOAD_ERROR_TEXT;
+}
 
 /**
  * `/sandbox` 的普通浏览器实现：操作的是服务器系统用户共享的一份 PIN/
@@ -43,6 +73,7 @@ type ToastMessage = { message: string; type: "success" | "error" | "warning" };
  */
 export default function SandboxManagerBrowser() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
   const [status, setStatus] = useState<RuntimeSandboxStatusResponse | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
@@ -69,42 +100,18 @@ export default function SandboxManagerBrowser() {
     setLoadState((current) => (current === "ready" ? current : "loading"));
     const result = await fetchRuntimeSandboxStatus();
     if (!result.ok) {
-      setLoadState("disconnected");
+      setLoadErrorMessage(describeSandboxLoadFailure(result));
+      setLoadState("error");
       return;
     }
     setStatus(result.data);
+    setLoadErrorMessage(null);
     setLoadState("ready");
   }, []);
 
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
-
-  /**
-   * 把三类失败原因分开呈现（C5）：网络层失败（Runtime 完全联系不上）与
-   * HTTP 业务错误（含限速）绝不合并成同一句“网络断开”文案。
-   */
-  const describeFailure = (
-    result: Extract<RuntimeFetchResult<unknown>, { ok: false }>,
-    fallback: string
-  ): string => {
-    if (result.reason === "network") {
-      return "无法连接本机 Runtime，请确认服务已启动后重试。";
-    }
-    if (result.reason === "http") {
-      if (result.code === "SANDBOX_PIN_RATE_LIMITED") {
-        return "验证过于频繁，沙箱已临时全局锁定，请稍后再试。";
-      }
-      if (result.code === "SANDBOX_PIN_INVALID") {
-        return "PIN 不正确，请重试。";
-      }
-      if (result.code === "SANDBOX_PIN_NOT_CONFIGURED") {
-        return "尚未设置 PIN。";
-      }
-      return result.message ?? fallback;
-    }
-    return fallback;
-  };
 
   const handleUnlock = async () => {
     if (!unlockPin) return;
@@ -113,7 +120,7 @@ export default function SandboxManagerBrowser() {
       const result = await unlockRuntimeSandbox({ pin: unlockPin });
       setUnlockPin("");
       if (!result.ok) {
-        setToast({ message: describeFailure(result, "解锁失败"), type: "error" });
+        setToast({ message: describeSandboxFailure(result, "解锁失败"), type: "error" });
         await loadStatus();
         return;
       }
@@ -129,7 +136,7 @@ export default function SandboxManagerBrowser() {
     try {
       const result = await lockRuntimeSandbox();
       if (!result.ok) {
-        setToast({ message: describeFailure(result, "锁定失败"), type: "error" });
+        setToast({ message: describeSandboxFailure(result, "锁定失败"), type: "error" });
         return;
       }
       setStatus(result.data);
@@ -156,7 +163,7 @@ export default function SandboxManagerBrowser() {
         current_pin: status?.pin_configured ? currentPin : undefined,
       });
       if (!result.ok) {
-        setToast({ message: describeFailure(result, "PIN 设置失败"), type: "error" });
+        setToast({ message: describeSandboxFailure(result, "PIN 设置失败"), type: "error" });
         await loadStatus();
         return;
       }
@@ -181,7 +188,7 @@ export default function SandboxManagerBrowser() {
       const result = await clearRuntimeSandboxPin({ current_pin: currentPin });
       setCurrentPin("");
       if (!result.ok) {
-        setToast({ message: describeFailure(result, "清除 PIN 失败"), type: "error" });
+        setToast({ message: describeSandboxFailure(result, "清除 PIN 失败"), type: "error" });
         await loadStatus();
         return;
       }
@@ -192,14 +199,14 @@ export default function SandboxManagerBrowser() {
     }
   };
 
-  if (loadState === "disconnected") {
+  if (loadState === "error") {
     return (
       <div className="flex flex-col h-full">
         <PageHeader title="沙箱管理" description="服务器共享沙箱操作状态" />
         <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
           <div className="flex items-center gap-2 text-red-600 text-sm">
             <AlertTriangle className="w-5 h-5" />
-            <span>无法连接本机 Runtime，请确认服务已启动后重试。</span>
+            <span>{loadErrorMessage ?? LOAD_ERROR_TEXT}</span>
           </div>
           <Button size="sm" onClick={() => void loadStatus()}>
             <RefreshCw className="w-4 h-4 mr-1" />

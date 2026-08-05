@@ -3,8 +3,8 @@
  *
  * 只使用原生 `fetch` 调用 `vault-runtime-api` 现有的 `/api/v1/health` 与
  * `/api/v1/ocr/status`，不复制、不推断服务端状态判断——组件状态原样转发
- * 服务端返回的字段，网络失败与非 2xx 响应统一归类为“断开”，只暴露固定的
- * 安全提示，不把底层错误、堆栈或服务器路径透出给界面。
+ * 服务端返回的字段，未取得响应的网络失败与已收到的 HTTP 错误分开归类，只
+ * 暴露固定的安全提示，不把底层错误、堆栈或服务器路径透出给界面。
  *
  * 地址解析：
  * - 默认使用同源相对路径（空 base），适配生产环境同源反向代理部署；
@@ -46,6 +46,11 @@ import type {
   RuntimeUnlockSandboxRequest,
   RuntimeUpdateSensitiveTermRequest,
 } from "@/types/runtime";
+import {
+  classifyRuntimeFetchError,
+  classifyRuntimeHttpResponse,
+  parseRuntimeJsonResponse,
+} from "./errorClassification";
 
 function resolveBaseUrl(raw: string | undefined): string {
   if (!raw) {
@@ -72,33 +77,6 @@ export type RuntimeFetchResult<T> =
   | { ok: false; reason: "http"; status: number; code?: string; message?: string; retryable?: boolean }
   | { ok: false; reason: "parse" };
 
-/**
- * 把非 2xx 响应体解析为结构化 `code/message/retryable`；响应不是合法安全
- * JSON（或缺少这三个字段）时，只返回 `status`，不把原始响应体透出给调用方
- * ——调用方必须使用固定的通用错误文案，不得回显未解析的原文。
- */
-async function parseErrorBody(
-  response: Response
-): Promise<{ code?: string; message?: string; retryable?: boolean }> {
-  try {
-    const parsed = (await response.json()) as Partial<{
-      code: unknown;
-      message: unknown;
-      retryable: unknown;
-    }>;
-    if (typeof parsed.code === "string" && typeof parsed.message === "string") {
-      return {
-        code: parsed.code,
-        message: parsed.message,
-        retryable: parsed.retryable === true,
-      };
-    }
-  } catch {
-    // 响应体不是合法 JSON：保持空对象，调用方回退到固定通用文案。
-  }
-  return {};
-}
-
 async function fetchRuntimeJson<T>(path: string, init?: RequestInit): Promise<RuntimeFetchResult<T>> {
   let response: Response;
   try {
@@ -109,39 +87,16 @@ async function fetchRuntimeJson<T>(path: string, init?: RequestInit): Promise<Ru
       headers: { Accept: "application/json", ...init?.headers },
     });
   } catch (error) {
-    // 请求被取消时 abort 会抛 DOMException；统一归类为 network，
-    // 调用方按需区分，不暴露底层错误名称给界面。
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return { ok: false, reason: "network" };
-    }
-    return { ok: false, reason: "network" };
+    // 请求被取消时 abort 会抛 DOMException；与其他未取得响应的
+    // fetch reject 一样保持既有 network 边界，不暴露底层错误名称。
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    // 当响应不是 application/json 时，大概率是代理/网关层返回的错误页面
-    //（如 Vite 开发代理在 Runtime 未就绪时返回的 500 HTML），应归类为网络/
-    // 连接错误，让界面提示用户检查 Runtime 状态并显式重试，而不是显示通用
-    // 文件处理失败文案。Runtime 业务错误始终返回 JSON 的 code/message。
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("application/json")) {
-      // 413 常由网关/Nginx 在请求进入 Runtime 之前返回，仍然属于明确的 HTTP
-      // 失败，调用方可据此给出“上传体积超过限制”的准确提示，而不是误报为
-      // Runtime 未连接。
-      if (response.status === 413) {
-        return { ok: false, reason: "http", status: 413 };
-      }
-      return { ok: false, reason: "network" };
-    }
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
 
-  try {
-    const data = (await response.json()) as T;
-    return { ok: true, data };
-  } catch {
-    return { ok: false, reason: "parse" };
-  }
+  return parseRuntimeJsonResponse<T>(response);
 }
 
 export function fetchRuntimeHealth(): Promise<RuntimeFetchResult<RuntimeHealthResponse>> {
@@ -247,13 +202,12 @@ export async function fetchRuntimePreviewFileContent(
       `${runtimeBaseUrl}/api/v1/previews/${encodeURIComponent(previewId)}/files/${encodeURIComponent(fileId)}/content`,
       { credentials: "omit", cache: "no-store" }
     );
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
 
   const text = await response.text();
@@ -285,13 +239,12 @@ export async function cancelRuntimePreview(previewId: string): Promise<RuntimeAc
       credentials: "omit",
       cache: "no-store",
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
   return { ok: true };
 }
@@ -325,13 +278,12 @@ export async function downloadRuntimeArtifact(
       credentials: "omit",
       cache: "no-store",
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
 
   const blob = await response.blob();
@@ -373,13 +325,12 @@ export async function restoreRuntimeArtifact(
       credentials: "omit",
       cache: "no-store",
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
 
   const countHeader = response.headers.get("X-Restored-Entity-Count");
@@ -457,13 +408,12 @@ export async function deleteRuntimeSensitiveTerm(id: string): Promise<RuntimeAct
       credentials: "omit",
       cache: "no-store",
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
   return { ok: true };
 }
@@ -504,13 +454,12 @@ export async function downloadRuntimeSensitiveTermsCsv(): Promise<RuntimeActionR
       credentials: "omit",
       cache: "no-store",
     });
-  } catch {
-    return { ok: false, reason: "network" };
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
   }
 
   if (!response.ok) {
-    const details = await parseErrorBody(response);
-    return { ok: false, reason: "http", status: response.status, ...details };
+    return classifyRuntimeHttpResponse(response);
   }
 
   const blob = await response.blob();

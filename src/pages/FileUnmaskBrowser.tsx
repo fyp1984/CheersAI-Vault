@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle2, ChevronLeft, Unlock, WifiOff } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -86,6 +86,22 @@ export default function FileUnmaskBrowser() {
   const [batchListState, setBatchListState] = useState<BatchListState>({ kind: "loading" });
   const [detailState, setDetailState] = useState<DetailState>({ kind: "loading" });
   const [restoreState, setRestoreState] = useState<RestoreState>({ kind: "idle" });
+  const restoreGenerationRef = useRef(0);
+  const restoreIdentityRef = useRef(`${batchId ?? ""}:${artifactId ?? ""}`);
+
+  const invalidateRestore = (identity = "") => {
+    restoreGenerationRef.current += 1;
+    restoreIdentityRef.current = identity;
+    setRestoreState({ kind: "idle" });
+  };
+
+  useEffect(() => {
+    invalidateRestore(`${batchId ?? ""}:${artifactId ?? ""}`);
+  }, [batchId, artifactId]);
+
+  const currentRestoreIdentity = `${batchId ?? ""}:${artifactId ?? ""}`;
+  const visibleRestoreState: RestoreState =
+    restoreIdentityRef.current === currentRestoreIdentity ? restoreState : { kind: "idle" };
 
   useEffect(() => {
     if (batchId) return;
@@ -114,7 +130,6 @@ export default function FileUnmaskBrowser() {
     if (!batchId) return;
     let cancelled = false;
     setDetailState({ kind: "loading" });
-    setRestoreState({ kind: "idle" });
     void fetchRuntimeBatch(batchId).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
@@ -138,25 +153,37 @@ export default function FileUnmaskBrowser() {
   }, [batchId]);
 
   const selectBatch = (id: string) => {
+    invalidateRestore(`${id}:`);
     setSearchParams({ batch_id: id });
   };
 
   const selectFile = (id: string, fileArtifactId: string) => {
+    invalidateRestore(`${id}:${fileArtifactId}`);
     setSearchParams({ batch_id: id, artifact_id: fileArtifactId });
   };
 
   const backToBatchList = () => {
+    invalidateRestore();
     setSearchParams({});
   };
 
   const backToFileList = () => {
+    invalidateRestore(`${batchId ?? ""}:`);
     if (batchId) setSearchParams({ batch_id: batchId });
   };
 
   const startRestore = async (file: RuntimeBatchFile) => {
-    if (!file.artifact_id || restoreState.kind === "restoring") return;
+    if (!file.artifact_id || visibleRestoreState.kind === "restoring") return;
+    const requestGeneration = restoreGenerationRef.current;
+    const requestIdentity = `${batchId ?? ""}:${file.artifact_id}`;
     setRestoreState({ kind: "restoring" });
     const result = await restoreRuntimeArtifact(file.artifact_id, file.display_name);
+    if (
+      requestGeneration !== restoreGenerationRef.current ||
+      requestIdentity !== restoreIdentityRef.current
+    ) {
+      return;
+    }
     if (!result.ok) {
       setRestoreState({
         kind: "error",
@@ -373,15 +400,15 @@ export default function FileUnmaskBrowser() {
             </p>
           </Card>
 
-          {restoreState.kind === "error" && <Message type="error">{restoreState.message}</Message>}
+          {visibleRestoreState.kind === "error" && <Message type="error">{visibleRestoreState.message}</Message>}
 
-          {restoreState.kind === "success" ? (
+          {visibleRestoreState.kind === "success" ? (
             <Card className="p-5 border-green-200 bg-green-50">
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-green-900">反脱敏成功</p>
-                  <p className="text-sm text-green-700 mt-1">已恢复 {restoreState.count} 处，已开始下载。</p>
+                  <p className="text-sm text-green-700 mt-1">已恢复 {visibleRestoreState.count} 处，已开始下载。</p>
                 </div>
               </div>
             </Card>
@@ -391,10 +418,10 @@ export default function FileUnmaskBrowser() {
               size="lg"
               className="w-full"
               icon={Unlock}
-              loading={restoreState.kind === "restoring"}
+              loading={visibleRestoreState.kind === "restoring"}
               onClick={() => void startRestore(file)}
             >
-              {restoreState.kind === "restoring" ? "正在恢复…" : "开始反脱敏"}
+              {visibleRestoreState.kind === "restoring" ? "正在恢复…" : "开始反脱敏"}
             </Button>
           )}
 

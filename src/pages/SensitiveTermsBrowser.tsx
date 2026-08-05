@@ -45,6 +45,7 @@ import {
   importRuntimeSensitiveTermsCsv,
   updateRuntimeSensitiveTerm,
 } from "@/lib/runtime/client";
+import type { RuntimeFetchResult } from "@/lib/runtime/client";
 import type { RuntimeSensitiveTerm, RuntimeSensitiveTermsStats } from "@/types/runtime";
 
 interface ToastMessage {
@@ -60,8 +61,26 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { term: "", category: "", description: "" };
 const EMPTY_STATS: RuntimeSensitiveTermsStats = { total: 0, enabled: 0, disabled: 0, categories: 0 };
+const CONNECTION_ERROR_TEXT = "无法连接本机 Runtime，请确认服务已启动后重试。";
+const LOAD_ERROR_TEXT = "敏感词加载失败，请稍后重试。";
 
 type LoadState = "loading" | "ready" | "error";
+type RuntimeFailure = Extract<RuntimeFetchResult<unknown>, { ok: false }>;
+type SensitiveTermsRequestScope = { category: string; query: string };
+
+function describeRuntimeFailure(result: RuntimeFailure, fallback: string): string {
+  if (result.reason === "network") {
+    return CONNECTION_ERROR_TEXT;
+  }
+  if (result.reason === "http" && result.message) {
+    return result.message;
+  }
+  return fallback;
+}
+
+function describeInitialLoadFailure(results: RuntimeFailure[]): string {
+  return results.some((result) => result.reason === "network") ? CONNECTION_ERROR_TEXT : LOAD_ERROR_TEXT;
+}
 
 export default function SensitiveTermsBrowser() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -83,24 +102,44 @@ export default function SensitiveTermsBrowser() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [sortBy, setSortBy] = useState<"time" | "alpha">("time");
+  const requestGenerationRef = useRef(0);
+  const latestScopeRef = useRef<SensitiveTermsRequestScope>({ category: "", query: "" });
+  latestScopeRef.current = { category: selectedCategory, query: searchQuery.trim() };
 
-  const loadData = async () => {
+  const loadData = async (scope = latestScopeRef.current) => {
+    const requestGeneration = ++requestGenerationRef.current;
     setLoadState((current) => (current === "ready" ? current : "loading"));
-    const [termsResult, categoriesResult, statsResult] = await Promise.all([
-      fetchRuntimeSensitiveTerms({ category: selectedCategory || undefined }),
-      fetchRuntimeSensitiveTermCategories(),
-      fetchRuntimeSensitiveTermsStats(),
-    ]);
-    if (!termsResult.ok || !categoriesResult.ok || !statsResult.ok) {
-      setLoadState("error");
-      setLoadErrorMessage("无法连接本机 Runtime，请确认服务已启动后重试。");
-      return;
-    }
-    setTerms(termsResult.data.terms);
-    setCategories(categoriesResult.data.categories);
-    setStats(statsResult.data);
-    setLoadState("ready");
     setLoadErrorMessage(null);
+    let nextLoadState: LoadState = "ready";
+    let nextLoadError: string | null = null;
+    try {
+      const [termsResult, categoriesResult, statsResult] = await Promise.all([
+        fetchRuntimeSensitiveTerms({
+          category: scope.category || undefined,
+          query: scope.query || undefined,
+        }),
+        fetchRuntimeSensitiveTermCategories(),
+        fetchRuntimeSensitiveTermsStats(),
+      ]);
+      if (requestGeneration !== requestGenerationRef.current) return;
+      if (termsResult.ok && categoriesResult.ok && statsResult.ok) {
+        setTerms(termsResult.data.terms);
+        setCategories(categoriesResult.data.categories);
+        setStats(statsResult.data);
+        return;
+      }
+
+      const failures = [termsResult, categoriesResult, statsResult].filter(
+        (result): result is RuntimeFailure => !result.ok
+      );
+      nextLoadState = "error";
+      nextLoadError = describeInitialLoadFailure(failures);
+    } finally {
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoadState(nextLoadState);
+        setLoadErrorMessage(nextLoadError);
+      }
+    }
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,10 +169,7 @@ export default function SensitiveTermsBrowser() {
 
       if (!result.ok) {
         setToast({
-          message:
-            result.reason === "http"
-              ? result.message ?? (editingTerm ? "修改失败" : "添加失败")
-              : "无法连接本机 Runtime，请确认服务已启动后重试。",
+          message: describeRuntimeFailure(result, editingTerm ? "修改失败" : "添加失败"),
           type: "error",
         });
         return;
@@ -163,7 +199,7 @@ export default function SensitiveTermsBrowser() {
   const handleToggle = async (id: string, enabled: boolean) => {
     const result = await updateRuntimeSensitiveTerm(id, { enabled });
     if (!result.ok) {
-      setToast({ message: "更新失败", type: "error" });
+      setToast({ message: describeRuntimeFailure(result, "更新失败"), type: "error" });
       return;
     }
     await loadData();
@@ -172,7 +208,7 @@ export default function SensitiveTermsBrowser() {
   const handleDelete = async (id: string) => {
     const result = await deleteRuntimeSensitiveTerm(id);
     if (!result.ok) {
-      setToast({ message: "删除失败", type: "error" });
+      setToast({ message: describeRuntimeFailure(result, "删除失败"), type: "error" });
       return;
     }
     setToast({ message: "删除成功", type: "success" });
@@ -181,16 +217,31 @@ export default function SensitiveTermsBrowser() {
 
   const handleSearch = async () => {
     const query = searchQuery.trim();
+    const scope: SensitiveTermsRequestScope = { category: selectedCategory, query };
     if (!query) {
-      await loadData();
+      await loadData(scope);
       return;
     }
-    const result = await fetchRuntimeSensitiveTerms({ category: selectedCategory || undefined, query });
-    if (!result.ok) {
-      setToast({ message: "搜索失败", type: "error" });
-      return;
+    const requestGeneration = ++requestGenerationRef.current;
+    setLoadState("loading");
+    setLoadErrorMessage(null);
+    try {
+      const result = await fetchRuntimeSensitiveTerms({
+        category: scope.category || undefined,
+        query: scope.query || undefined,
+      });
+      if (requestGeneration !== requestGenerationRef.current) return;
+      if (!result.ok) {
+        setToast({ message: describeRuntimeFailure(result, "搜索失败"), type: "error" });
+        return;
+      }
+      setTerms(result.data.terms);
+    } finally {
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoadState("ready");
+        setLoadErrorMessage(null);
+      }
     }
-    setTerms(result.data.terms);
   };
 
   const handleExport = async () => {
@@ -198,7 +249,7 @@ export default function SensitiveTermsBrowser() {
     try {
       const result = await downloadRuntimeSensitiveTermsCsv();
       if (!result.ok) {
-        setToast({ message: "导出失败", type: "error" });
+        setToast({ message: describeRuntimeFailure(result, "导出失败"), type: "error" });
         return;
       }
       setToast({ message: "导出成功", type: "success" });
@@ -221,8 +272,7 @@ export default function SensitiveTermsBrowser() {
       const result = await importRuntimeSensitiveTermsCsv(file);
       if (!result.ok) {
         setToast({
-          message:
-            result.reason === "http" ? result.message ?? "导入失败" : "无法连接本机 Runtime，请确认服务已启动后重试。",
+          message: describeRuntimeFailure(result, "导入失败"),
           type: "error",
         });
         return;
