@@ -124,6 +124,12 @@ async function fetchRuntimeJson<T>(path: string, init?: RequestInit): Promise<Ru
     // 文件处理失败文案。Runtime 业务错误始终返回 JSON 的 code/message。
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) {
+      // 413 常由网关/Nginx 在请求进入 Runtime 之前返回，仍然属于明确的 HTTP
+      // 失败，调用方可据此给出“上传体积超过限制”的准确提示，而不是误报为
+      // Runtime 未连接。
+      if (response.status === 413) {
+        return { ok: false, reason: "http", status: 413 };
+      }
       return { ok: false, reason: "network" };
     }
     const details = await parseErrorBody(response);

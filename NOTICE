@@ -1,0 +1,33 @@
+CheersAI Vault
+Copyright 2024-2026 CheersAI contributors
+
+This repository is licensed under the Apache License, Version 2.0.
+
+This source tree may be used to build distributions that include software
+developed by the Apache Software Foundation, the Tauri project, the React
+community, the Rust ecosystem, the Python ecosystem, and other third-party
+open source contributors.
+
+Third-party dependency compliance records for this repository are maintained in:
+
+- `DEPENDENCIES.md`
+- `compliance/generated/pnpm-licenses.json`
+- `compliance/generated/cargo-metadata-tauri.json`
+- `compliance/generated/cargo-metadata-runtime.json`
+- `compliance/generated/python-ocr-pip-show.txt`
+
+Important distribution note:
+
+- This repository's default source tree does not vendor `node_modules`,
+  Cargo registry crates, or a prebuilt OCR virtual environment.
+- Any binary, container, installer, or customer delivery package built from
+  this repository must carry a NOTICE and third-party license set that matches
+  the actual bundled contents of that specific distribution.
+
+Known compliance-sensitive area:
+
+- Optional OCR deployments can introduce additional obligations through
+  `PyMuPDF` and certain Python wheel contents. `PyMuPDF` is offered under
+  `AGPL-3.0` or a separate commercial license. Do not redistribute an
+  OCR-enabled binary, image, or installer without completing the review
+  described in `DEPENDENCIES.md`.

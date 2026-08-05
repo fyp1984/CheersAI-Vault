@@ -1,0 +1,13 @@
+name	version	license	homepage
+pymupdf	1.28.0	AGPL-3.0-or-commercial	
+pillow	12.3.0	MIT-CMU	
+easyocr	1.7.2	Apache-2.0	https://github.com/jaidedai/easyocr
+torch	2.13.0	Apache-2.0 and bundled permissive licenses	
+torchvision	0.28.0	BSD	https://github.com/pytorch/vision
+opencv-python-headless	5.0.0.93	Apache-2.0	https://github.com/opencv/opencv-python
+scikit-image	0.26.0	BSD-3-Clause plus BSD-2-Clause and MIT files	
+scipy	1.17.1	BSD-3-Clause plus wheel-level bundled notices	
+shapely	2.1.2	BSD-3-Clause	
+python-bidi	0.6.11	LGPL family; verify exact downstream obligations before bundling	
+pyclipper	1.4.0	MIT	https://github.com/fonttools/pyclipper
+numpy	2.4.6	BSD-3-Clause and bundled permissive licenses	

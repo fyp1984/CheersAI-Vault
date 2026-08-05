@@ -1,4 +1,4 @@
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::{net::{IpAddr, Ipv4Addr}, path::PathBuf};
 
 use vault_runtime_api::{routes, Limits, Runtime};
 use warp::Filter;
@@ -37,6 +37,10 @@ async fn main() {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8787);
+    let bind_host = std::env::var("VAULT_RUNTIME_BIND_HOST")
+        .ok()
+        .and_then(|value| value.parse::<IpAddr>().ok())
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
     let origins = std::env::var("VAULT_RUNTIME_CORS_ORIGINS")
         .unwrap_or_else(|_| "http://127.0.0.1:5173,http://localhost:5173".to_string());
     let allowed_origins: Vec<String> = origins
@@ -63,10 +67,9 @@ async fn main() {
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE"])
         .expose_header("X-Restored-Entity-Count");
     let api = routes(runtime).with(cors);
-    let address = (Ipv4Addr::LOCALHOST, port);
-    println!("vault-runtime-api listening on http://127.0.0.1:{port}");
+    println!("vault-runtime-api listening on http://{bind_host}:{port}");
     warp::serve(api)
-        .bind_with_graceful_shutdown(address, shutdown_signal())
+        .bind_with_graceful_shutdown((bind_host, port), shutdown_signal())
         .1
         .await;
     println!("vault-runtime-api stopped");

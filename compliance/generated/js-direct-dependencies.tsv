@@ -1,0 +1,39 @@
+name	resolved_version	license	homepage
+@radix-ui/react-dialog	1.1.15	MIT	https://radix-ui.com/primitives
+@radix-ui/react-dropdown-menu	2.1.16	MIT	https://radix-ui.com/primitives
+@radix-ui/react-label	2.1.8	MIT	https://radix-ui.com/primitives
+@radix-ui/react-progress	1.1.8	MIT	https://radix-ui.com/primitives
+@radix-ui/react-scroll-area	1.2.10	MIT	https://radix-ui.com/primitives
+@radix-ui/react-select	2.2.6	MIT	https://radix-ui.com/primitives
+@radix-ui/react-separator	1.1.8	MIT	https://radix-ui.com/primitives
+@radix-ui/react-slot	1.2.3, 1.2.4	MIT	https://radix-ui.com/primitives
+@radix-ui/react-switch	1.2.6	MIT	https://radix-ui.com/primitives
+@radix-ui/react-tabs	1.1.13	MIT	https://radix-ui.com/primitives
+@radix-ui/react-tooltip	1.2.8	MIT	https://radix-ui.com/primitives
+@tauri-apps/api	2.10.1	Apache-2.0 OR MIT	https://github.com/tauri-apps/tauri#readme
+@tauri-apps/cli	2.10.1	Apache-2.0 OR MIT	https://github.com/tauri-apps/tauri#readme
+@tauri-apps/plugin-dialog	2.7.0	MIT OR Apache-2.0	https://github.com/tauri-apps/plugins-workspace#readme
+@tauri-apps/plugin-fs	2.5.0	MIT OR Apache-2.0	https://github.com/tauri-apps/plugins-workspace#readme
+@tauri-apps/plugin-opener	2.5.3	MIT OR Apache-2.0	https://github.com/tauri-apps/plugins-workspace#readme
+@tauri-apps/plugin-shell	2.3.5	MIT OR Apache-2.0	https://github.com/tauri-apps/plugins-workspace#readme
+@types/node	25.5.0	MIT	https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node
+@types/react	19.2.14	MIT	https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react
+@types/react-dom	19.2.3	MIT	https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom
+@types/uuid	11.0.0	MIT	
+@vitejs/plugin-react	4.7.0	MIT	https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#readme
+autoprefixer	10.4.27	MIT	https://github.com/postcss/autoprefixer#readme
+class-variance-authority	0.7.1	Apache-2.0	https://github.com/joe-bell/cva#readme
+clsx	2.1.1	MIT	https://github.com/lukeed/clsx#readme
+lucide-react	0.577.0	ISC	https://lucide.dev
+postcss	8.5.8	MIT	https://postcss.org/
+react	19.2.4	MIT	https://react.dev/
+react-dom	19.2.4	MIT	https://react.dev/
+react-dropzone	15.0.0	MIT	https://github.com/react-dropzone/react-dropzone
+react-router-dom	7.13.1	MIT	https://github.com/remix-run/react-router#readme
+tailwind-merge	3.5.0	MIT	https://github.com/dcastil/tailwind-merge
+tailwindcss	3.4.19	MIT	https://tailwindcss.com
+tailwindcss-animate	1.0.7	MIT	
+typescript	5.8.3	Apache-2.0	https://www.typescriptlang.org/
+uuid	13.0.0	MIT	https://github.com/uuidjs/uuid#readme
+vite	7.3.1	MIT	https://vite.dev
+zustand	5.0.11	MIT	https://github.com/pmndrs/zustand

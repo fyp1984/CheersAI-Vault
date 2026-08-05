@@ -2,6 +2,12 @@
   "name": "cheersai-vault",
   "private": true,
   "version": "0.1.40",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/fyp1984/CheersAI-Vault",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fyp1984/CheersAI-Vault.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
