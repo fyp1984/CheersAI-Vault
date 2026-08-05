@@ -2,6 +2,9 @@
 name = "engine-core"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/fyp1984/CheersAI-Vault.git"
+homepage = "https://github.com/fyp1984/CheersAI-Vault"
 
 [dependencies]
 aes-gcm = "0.10"

@@ -519,7 +519,9 @@ export default function FileProcessBrowser() {
         setSubmitPhase("error");
         setSubmitError(
           result.reason === "http"
-            ? result.message ?? "生成预览失败，请稍后重试。"
+            ? result.status === 413
+              ? "上传文件超过当前网关限制，请稍后重试；本地部署已调整上传上限。"
+              : result.message ?? "生成预览失败，请稍后重试。"
             : "无法连接本机 Runtime，请确认服务已启动后重试。"
         );
         return;

@@ -7,7 +7,6 @@ import FileUnmask from "@/pages/FileUnmask";
 import SensitiveTerms from "@/pages/SensitiveTerms";
 import OperationLog from "@/pages/OperationLog";
 import CheersAICloudBrowser from "@/pages/CheersAICloudBrowser";
-import TestPage from "@/pages/TestPage";
 import { FileManager } from "@/components/file/FileManager";
 import EnhancedServices from "@/pages/EnhancedServices";
 import { isTauriHost } from "@/lib/runtime/host";
@@ -22,9 +21,6 @@ const DesktopBootstrap = lazy(() => import("@/components/runtime/DesktopBootstra
 const SandboxManager = lazy(() => import("@/pages/SandboxManager"));
 const GiteaSettings = lazy(() =>
   import("@/components/settings/GiteaSettings").then((m) => ({ default: m.GiteaSettings }))
-);
-const InstallerTest = lazy(() =>
-  import("@/pages/InstallerTest").then((m) => ({ default: m.InstallerTest }))
 );
 
 const lazyRouteFallback = (
@@ -68,7 +64,6 @@ function AppRoutes() {
       <Routes>
         <Route element={<MainLayout />}>
           <Route index element={<HomeRedirect />} />
-          <Route path="/test" element={<TestPage />} />
           <Route path="/process" element={<ErrorBoundary><FileProcess /></ErrorBoundary>} />
           <Route path="/unmask" element={<FileUnmask />} />
           <Route path="/files" element={<FileManager />} />
@@ -79,7 +74,6 @@ function AppRoutes() {
           <Route path="/log" element={<OperationLog />} />
           <Route path="/cloud" element={<CheersAICloudBrowser />} />
           <Route path="/enhanced" element={<EnhancedServices />} />
-          <Route path="/installer-test" element={<Suspense fallback={lazyRouteFallback}><InstallerTest /></Suspense>} />
         </Route>
       </Routes>
     </>

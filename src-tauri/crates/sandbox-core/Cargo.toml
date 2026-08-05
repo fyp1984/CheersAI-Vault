@@ -2,6 +2,9 @@
 name = "sandbox-core"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/fyp1984/CheersAI-Vault.git"
+homepage = "https://github.com/fyp1984/CheersAI-Vault"
 
 [dependencies]
 argon2 = { version = "=0.5.3", features = ["std"] }

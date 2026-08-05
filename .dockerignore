@@ -1,0 +1,8 @@
+node_modules
+.git
+.gitignore
+src-tauri/target
+src-tauri/gen
+.trae
+.vscode
+crash.log

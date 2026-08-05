@@ -32,3 +32,9 @@ apps/vault-runtime-api/target/
 apps/vault-runtime-api/enterprise-data/
 enterprise-data/
 src-tauri/crates/*/target/
+src-tauri/target/
+src-tauri/gen/
+.local/
+test-results/
+.cleanup-archive/
+docs/.recycle-bin/
