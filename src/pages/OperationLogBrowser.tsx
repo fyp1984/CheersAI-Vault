@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +76,7 @@ const STORAGE_ERROR_TEXT = "日志存储操作失败，请稍后重试。";
 const HTTP_ERROR_TEXT = "日志请求失败，请稍后重试。";
 
 type RuntimeFailure = Extract<RuntimeFetchResult<unknown>, { ok: false }>;
+type OperationLogRequestScope = { level: string; status: string; batchId: string };
 
 function describeRuntimeFailure(result: RuntimeFailure): string {
   if (result.reason === "network" || result.reason === "parse") {
@@ -108,47 +109,55 @@ export default function OperationLogBrowser() {
   const [batchIdInput, setBatchIdInput] = useState("");
   const [appliedStatus, setAppliedStatus] = useState("");
   const [appliedBatchId, setAppliedBatchId] = useState("");
+  const requestGenerationRef = useRef(0);
+  const latestScopeRef = useRef<OperationLogRequestScope>({ level: "all", status: "", batchId: "" });
+  latestScopeRef.current = { level: levelFilter, status: appliedStatus, batchId: appliedBatchId };
 
-  const loadData = async (page: number) => {
+  const loadData = async (page: number, scope = latestScopeRef.current) => {
+    const requestGeneration = ++requestGenerationRef.current;
     setLoading(true);
-    const [listResult, statsResult, storageResult] = await Promise.all([
-      fetchRuntimeOperationLogs({
-        page,
-        pageSize: PAGE_SIZE,
-        level: levelFilter === "all" ? undefined : levelFilter,
-        status: appliedStatus || undefined,
-        batchId: appliedBatchId || undefined,
-      }),
-      fetchRuntimeOperationLogStatistics(),
-      fetchRuntimeOperationLogStorageStatus(),
-    ]);
-
-    if (!listResult.ok) {
-      setConnectionError(describeRuntimeFailure(listResult));
-      setLoading(false);
-      return;
-    }
-    if (!statsResult.ok) {
-      setConnectionError(describeRuntimeFailure(statsResult));
-      setLoading(false);
-      return;
-    }
-    if (!storageResult.ok) {
-      setConnectionError(describeRuntimeFailure(storageResult));
-      setLoading(false);
-      return;
-    }
-
-    const list: RuntimeOperationLogListResponse = listResult.data;
-    setEntries(list.entries);
-    setTotalCount(list.total_count);
-    setTotalPages(list.total_pages);
-    setCurrentPage(list.page);
-    setStats(statsResult.data);
-    setStorageStatus(storageResult.data);
     setConnectionError(null);
-    setHasLoadedOnce(true);
-    setLoading(false);
+    try {
+      const [listResult, statsResult, storageResult] = await Promise.all([
+        fetchRuntimeOperationLogs({
+          page,
+          pageSize: PAGE_SIZE,
+          level: scope.level === "all" ? undefined : scope.level,
+          status: scope.status || undefined,
+          batchId: scope.batchId || undefined,
+        }),
+        fetchRuntimeOperationLogStatistics(),
+        fetchRuntimeOperationLogStorageStatus(),
+      ]);
+
+      if (requestGeneration !== requestGenerationRef.current) return;
+      if (!listResult.ok) {
+        setConnectionError(describeRuntimeFailure(listResult));
+        return;
+      }
+      if (!statsResult.ok) {
+        setConnectionError(describeRuntimeFailure(statsResult));
+        return;
+      }
+      if (!storageResult.ok) {
+        setConnectionError(describeRuntimeFailure(storageResult));
+        return;
+      }
+
+      const list: RuntimeOperationLogListResponse = listResult.data;
+      setEntries(list.entries);
+      setTotalCount(list.total_count);
+      setTotalPages(list.total_pages);
+      setCurrentPage(list.page);
+      setStats(statsResult.data);
+      setStorageStatus(storageResult.data);
+      setConnectionError(null);
+      setHasLoadedOnce(true);
+    } finally {
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoading(false);
+      }
+    }
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
