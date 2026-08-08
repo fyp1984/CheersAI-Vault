@@ -72,7 +72,7 @@ export default function GiteaSettingsDesktop() {
     const tokenProvided = !!config.token;
     const tokenAlreadySaved = !!status?.config.has_token;
     if (!config.url || (!tokenProvided && !tokenAlreadySaved) || !config.owner || !config.repo) {
-      setMessage({ type: 'error', text: '请填写完整的配置信息' });
+      setMessage({ type: 'error', text: '请先把必填配置补充完整。' });
       return;
     }
 
@@ -89,10 +89,10 @@ export default function GiteaSettingsDesktop() {
       const result = await getGiteaStatus();
       setStatus(result);
       setConfig(prev => ({ ...prev, token: '', enabled: result.config.enabled }));
-      setMessage({ type: 'success', text: '配置已保存' });
+      setMessage({ type: 'success', text: '配置已保存。' });
     } catch (error) {
       console.error('Failed to save config');
-      setMessage({ type: 'error', text: safeError(error, '保存失败，请重试') });
+      setMessage({ type: 'error', text: safeError(error, '保存没有成功，请稍后再试。') });
     } finally {
       setSaving(false);
     }
@@ -115,10 +115,10 @@ export default function GiteaSettingsDesktop() {
     try {
       setTesting(true);
       const result = await testGiteaConnection();
-      setMessage({ type: 'success', text: '连接成功: ' + result });
+      setMessage({ type: 'success', text: '连接成功：' + result });
     } catch (error) {
       console.error('Connection test failed');
-      setMessage({ type: 'error', text: safeError(error, '连接失败，请重试') });
+      setMessage({ type: 'error', text: safeError(error, '连接没有成功，请稍后再试。') });
     } finally {
       setTesting(false);
     }
@@ -136,7 +136,7 @@ export default function GiteaSettingsDesktop() {
       await loadStatus();
     } catch (error) {
       console.error('Failed to create repo');
-      setMessage({ type: 'error', text: safeError(error, '创建仓库失败，请重试') });
+      setMessage({ type: 'error', text: safeError(error, '创建仓库没有成功，请稍后再试。') });
       await loadStatus();
     } finally {
       setCreating(false);
@@ -153,7 +153,7 @@ export default function GiteaSettingsDesktop() {
       if (!configStatus.exists || !configStatus.config) {
         setMessage({
           type: 'error',
-          text: '未检测到配置文件。请先从 Desktop 在线工作区下载配置文件到浏览器的 Downloads 文件夹，然后点击此按钮自动读取'
+          text: '还没有找到配置文件。请先在在线工作区下载配置文件到 Downloads 文件夹，再回来点击这里自动读取。'
         });
         return;
       }
@@ -171,13 +171,13 @@ export default function GiteaSettingsDesktop() {
 
       setMessage({
         type: 'success',
-        text: `配置已自动读取：服务器 ${fileConfig.url}，用户 ${fileConfig.username}，仓库 ${fileConfig.repoName}。请点击"保存配置"以应用更改`
+        text: `配置已自动读取：服务器 ${fileConfig.url}，用户 ${fileConfig.username}，仓库 ${fileConfig.repoName}。确认无误后，点击“保存配置”即可生效。`
       });
     } catch (error) {
       console.error('Failed to auto-load config');
       setMessage({
         type: 'error',
-        text: safeError(error, '读取配置失败，请重试')
+        text: safeError(error, '读取配置没有成功，请稍后再试。')
       });
     } finally {
       setAutoLoading(false);
@@ -223,7 +223,7 @@ export default function GiteaSettingsDesktop() {
       console.error('Failed to import config');
       setMessage({
         type: 'error',
-        text: safeError(error, '导入失败，请重试')
+        text: safeError(error, '导入没有成功，请稍后再试。')
       });
     }
   };
@@ -240,7 +240,7 @@ export default function GiteaSettingsDesktop() {
 
     setMessage({
       type: 'success',
-      text: `已从 Vault 加载配置：${vaultConfig.email} - ${vaultConfig.repo_name}。请点击"保存配置"以应用更改`
+      text: `已从 Vault 载入配置：${vaultConfig.email} - ${vaultConfig.repo_name}。确认无误后，点击“保存配置”即可生效。`
     });
 
     setShowVaultSelector(false);
@@ -269,7 +269,7 @@ export default function GiteaSettingsDesktop() {
       console.error('Failed to auto-sync');
       setMessage({
         type: 'error',
-        text: safeError(error, '自动同步失败，请重试')
+        text: safeError(error, '自动同步没有成功，请稍后再试。')
       });
     } finally {
       setAutoSyncing(false);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Message } from "@/components/ui/cheersai-ui";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -61,8 +62,8 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { term: "", category: "", description: "" };
 const EMPTY_STATS: RuntimeSensitiveTermsStats = { total: 0, enabled: 0, disabled: 0, categories: 0 };
-const CONNECTION_ERROR_TEXT = "无法连接本机 Runtime，请确认服务已启动后重试。";
-const LOAD_ERROR_TEXT = "敏感词加载失败，请稍后重试。";
+const CONNECTION_ERROR_TEXT = "当前连不上本地服务，请确认服务已启动后再试。";
+const LOAD_ERROR_TEXT = "暂时无法读取敏感词库，请稍后再试。";
 
 type LoadState = "loading" | "ready" | "error";
 type RuntimeFailure = Extract<RuntimeFetchResult<unknown>, { ok: false }>;
@@ -149,7 +150,7 @@ export default function SensitiveTermsBrowser() {
 
   const handleSaveTerm = async () => {
     if (!form.term.trim() || !form.category.trim()) {
-      setToast({ message: "请填写敏感词和分类", type: "error" });
+      setToast({ message: "请先填写敏感词和分类。", type: "error" });
       return;
     }
 
@@ -174,7 +175,7 @@ export default function SensitiveTermsBrowser() {
         });
         return;
       }
-      setToast({ message: editingTerm ? "修改成功" : "添加成功", type: "success" });
+      setToast({ message: editingTerm ? "敏感词已更新。" : "敏感词已添加。", type: "success" });
       setForm(EMPTY_FORM);
       setEditingTerm(null);
       setShowAddForm(false);
@@ -211,7 +212,7 @@ export default function SensitiveTermsBrowser() {
       setToast({ message: describeRuntimeFailure(result, "删除失败"), type: "error" });
       return;
     }
-    setToast({ message: "删除成功", type: "success" });
+    setToast({ message: "敏感词已删除。", type: "success" });
     await loadData();
   };
 
@@ -252,7 +253,7 @@ export default function SensitiveTermsBrowser() {
         setToast({ message: describeRuntimeFailure(result, "导出失败"), type: "error" });
         return;
       }
-      setToast({ message: "导出成功", type: "success" });
+      setToast({ message: "敏感词库已导出。", type: "success" });
     } finally {
       setExporting(false);
     }
@@ -277,7 +278,7 @@ export default function SensitiveTermsBrowser() {
         });
         return;
       }
-      setToast({ message: `成功导入 ${result.data.imported_count} 条记录`, type: "success" });
+      setToast({ message: `已导入 ${result.data.imported_count} 条敏感词。`, type: "success" });
       await loadData();
     } finally {
       setImporting(false);
@@ -314,15 +315,18 @@ export default function SensitiveTermsBrowser() {
     return (
       <div className="flex flex-col h-full">
         <PageHeader title="敏感词库" description="管理脱敏时需要匹配的敏感信息" />
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
-          <div className="flex items-center gap-2 text-red-600 text-sm">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{loadErrorMessage}</span>
+        <div className="flex-1 p-6">
+          <div className="mx-auto max-w-3xl">
+            <Message type="error" title="暂时无法读取敏感词库">
+              <div className="flex items-center justify-between gap-4">
+                <span>{loadErrorMessage}</span>
+                <Button size="sm" onClick={() => void loadData()}>
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                  重新加载
+                </Button>
+              </div>
+            </Message>
           </div>
-          <Button size="sm" onClick={() => void loadData()}>
-            <RefreshCw className="w-4 h-4 mr-1" />
-            重试
-          </Button>
         </div>
       </div>
     );
@@ -334,7 +338,7 @@ export default function SensitiveTermsBrowser() {
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
         {loadState === "loading" ? (
-          <p className="text-sm text-gray-400 py-8 text-center">正在加载…</p>
+          <p className="py-8 text-center text-sm text-gray-400">正在加载敏感词库...</p>
         ) : (
           <>
             {/* 统计信息 */}
@@ -375,7 +379,7 @@ export default function SensitiveTermsBrowser() {
                     </div>
                     <div>
                       <p className="font-medium text-gray-700">批量维护敏感词库</p>
-                      <p className="text-xs text-gray-400">支持 CSV 导入导出，便于备份和跨设备迁移</p>
+                      <p className="text-xs text-gray-400">支持 CSV 导入导出，方便备份和迁移</p>
                     </div>
                   </div>
                   <input
@@ -548,7 +552,7 @@ export default function SensitiveTermsBrowser() {
               <CardContent className="pt-0">
                 {sortedAndPagedTerms.length === 0 ? (
                   <p className="text-sm text-gray-400 py-8 text-center">
-                    {filteredTerms.length === 0 ? "暂无敏感词。点击「添加」按钮创建敏感词条。" : "当前页无数据"}
+                    {filteredTerms.length === 0 ? "还没有敏感词。点击“添加”开始创建。" : "这一页还没有内容。"}
                   </p>
                 ) : (
                   <div className="space-y-1">
@@ -644,21 +648,15 @@ export default function SensitiveTermsBrowser() {
             </Card>
 
             {/* 使用说明 */}
-            <Card className="border-blue-200 bg-blue-50">
-              <CardContent className="pt-4">
-                <p className="text-xs font-medium text-blue-800 mb-2 flex items-center gap-1.5">
-                  <Lightbulb className="w-4 h-4" />
-                  使用提示
-                </p>
-                <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-                  <li>敏感词会在脱敏时进行精确匹配和替换</li>
-                  <li>可以按分类组织敏感词，如：姓名、地址、公司名等</li>
-                  <li>支持CSV批量导入导出，格式：分类,敏感词,描述,状态</li>
-                  <li>禁用的敏感词不会参与脱敏匹配</li>
-                  <li>建议定期导出备份敏感词库</li>
-                </ul>
-              </CardContent>
-            </Card>
+            <Message type="info" title="使用提示">
+              <ul className="list-inside list-disc space-y-1 text-xs">
+                <li>敏感词会在脱敏时自动匹配并替换。</li>
+                <li>建议按“姓名、地址、公司名”这类分类来管理，后续更容易维护。</li>
+                <li>支持 CSV 批量导入导出，字段顺序为：分类、敏感词、描述、状态。</li>
+                <li>被禁用的敏感词不会参与脱敏。</li>
+                <li>建议定期导出一份备份。</li>
+              </ul>
+            </Message>
           </>
         )}
       </div>

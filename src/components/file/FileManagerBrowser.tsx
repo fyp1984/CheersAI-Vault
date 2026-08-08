@@ -170,8 +170,8 @@ export function FileManagerBrowser() {
         kind: "error",
         message:
           result.reason === "http"
-            ? result.message ?? "批次列表加载失败，请稍后重试。"
-            : "无法连接本机 Runtime，请确认服务已启动后重试。",
+            ? result.message ?? "批次列表加载失败，请稍后再试。"
+            : "当前连不上本地服务，请确认服务已启动后再试。",
       });
       return;
     }
@@ -217,9 +217,9 @@ export function FileManagerBrowser() {
         setDetailError(
           result.reason === "http"
             ? result.status === 404
-              ? "该批次不存在，请返回列表重新选择。"
-              : result.message ?? "批次详情加载失败，请稍后重试。"
-            : "批次详情响应异常，请稍后重试。"
+              ? "这个批次已不存在，请返回列表重新选择。"
+              : result.message ?? "批次详情加载失败，请稍后再试。"
+            : "批次详情返回异常，请稍后再试。"
         );
         return;
       }
@@ -291,8 +291,8 @@ export function FileManagerBrowser() {
     if (!result.ok) {
       setDownloadError(
         result.reason === "network"
-          ? "无法连接本机 Runtime，请确认服务已启动后重试。"
-          : result.message ?? "下载失败，请稍后重试。"
+          ? "当前连不上本地服务，请确认服务已启动后再试。"
+          : result.message ?? "下载没有成功，请稍后再试。"
       );
     }
   };
@@ -315,10 +315,10 @@ export function FileManagerBrowser() {
         stage: "error",
         message:
           statusResult.reason === "network"
-            ? "无法连接本机 Runtime，请确认服务已启动后重试。"
+            ? "当前连不上本地服务，请确认服务已启动后再试。"
             : statusResult.reason === "http"
-              ? statusResult.message ?? "FileBay 状态加载失败，请稍后重试。"
-              : "FileBay 状态响应异常，请稍后重试。",
+              ? statusResult.message ?? "FileBay 状态加载失败，请稍后再试。"
+              : "FileBay 状态返回异常，请稍后再试。",
       });
       return;
     }
@@ -327,10 +327,10 @@ export function FileManagerBrowser() {
         stage: "error",
         message:
           candidatesResult.reason === "network"
-            ? "无法连接本机 Runtime，请确认服务已启动后重试。"
+            ? "当前连不上本地服务，请确认服务已启动后再试。"
             : candidatesResult.reason === "http"
-              ? candidatesResult.message ?? "可上传文件列表加载失败，请稍后重试。"
-              : "可上传文件列表响应异常，请稍后重试。",
+              ? candidatesResult.message ?? "可上传文件列表加载失败，请稍后再试。"
+              : "可上传文件列表返回异常，请稍后再试。",
       });
       return;
     }
@@ -403,10 +403,10 @@ export function FileManagerBrowser() {
         stage: "error",
         message:
           result.reason === "network"
-            ? "无法连接本机 Runtime，请确认服务已启动后重试。"
+            ? "当前连不上本地服务，请确认服务已启动后再试。"
             : result.reason === "http"
-              ? result.message ?? "上传请求失败，请稍后重试。"
-              : "上传响应异常，请稍后重试。",
+              ? result.message ?? "上传没有成功，请稍后再试。"
+              : "上传返回异常，请稍后再试。",
       });
       return;
     }
@@ -444,7 +444,7 @@ export function FileManagerBrowser() {
             <Message type="warning">
               <span className="inline-flex items-center gap-2">
                 <WifiOff className="w-4 h-4" />
-                与 Runtime 的连接暂时中断，正在自动重连……当前展示的是最近一次成功获取的状态。
+                当前与本地服务的连接暂时中断，正在自动重连。页面先显示最近一次成功获取的状态。
               </span>
             </Message>
           )}
@@ -465,7 +465,7 @@ export function FileManagerBrowser() {
           )}
 
           {!detail ? (
-            <Loading text="正在加载批次状态…" />
+            <Loading text="正在加载批次状态..." />
           ) : (
             <>
               <Card className="p-5">
@@ -593,10 +593,10 @@ export function FileManagerBrowser() {
                   <h3 className="text-base font-semibold text-gray-900">选择要上传到 FileBay 的文件</h3>
                   {uploadPanel.filebay.status !== "configured" ? (
                     <Message type="warning">
-                      FileBay 尚未配置或配置无效，无法上传。请前往「Gitea 设置」页面确认服务器管理员配置。
+                      FileBay 还没有准备好，暂时无法上传。请先到“FileBay 设置”页面检查状态。
                     </Message>
                   ) : uploadPanel.candidates.length === 0 ? (
-                    <Message type="info">该批次没有可上传的已完成脱敏 Markdown 文件。</Message>
+                    <Message type="info">这个批次里还没有可上传的脱敏 Markdown 文件。</Message>
                   ) : (
                     <>
                       <div className="text-sm text-gray-500">
@@ -676,7 +676,7 @@ export function FileManagerBrowser() {
                     ))}
                   </div>
                   <Message type="info">
-                    只会上传以上脱敏后的 Markdown 文件本身；不会上传原始文件、映射文件（.cmap）或反脱敏还原产物。
+                    这里只会上传上面这些脱敏后的 Markdown 文件，不会上传原文件、映射文件（.cmap）或还原文件。
                   </Message>
                   <div className="flex justify-end gap-3 pt-2">
                     <Button variant="secondary" size="sm" onClick={backToSelect}>
@@ -691,7 +691,7 @@ export function FileManagerBrowser() {
 
               {uploadPanel.stage === "uploading" && (
                 <div className="py-6">
-                  <Loading text={`正在上传 ${uploadPanel.items.length} 个文件…`} />
+                  <Loading text={`正在上传 ${uploadPanel.items.length} 个文件...`} />
                 </div>
               )}
 
@@ -744,7 +744,7 @@ export function FileManagerBrowser() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="文件管理"
-        description="查看服务器处理结果：本页只展示本机企业 Runtime 已持久化的批次记录，不浏览服务器任意目录。"
+        description="查看已保存的处理结果。本页只展示本地服务保存的批次记录，不会浏览任意服务器目录。"
         actions={
           <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => void loadBatches()}>
             刷新
@@ -752,7 +752,7 @@ export function FileManagerBrowser() {
         }
       />
       <div className="flex-1 overflow-auto p-6 space-y-4">
-        {listState.kind === "loading" && <Loading text="正在加载批次列表…" />}
+        {listState.kind === "loading" && <Loading text="正在加载批次列表..." />}
 
         {listState.kind === "error" && (
           <Message type="error">
@@ -804,11 +804,11 @@ export function FileManagerBrowser() {
 
             {listState.batches.length === 0 ? (
               <Card className="p-10 text-center text-gray-500">
-                还没有批次。前往「文件脱敏」提交第一个批次后，处理结果会显示在这里。
+                还没有处理记录。你在“文件脱敏”里完成第一批处理后，结果会显示在这里。
               </Card>
             ) : filteredBatches.length === 0 ? (
               <Card className="p-10 text-center text-gray-500">
-                没有匹配的批次，试试调整搜索关键词或状态筛选。
+                没有找到符合条件的批次，试试调整关键词或筛选条件。
                 <div className="mt-3">
                   <Button variant="secondary" size="sm" onClick={clearFilters}>
                     清空筛选条件

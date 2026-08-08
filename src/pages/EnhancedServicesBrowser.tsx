@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CheckCircle, AlertCircle, Loader2, Package, ShieldAlert, WifiOff } from 'lucide-react';
 import { fetchRuntimeOcrStatus, type RuntimeFetchResult } from '@/lib/runtime/client';
 import type { RuntimeOcrStatusResponse } from '@/types/runtime';
+import { Message } from "@/components/ui/cheersai-ui";
 
 type BrowserOcrView =
   | { kind: 'loading' }
@@ -57,7 +58,7 @@ export default function EnhancedServicesBrowser() {
     <div className="p-6 w-full max-w-6xl mx-auto">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">增强服务</h2>
-        <p className="text-gray-600">当前通过浏览器访问，增强服务由服务器统一管理。</p>
+        <p className="text-gray-600">浏览器版只展示当前服务状态，安装和维护由管理员统一处理。</p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden max-w-2xl">
@@ -70,19 +71,19 @@ export default function EnhancedServicesBrowser() {
             </div>
             <div className="flex-1">
               <h3 className="text-lg font-semibold text-gray-900 mb-1">OCR 文字识别服务</h3>
-              <p className="text-sm text-gray-600 mb-3">扫描件 PDF 的文字识别由服务器 Runtime 提供。</p>
+              <p className="text-sm text-gray-600 mb-3">扫描件 PDF 的文字识别由本地服务统一提供。</p>
 
               {ocrView.kind === 'loading' && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  正在查询服务器状态...
+                  正在读取服务状态...
                 </span>
               )}
 
               {ocrView.kind === 'disconnected' && (
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusTone}`}>
                   <WifiOff className="w-3 h-3 mr-1" />
-                  无法连接服务器，请确认 Runtime 已启动
+                  当前连不上本地服务，请确认服务已启动后再试
                 </span>
               )}
 
@@ -108,8 +109,10 @@ export default function EnhancedServicesBrowser() {
         </div>
       </div>
 
-      <div className="mt-6 max-w-2xl p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-        AI 智能脱敏模型（Ollama）尚未接入浏览器访问，暂不在此展示；如需使用，请在桌面客户端中安装和管理。
+      <div className="mt-6 max-w-2xl">
+        <Message type="info" title="浏览器版当前可见范围">
+          AI 模型安装与管理暂不在浏览器版展示。如需启用这部分能力，请在桌面端完成安装和维护。
+        </Message>
       </div>
     </div>
   );

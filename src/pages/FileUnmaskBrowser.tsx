@@ -44,20 +44,20 @@ function restorabilityReason(file: RuntimeBatchFile): string | null {
 /** 把恢复失败的服务端错误码映射为固定安全文案，不回显原始响应。 */
 function restoreErrorMessage(reason: string, code?: string, message?: string): string {
   if (reason === "network") {
-    return "无法连接本机 Runtime，请确认服务已启动后重试。";
+    return "当前连不上本地服务，请确认服务已启动后再试。";
   }
   if (reason === "invalid-count") {
-    return "恢复结果异常，未生成任何文件，请重试或联系管理员。";
+    return "恢复结果异常，没有生成任何文件。请稍后再试。";
   }
   switch (code) {
     case "CMAP_MISMATCH":
-      return "无法恢复：服务器映射数据无效或与该文件不匹配。";
+      return "当前无法恢复：映射数据无效，或与这个文件不匹配。";
     case "NOT_FOUND":
-      return "该产物已不存在或不可恢复，请返回重新选择。";
+      return "这个处理结果已经不存在，或暂时无法恢复。请返回重新选择。";
     case "INPUT_CORRUPTED":
-      return "服务器保存的处理结果已损坏，无法恢复。";
+      return "服务器保存的处理结果已损坏，暂时无法恢复。";
     default:
-      return message ?? "恢复失败，请稍后重试。";
+      return message ?? "恢复没有成功，请稍后再试。";
   }
 }
 
@@ -204,7 +204,7 @@ export default function FileUnmaskBrowser() {
       <div className="flex flex-col h-full">
         <PageHeader
           title="反脱敏"
-          description="选择一个已完成的服务器批次，从中挑选可恢复的文件；服务器内部映射不会离开 Runtime。"
+          description="先选择一个已完成的批次，再从中挑选可恢复的文件。映射数据始终只保留在本地服务内。"
         />
         <div className="flex-1 overflow-auto p-6 space-y-4">
           {batchListState.kind === "loading" && <Loading text="正在加载批次列表…" />}
@@ -221,7 +221,7 @@ export default function FileUnmaskBrowser() {
           {batchListState.kind === "ready" && (
             <Card className="overflow-hidden">
               {batchListState.batches.length === 0 ? (
-                <div className="p-10 text-center text-gray-500">还没有批次，请先在「文件脱敏」提交批次。</div>
+                <div className="p-10 text-center text-gray-500">还没有可恢复的批次。请先在“文件脱敏”里完成一次处理。</div>
               ) : (
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-left text-gray-500">
@@ -266,9 +266,9 @@ export default function FileUnmaskBrowser() {
   if (detailState.kind === "loading") {
     return (
       <div className="flex flex-col h-full">
-        <PageHeader title="反脱敏" description="正在验证所选批次与文件…" />
+        <PageHeader title="反脱敏" description="正在核对你选择的批次和文件..." />
         <div className="flex-1 overflow-auto p-6">
-          <Loading text="正在验证…" />
+          <Loading text="正在核对..." />
         </div>
       </div>
     );

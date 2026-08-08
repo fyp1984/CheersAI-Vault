@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Message } from "@/components/ui/cheersai-ui";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Search, Download, Upload, ChevronUp, Lightbulb, FileSpreadsheet, Pencil } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, ChevronUp, FileSpreadsheet, Pencil } from "lucide-react";
 import { tauriCommands } from "@/lib/tauri";
 import type { SensitiveTerm, AddSensitiveTermRequest } from "@/types/commands";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -65,13 +66,13 @@ export default function SensitiveTermsDesktop() {
       setStats(statsData);
     } catch (error) {
       console.error("Failed to load data:", error);
-      setToast({ message: "加载数据失败", type: "error" });
+      setToast({ message: "敏感词库加载失败，请稍后再试。", type: "error" });
     }
   };
 
   const handleSaveTerm = async () => {
     if (!form.term.trim() || !form.category.trim()) {
-      setToast({ message: "请填写敏感词和分类", type: "error" });
+      setToast({ message: "请先填写敏感词和分类。", type: "error" });
       return;
     }
 
@@ -84,10 +85,10 @@ export default function SensitiveTermsDesktop() {
           category: form.category,
           description: form.description,
         });
-        setToast({ message: "修改成功", type: "success" });
+        setToast({ message: "敏感词已更新。", type: "success" });
       } else {
         await tauriCommands.addSensitiveTerm(form);
-        setToast({ message: "添加成功", type: "success" });
+        setToast({ message: "敏感词已添加。", type: "success" });
       }
       setForm({ term: "", category: "", description: "" });
       setEditingTerm(null);
@@ -124,18 +125,18 @@ export default function SensitiveTermsDesktop() {
       await loadData();
     } catch (error) {
       console.error("Failed to toggle term:", error);
-      setToast({ message: "更新失败", type: "error" });
+      setToast({ message: "状态更新没有成功，请稍后再试。", type: "error" });
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
       await tauriCommands.deleteSensitiveTerm(id);
-      setToast({ message: "删除成功", type: "success" });
+      setToast({ message: "敏感词已删除。", type: "success" });
       await loadData();
     } catch (error) {
       console.error("Failed to delete term:", error);
-      setToast({ message: "删除失败", type: "error" });
+      setToast({ message: "删除没有成功，请稍后再试。", type: "error" });
     }
   };
 
@@ -150,7 +151,7 @@ export default function SensitiveTermsDesktop() {
       setTerms(results);
     } catch (error) {
       console.error("Failed to search:", error);
-      setToast({ message: "搜索失败", type: "error" });
+      setToast({ message: "搜索没有成功，请稍后再试。", type: "error" });
     }
   };
 
@@ -163,11 +164,11 @@ export default function SensitiveTermsDesktop() {
 
       if (filePath) {
         await tauriCommands.exportSensitiveTermsCsv(filePath);
-        setToast({ message: "导出成功", type: "success" });
+        setToast({ message: "敏感词库已导出。", type: "success" });
       }
     } catch (error) {
       console.error("Failed to export:", error);
-      setToast({ message: "导出失败", type: "error" });
+      setToast({ message: "导出没有成功，请稍后再试。", type: "error" });
     }
   };
 
@@ -180,13 +181,13 @@ export default function SensitiveTermsDesktop() {
 
       if (selected) {
         const count = await tauriCommands.importSensitiveTermsCsv(selected as string);
-        setToast({ message: `成功导入 ${count} 条记录`, type: "success" });
+        setToast({ message: `已导入 ${count} 条敏感词。`, type: "success" });
         await loadData();
       }
     } catch (error) {
       console.error("Failed to import:", error);
       const message = error instanceof Error ? error.message : String(error);
-      setToast({ message: message || "导入失败", type: "error" });
+      setToast({ message: message || "导入没有成功，请稍后再试。", type: "error" });
     }
   };
 
@@ -427,8 +428,8 @@ export default function SensitiveTermsDesktop() {
             {sortedAndPagedTerms.length === 0 ? (
               <p className="text-sm text-gray-400 py-8 text-center">
                 {filteredTerms.length === 0
-                  ? "暂无敏感词。点击「添加」按钮创建敏感词条。"
-                  : "当前页无数据"}
+                  ? "还没有敏感词。点击“添加”开始创建。"
+                  : "这一页还没有内容。"}
               </p>
             ) : (
               <div className="space-y-1">
@@ -531,21 +532,15 @@ export default function SensitiveTermsDesktop() {
         </Card>
 
         {/* 使用说明 */}
-        <Card className="border-blue-200 bg-blue-50">
-          <CardContent className="pt-4">
-            <p className="text-xs font-medium text-blue-800 mb-2 flex items-center gap-1.5">
-              <Lightbulb className="w-4 h-4" />
-              使用提示
-            </p>
-            <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-              <li>敏感词会在脱敏时进行精确匹配和替换</li>
-              <li>可以按分类组织敏感词，如：姓名、地址、公司名等</li>
-              <li>支持CSV批量导入导出，格式：分类,敏感词,描述,状态</li>
-              <li>禁用的敏感词不会参与脱敏匹配</li>
-              <li>建议定期导出备份敏感词库</li>
-            </ul>
-          </CardContent>
-        </Card>
+        <Message type="info" title="使用提示">
+          <ul className="list-inside list-disc space-y-1 text-xs">
+            <li>敏感词会在脱敏时自动匹配并替换。</li>
+            <li>建议按“姓名、地址、公司名”这类分类来管理，后续更容易维护。</li>
+            <li>支持 CSV 批量导入导出，字段顺序为：分类、敏感词、描述、状态。</li>
+            <li>被禁用的敏感词不会参与脱敏。</li>
+            <li>建议定期导出一份备份。</li>
+          </ul>
+        </Message>
       </div>
 
       {/* Toast */}

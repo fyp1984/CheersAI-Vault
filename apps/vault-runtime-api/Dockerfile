@@ -1,4 +1,4 @@
-FROM rust:1.97-bookworm AS builder
+FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 
@@ -10,9 +10,23 @@ RUN cargo build --release --manifest-path /app/apps/vault-runtime-api/Cargo.toml
 
 FROM debian:bookworm-slim
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv libreoffice-core libreoffice-impress \
-    && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    for attempt in 1 2 3; do \
+        apt-get update; \
+        if apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=10 \
+            -o Acquire::http::Timeout=30 \
+            ca-certificates python3 libreoffice-core libreoffice-impress; then \
+            break; \
+        fi; \
+        if [ "$attempt" -eq 3 ]; then \
+            exit 1; \
+        fi; \
+        rm -rf /var/lib/apt/lists/*; \
+    done; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
