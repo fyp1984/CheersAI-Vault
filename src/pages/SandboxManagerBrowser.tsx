@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Message } from "@/components/ui/cheersai-ui";
+import Toast from "@/components/common/Toast";
 import {
   Lock,
   Unlock,
@@ -31,8 +33,8 @@ import type { RuntimeSandboxStatusResponse } from "@/types/runtime";
 
 type LoadState = "loading" | "ready" | "error";
 type ToastMessage = { message: string; type: "success" | "error" | "warning" };
-const CONNECTION_ERROR_TEXT = "无法连接本机 Runtime，请确认服务已启动后重试。";
-const LOAD_ERROR_TEXT = "沙箱状态加载失败，请稍后重试。";
+const CONNECTION_ERROR_TEXT = "当前连不上本地服务，请确认服务已启动后再试。";
+const LOAD_ERROR_TEXT = "暂时无法读取沙箱状态，请稍后再试。";
 
 function describeSandboxFailure(
   result: Extract<RuntimeFetchResult<unknown>, { ok: false }>,
@@ -90,12 +92,6 @@ export default function SandboxManagerBrowser() {
   const [clearingPin, setClearingPin] = useState(false);
   const [locking, setLocking] = useState(false);
 
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(timer);
-  }, [toast]);
-
   const loadStatus = useCallback(async () => {
     setLoadState((current) => (current === "ready" ? current : "loading"));
     const result = await fetchRuntimeSandboxStatus();
@@ -112,7 +108,6 @@ export default function SandboxManagerBrowser() {
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
-
   const handleUnlock = async () => {
     if (!unlockPin) return;
     setUnlocking(true);
@@ -125,7 +120,7 @@ export default function SandboxManagerBrowser() {
         return;
       }
       setStatus(result.data);
-      setToast({ message: "沙箱已解锁", type: "success" });
+      setToast({ message: "沙箱已解锁，现在可以继续操作。", type: "success" });
     } finally {
       setUnlocking(false);
     }
@@ -140,7 +135,7 @@ export default function SandboxManagerBrowser() {
         return;
       }
       setStatus(result.data);
-      setToast({ message: "沙箱已锁定", type: "success" });
+      setToast({ message: "沙箱已锁定。", type: "success" });
     } finally {
       setLocking(false);
     }
@@ -148,11 +143,11 @@ export default function SandboxManagerBrowser() {
 
   const handleSetPin = async () => {
     if (!newPin || newPin !== confirmPin) {
-      setToast({ message: "PIN 不匹配，请重新输入", type: "warning" });
+      setToast({ message: "两次输入的 PIN 不一致，请重新输入。", type: "warning" });
       return;
     }
     if (status?.pin_configured && !currentPin) {
-      setToast({ message: "请先输入当前 PIN 才能重新设置", type: "warning" });
+      setToast({ message: "请先输入当前 PIN，再设置新的 PIN。", type: "warning" });
       return;
     }
 
@@ -172,7 +167,7 @@ export default function SandboxManagerBrowser() {
       setNewPin("");
       setConfirmPin("");
       setShowSetPins(false);
-      setToast({ message: "PIN 设置成功，沙箱已锁定", type: "success" });
+      setToast({ message: "PIN 已设置完成，沙箱已自动锁定。", type: "success" });
     } finally {
       setSavingPin(false);
     }
@@ -180,7 +175,7 @@ export default function SandboxManagerBrowser() {
 
   const handleClearPin = async () => {
     if (!currentPin) {
-      setToast({ message: "请先输入当前 PIN 才能清除", type: "warning" });
+      setToast({ message: "请先输入当前 PIN，再清除 PIN。", type: "warning" });
       return;
     }
     setClearingPin(true);
@@ -193,7 +188,7 @@ export default function SandboxManagerBrowser() {
         return;
       }
       setStatus(result.data);
-      setToast({ message: "PIN 已清除", type: "success" });
+      setToast({ message: "PIN 已清除。", type: "success" });
     } finally {
       setClearingPin(false);
     }
@@ -203,15 +198,22 @@ export default function SandboxManagerBrowser() {
     return (
       <div className="flex flex-col h-full">
         <PageHeader title="沙箱管理" description="服务器共享沙箱操作状态" />
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
-          <div className="flex items-center gap-2 text-red-600 text-sm">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{loadErrorMessage ?? LOAD_ERROR_TEXT}</span>
+        <div className="flex-1 p-6">
+          <div className="mx-auto max-w-3xl">
+            <Message
+              type="error"
+              title="暂时无法读取沙箱状态"
+              className="mx-auto"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <span>{loadErrorMessage ?? LOAD_ERROR_TEXT}</span>
+                <Button size="sm" onClick={() => void loadStatus()}>
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                  重新加载
+                </Button>
+              </div>
+            </Message>
           </div>
-          <Button size="sm" onClick={() => void loadStatus()}>
-            <RefreshCw className="w-4 h-4 mr-1" />
-            重试
-          </Button>
         </div>
       </div>
     );
@@ -241,24 +243,22 @@ export default function SandboxManagerBrowser() {
           ) : (
             <>
               {/* 单系统用户共享状态说明 */}
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
-                <Users className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-800">
-                  这是同一服务器系统用户共享的沙箱操作状态：所有浏览器会话看到并影响同一个 PIN 和锁定状态。
-                  这不是账号登录、RBAC、多租户或 API 鉴权，服务器脱敏映射文件（.cmap）仍只保存在服务器内部，不会
-                  因为本页面而对外提供服务器目录浏览或下载。
-                </p>
-              </div>
+              <Message type="info" title="先了解这页会影响什么">
+                <div className="flex items-start gap-2">
+                  <Users className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    这里管理的是服务器上同一套沙箱状态。也就是说，不同浏览器打开这页时，看到并修改的是同一个
+                    PIN 和锁定状态。本页不会提供服务器目录浏览、文件下载或账号权限管理。
+                  </span>
+                </div>
+              </Message>
 
               {status.rate_limited && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-800">
-                    验证过于频繁，沙箱已临时全局锁定
-                    {status.retry_after_seconds != null ? `，请约 ${status.retry_after_seconds} 秒后重试` : "，请稍后重试"}
-                    。这是 Runtime 单一沙箱状态的全局限制，不按浏览器或客户端分别计数，更换浏览器无法绕过。
-                  </p>
-                </div>
+                <Message type="error" title="沙箱已临时锁定">
+                  尝试次数过多，
+                  {status.retry_after_seconds != null ? `大约 ${status.retry_after_seconds} 秒后再试。` : "请稍后再试。"}
+                  这是整个沙箱的统一限制，换一个浏览器也不会绕过。
+                </Message>
               )}
 
               {/* 沙箱状态卡片 */}
@@ -279,21 +279,18 @@ export default function SandboxManagerBrowser() {
                 <CardContent>
                   {!status.pin_configured ? (
                     <div className="space-y-3">
-                      <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
-                        <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
-                        <p className="text-sm text-yellow-800">
-                          尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。
-                        </p>
-                      </div>
+                      <Message type="warning" title="沙箱还没有 PIN">
+                        当前沙箱没有密码保护。建议先在下方“安全设置”里设置 PIN。
+                      </Message>
                     </div>
                   ) : status.locked ? (
                     <div className="space-y-4">
-                      <p className="text-sm text-gray-600">沙箱已锁定，请输入 PIN 解锁</p>
+                      <p className="text-sm text-gray-600">沙箱已锁定。输入 PIN 后才能继续操作。</p>
                       <div className="flex gap-2 max-w-md">
                         <div className="relative flex-1">
                           <Input
                             type={showUnlockPin ? "text" : "password"}
-                            placeholder="输入 PIN"
+                            placeholder="请输入 PIN"
                             value={unlockPin}
                             onChange={(e) => setUnlockPin(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && void handleUnlock()}
@@ -312,7 +309,7 @@ export default function SandboxManagerBrowser() {
                           disabled={!unlockPin || unlocking || status.rate_limited}
                         >
                           <Unlock className="w-4 h-4 mr-1" />
-                          解锁
+                          立即解锁
                         </Button>
                       </div>
                     </div>
@@ -320,7 +317,7 @@ export default function SandboxManagerBrowser() {
                     <div className="space-y-4">
                       <p className="text-sm text-blue-600 flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4" />
-                        沙箱已解锁
+                        沙箱已解锁，可以继续操作。
                       </p>
                     </div>
                   )}
@@ -339,10 +336,10 @@ export default function SandboxManagerBrowser() {
                   {status.pin_configured && (
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">当前 PIN</Label>
-                      <p className="text-xs text-gray-500">重新设置或清除 PIN 都需要先验证当前 PIN。</p>
+                      <p className="text-xs text-gray-500">修改或清除 PIN 前，需要先验证当前 PIN。</p>
                       <Input
                         type="password"
-                        placeholder="输入当前 PIN"
+                        placeholder="请输入当前 PIN"
                         value={currentPin}
                         onChange={(e) => setCurrentPin(e.target.value)}
                         className="max-w-md"
@@ -357,7 +354,7 @@ export default function SandboxManagerBrowser() {
                       <div className="relative">
                         <Input
                           type={showSetPins ? "text" : "password"}
-                          placeholder="新 PIN (至少 4 位)"
+                        placeholder="请输入新 PIN（至少 4 位）"
                           value={newPin}
                           onChange={(e) => setNewPin(e.target.value)}
                         />
@@ -371,7 +368,7 @@ export default function SandboxManagerBrowser() {
                       </div>
                       <Input
                         type="password"
-                        placeholder="确认 PIN"
+                        placeholder="请再次输入新 PIN"
                         value={confirmPin}
                         onChange={(e) => setConfirmPin(e.target.value)}
                       />
@@ -383,7 +380,7 @@ export default function SandboxManagerBrowser() {
                         size="sm"
                       >
                         <Save className="w-4 h-4 mr-1" />
-                        {status.pin_configured ? "重新设置 PIN" : "设置 PIN"}
+                        {status.pin_configured ? "保存新 PIN" : "设置 PIN"}
                       </Button>
                       {status.pin_configured && (
                         <Button
@@ -393,7 +390,7 @@ export default function SandboxManagerBrowser() {
                           variant="outline"
                           className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
                         >
-                          清除 PIN
+                          删除 PIN
                         </Button>
                       )}
                     </div>
@@ -401,13 +398,9 @@ export default function SandboxManagerBrowser() {
 
                   <Separator />
 
-                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-start gap-2">
-                    <Info className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-gray-500">
-                      普通浏览器不提供服务器目录浏览、目录选择或“打开服务器目录”，也没有默认 mapping 加密口令或
-                      “记住口令”选项——这些仍是桌面客户端的能力。服务器数据目录由部署管理员通过 Runtime 配置管理。
-                    </p>
-                  </div>
+                  <Message type="info" title="这页不包含的能力">
+                    浏览器版不支持查看服务器目录、选择目录或记住口令。这些能力只在桌面端提供，服务器目录仍由管理员统一维护。
+                  </Message>
                 </CardContent>
               </Card>
             </>
@@ -415,25 +408,7 @@ export default function SandboxManagerBrowser() {
         </div>
       </div>
 
-      {/* Toast 通知 */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
-          <div
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border ${
-              toast.type === "success"
-                ? "bg-blue-50 border-blue-200 text-blue-800"
-                : toast.type === "error"
-                  ? "bg-red-50 border-red-200 text-red-800"
-                  : "bg-yellow-50 border-yellow-200 text-yellow-800"
-            }`}
-          >
-            {toast.type === "success" && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
-            {toast.type === "error" && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
-            {toast.type === "warning" && <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </div>
-        </div>
-      )}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }

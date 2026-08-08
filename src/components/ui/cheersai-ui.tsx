@@ -225,27 +225,31 @@ interface MessageProps {
 export function Message({ type, title, children, onClose, className = '' }: MessageProps) {
   const styles = {
     success: {
-      bg: 'bg-success/5',
-      border: 'border-success/20',
-      text: 'text-success',
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-200',
+      text: 'text-emerald-700',
+      body: 'text-emerald-950',
       icon: CheckCircle,
     },
     warning: {
-      bg: 'bg-warning/10',
-      border: 'border-warning/20',
-      text: 'text-warning',
+      bg: 'bg-amber-50',
+      border: 'border-amber-200',
+      text: 'text-amber-700',
+      body: 'text-amber-950',
       icon: AlertTriangle,
     },
     error: {
-      bg: 'bg-error/5',
-      border: 'border-error/20',
-      text: 'text-error',
+      bg: 'bg-red-50',
+      border: 'border-red-200',
+      text: 'text-red-700',
+      body: 'text-red-950',
       icon: XCircle,
     },
     info: {
-      bg: 'bg-info/5',
-      border: 'border-info/20',
-      text: 'text-info',
+      bg: 'bg-blue-50',
+      border: 'border-blue-200',
+      text: 'text-blue-700',
+      body: 'text-blue-950',
       icon: Info,
     },
   };
@@ -254,19 +258,20 @@ export function Message({ type, title, children, onClose, className = '' }: Mess
   const IconComponent = style.icon;
   
   return (
-    <div className={`${style.bg} border ${style.border} rounded-lg p-4 ${className}`}>
+    <div className={`${style.bg} border ${style.border} rounded-xl p-4 ${className}`}>
       <div className="flex items-start gap-3">
         <IconComponent className={`w-5 h-5 ${style.text} flex-shrink-0 mt-0.5`} />
         <div className="flex-1">
           {title && (
-            <h4 className={`text-base font-semibold ${style.text} mb-1`}>{title}</h4>
+            <h4 className={`mb-1 text-sm font-semibold ${style.text}`}>{title}</h4>
           )}
-          <div className="text-sm text-gray-700">{children}</div>
+          <div className={`text-sm leading-6 ${style.body}`}>{children}</div>
         </div>
         {onClose && (
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+            className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0 rounded-md p-1 hover:bg-white/70"
+            aria-label="关闭提示"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />

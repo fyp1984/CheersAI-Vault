@@ -710,8 +710,8 @@ export default function FileProcessBrowser() {
     if (!result.ok) {
       setDownloadError(
         result.reason === "network"
-          ? "无法连接本机 Runtime，请确认服务已启动后重试。"
-          : result.message ?? "下载失败，请稍后重试。"
+          ? "当前连不上本地服务，请确认服务已启动后再试。"
+          : result.message ?? "预览生成没有成功，请稍后再试。"
       );
     }
   };
@@ -733,7 +733,7 @@ export default function FileProcessBrowser() {
             <Message type="warning">
               <span className="inline-flex items-center gap-2">
                 <WifiOff className="w-4 h-4" />
-                与 Runtime 的连接暂时中断，正在自动重连……当前展示的是最近一次成功获取的状态。
+                当前与本地服务的连接暂时中断，正在自动重连。页面先显示最近一次成功获取的状态。
               </span>
             </Message>
           )}
@@ -860,7 +860,7 @@ export default function FileProcessBrowser() {
             <Message type="warning">
               <span className="inline-flex items-center gap-2">
                 <WifiOff className="w-4 h-4" />
-                与 Runtime 的连接暂时中断，正在自动重连……当前展示的是最近一次成功获取的状态。
+                当前与本地服务的连接暂时中断，正在自动重连。页面先显示最近一次成功获取的状态。
               </span>
             </Message>
           )}
@@ -868,7 +868,7 @@ export default function FileProcessBrowser() {
 
           {previewExpired ? (
             <div className="flex flex-col items-center gap-4 py-16">
-              <Message type="error">预览已过期或服务已重启，请重新选择文件。</Message>
+              <Message type="error">预览已失效，请重新选择文件后再生成一次。</Message>
               <Button onClick={startOverFromPreview}>重新选择文件</Button>
             </div>
           ) : !previewDetail ? (
@@ -896,7 +896,7 @@ export default function FileProcessBrowser() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="文件处理"
-        description="通过浏览器提交多文件批量脱敏（由本机企业 Runtime 处理）"
+        description="通过浏览器提交文件并生成脱敏预览，处理过程由本地服务完成"
         actions={
           <Button
             onClick={() => void generatePreview()}
@@ -919,13 +919,13 @@ export default function FileProcessBrowser() {
                 {submitPhase === "uploading" && (
                   <span className="inline-flex items-center gap-2">
                     <Loading size="sm" />
-                    正在把文件上传到本机 Runtime，已等待 {Math.floor(elapsedMs / 1000)} 秒…
+                    正在把文件发送到本地服务，已等待 {Math.floor(elapsedMs / 1000)} 秒...
                   </span>
                 )}
                 {submitPhase === "submitted" && (
                   <span className="inline-flex items-center gap-2 text-blue-700">
                     <Info className="w-4 h-4" />
-                    已提交，Runtime 正在生成预览…
+                    已提交，本地服务正在生成预览...
                   </span>
                 )}
                 {submitPhase === "error" && submitError && (
@@ -956,7 +956,7 @@ export default function FileProcessBrowser() {
               <div className="font-medium text-gray-700">
                 点击选择或拖放 TXT / Markdown / CSV / Excel / DOCX / PPT / PPTX / PDF
               </div>
-              <div className="text-xs text-gray-500">文件仅发送到本机 Runtime；单批最多 100 个文件</div>
+              <div className="text-xs text-gray-500">文件只会发送到本地服务处理；单批最多 100 个文件</div>
             </label>
 
             {queue.length > 0 && (
@@ -1027,10 +1027,10 @@ export default function FileProcessBrowser() {
                       </label>
                     ))}
                   {rulesState.rules.every((rule) => rule.id === SENSITIVE_TERMS_RULE_ID) && (
-                    <p className="text-sm text-gray-500">Runtime 未返回任何可用规则。</p>
+                    <p className="text-sm text-gray-500">当前还没有可用规则，请稍后再试。</p>
                   )}
                   {selectedRuleIds.size === 0 && rulesState.rules.length > 0 && (
-                    <p className="text-xs text-amber-600">请至少选择一项规则后再提交。</p>
+                    <p className="text-xs text-amber-600">请至少选择一项规则，再继续生成预览。</p>
                   )}
 
                   {/* 敏感词库：与内置规则不同，不显示勾选开关——沿用桌面
@@ -1045,7 +1045,7 @@ export default function FileProcessBrowser() {
                       <div className="space-y-1.5 bg-red-50 border border-red-100 px-3 py-2.5 rounded-lg">
                         <div className="flex items-start gap-2 text-sm text-red-600">
                           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <span>敏感词库状态加载失败，请稍后重试。</span>
+                          <span>敏感词库状态读取失败，请稍后再试。</span>
                         </div>
                         <Button variant="secondary" size="sm" onClick={() => void loadSensitiveTermsSummary()}>
                           重试
@@ -1056,14 +1056,14 @@ export default function FileProcessBrowser() {
                       <div className="bg-blue-50 border border-blue-200 px-3 py-2.5 rounded-lg">
                         <div className="flex items-start gap-2 mb-2">
                           <Lightbulb className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                          <p className="text-sm font-medium text-blue-900">当前未配置已启用敏感词</p>
+                          <p className="text-sm font-medium text-blue-900">当前还没有启用的敏感词</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => navigate("/sensitive-terms")}
                           className="w-full text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition-colors"
                         >
-                          前往配置敏感词库 →
+                          去配置敏感词 →
                         </button>
                       </div>
                     )}
@@ -1095,8 +1095,8 @@ export default function FileProcessBrowser() {
                 <Info className="w-4 h-4 text-blue-900" />
                 <h3 className="text-sm font-bold text-blue-900">说明</h3>
               </div>
-              <p>处理完成后可在批次详情页下载脱敏后的 Markdown；映射数据只保存在服务器内部，不提供下载。</p>
-              <p>扫描件 PDF 的文字识别由服务器管理员统一配置的 OCR 组件提供。</p>
+              <p>处理完成后，你可以在批次详情里下载脱敏后的 Markdown；映射数据始终只保存在本地服务里。</p>
+              <p>扫描件 PDF 的文字识别由管理员提前配置好的 OCR 服务提供。</p>
             </div>
           </div>
         </div>

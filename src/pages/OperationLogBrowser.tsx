@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Message } from "@/components/ui/cheersai-ui";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Pagination,
@@ -103,6 +105,7 @@ export default function OperationLogBrowser() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [clearMessage, setClearMessage] = useState<string | null>(null);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [statusInput, setStatusInput] = useState("");
@@ -180,12 +183,6 @@ export default function OperationLogBrowser() {
   };
 
   const handleClear = async () => {
-    const confirmed = window.confirm(
-      "确定要清空操作日志吗？只会清除操作事件记录，不会删除任何批次、文件或处理结果。此操作不可撤销。"
-    );
-    if (!confirmed) {
-      return;
-    }
     setClearing(true);
     try {
       const result = await clearRuntimeOperationLogs();
@@ -194,11 +191,12 @@ export default function OperationLogBrowser() {
         return;
       }
       setClearMessage(
-        `清空成功：已删除 ${result.data.deleted_job_events + result.data.deleted_restore_events} 条事件记录`
+        `操作日志已清空，共删除 ${result.data.deleted_job_events + result.data.deleted_restore_events} 条记录。`
       );
       await loadData(1);
     } finally {
       setClearing(false);
+      setConfirmClearOpen(false);
     }
   };
 
@@ -228,7 +226,7 @@ export default function OperationLogBrowser() {
               <RefreshCw className={cn("w-4 h-4 mr-1", loading && "animate-spin")} />
               刷新
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void handleClear()} disabled={clearing}>
+            <Button variant="outline" size="sm" onClick={() => setConfirmClearOpen(true)} disabled={clearing}>
               <Trash2 className="w-4 h-4 mr-1" />
               清空日志
             </Button>
@@ -252,32 +250,27 @@ export default function OperationLogBrowser() {
           ) : (
             <>
               {connectionError && (
-                <Card className="border-yellow-300 bg-yellow-50">
-                  <CardContent className="py-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-sm text-yellow-800">
-                      <AlertTriangle className="w-4 h-4" />
-                      <span>
-                        {isConnectionError
-                          ? `连接中断，正在显示上次成功获取的数据。${connectionError}`
-                          : connectionError}
-                      </span>
-                    </div>
+                <Message
+                  type="warning"
+                  title={isConnectionError ? "连接暂时中断" : "暂时无法更新日志"}
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <span>
+                      {isConnectionError
+                        ? `当前先显示上一次成功获取的数据。${connectionError}`
+                        : connectionError}
+                    </span>
                     <Button variant="outline" size="sm" onClick={handleRefresh}>
-                      重试
+                      重新加载
                     </Button>
-                  </CardContent>
-                </Card>
+                  </div>
+                </Message>
               )}
 
               {clearMessage && (
-                <Card className="border-blue-200 bg-blue-50">
-                  <CardContent className="py-3 flex items-center justify-between gap-3">
-                    <span className="text-sm text-blue-800">{clearMessage}</span>
-                    <Button variant="ghost" size="sm" onClick={() => setClearMessage(null)}>
-                      关闭
-                    </Button>
-                  </CardContent>
-                </Card>
+                <Message type="success" onClose={() => setClearMessage(null)}>
+                  {clearMessage}
+                </Message>
               )}
 
               {stats && (
@@ -391,15 +384,15 @@ export default function OperationLogBrowser() {
                         <div className="flex items-center justify-center h-40 text-gray-400">
                           <div className="text-center">
                             <RefreshCw className="w-6 h-6 mx-auto mb-2 animate-spin" />
-                            <p className="text-sm">加载日志中...</p>
+                            <p className="text-sm">正在加载操作日志...</p>
                           </div>
                         </div>
                       ) : entries.length === 0 ? (
                         <div className="flex items-center justify-center h-40 text-gray-400">
                           <div className="text-center">
                             <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">暂无日志记录</p>
-                            <p className="text-xs mt-1">开始处理文件后，操作记录将显示在这里</p>
+                            <p className="text-sm">还没有操作记录</p>
+                            <p className="text-xs mt-1">你开始处理文件后，这里会自动显示对应记录。</p>
                           </div>
                         </div>
                       ) : (
@@ -466,6 +459,15 @@ export default function OperationLogBrowser() {
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="确认清空操作日志"
+        description="这会删除当前页面里的操作记录，但不会删除任何批次、文件或处理结果。清空后无法恢复。"
+        confirmLabel="确认清空"
+        confirming={clearing}
+        onConfirm={() => void handleClear()}
+        onOpenChange={setConfirmClearOpen}
+      />
     </div>
   );
 }

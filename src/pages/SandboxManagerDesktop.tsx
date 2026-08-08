@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Message } from "@/components/ui/cheersai-ui";
+import Toast from "@/components/common/Toast";
 import {
   Dialog,
   DialogContent,
@@ -24,8 +26,7 @@ import {
   RefreshCw,
   Info,
   CheckCircle2,
-  AlertTriangle,
-  XCircle
+  AlertTriangle
 } from "lucide-react";
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
@@ -56,14 +57,6 @@ export default function SandboxManagerDesktop() {
     description: string;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => {} });
-
-  // toast 自动消失
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
 
   const platformName = platformContext?.os === 'windows'
     ? 'Windows'
@@ -159,10 +152,10 @@ export default function SandboxManagerDesktop() {
         setLocked(false);
         setPin("");
       } else {
-        setToast({ message: 'PIN 错误，请重试', type: 'error' });
+        setToast({ message: "PIN 不正确，请重新输入。", type: "error" });
       }
     } catch (error) {
-      setToast({ message: '验证失败', type: 'error' });
+      setToast({ message: "PIN 验证没有成功，请稍后再试。", type: "error" });
     } finally {
       setLoading(false);
     }
@@ -171,12 +164,12 @@ export default function SandboxManagerDesktop() {
   // 设置新PIN
   const handleSetPin = async () => {
     if (!newPin || newPin !== confirmPin) {
-      setToast({ message: 'PIN 不匹配，请重新输入', type: 'warning' });
+      setToast({ message: "两次输入的 PIN 不一致，请重新输入。", type: "warning" });
       return;
     }
 
     if (newPin.length < 4) {
-      setToast({ message: 'PIN 至少需要 4 位', type: 'warning' });
+      setToast({ message: "PIN 至少需要 4 位。", type: "warning" });
       return;
     }
 
@@ -186,7 +179,7 @@ export default function SandboxManagerDesktop() {
       setNewPin("");
       setConfirmPin("");
       setPinExists(true);
-      setToast({ message: `PIN 设置成功，已启用 ${pinStorageLabel} 安全存储`, type: 'success' });
+      setToast({ message: `PIN 已设置完成，并已启用 ${pinStorageLabel} 安全存储。`, type: "success" });
       // 延迟锁定并隐藏文件
       setTimeout(async () => {
         if (outputDir) {
@@ -195,7 +188,7 @@ export default function SandboxManagerDesktop() {
         setLocked(true);
       }, 1500);
     } catch (error) {
-      setToast({ message: 'PIN 设置失败: ' + error, type: 'error' });
+      setToast({ message: `PIN 设置没有成功：${String(error)}`, type: "error" });
     } finally {
       setLoading(false);
     }
@@ -206,7 +199,7 @@ export default function SandboxManagerDesktop() {
     setConfirmDialog({
       open: true,
       title: '清除 PIN',
-      description: '确定要清除 PIN 吗？清除后沙箱将不再需要密码访问。',
+      description: '确认后将删除当前 PIN。删除后，进入沙箱将不再需要输入 PIN。',
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, open: false }));
         setLoading(true);
@@ -214,9 +207,9 @@ export default function SandboxManagerDesktop() {
           await tauriCommands.clearPin();
           setPinExists(false);
           setLocked(false);
-          setToast({ message: 'PIN 已清除', type: 'success' });
+          setToast({ message: "PIN 已清除。", type: "success" });
         } catch (error) {
-          setToast({ message: '清除 PIN 失败: ' + error, type: 'error' });
+          setToast({ message: `清除 PIN 没有成功：${String(error)}`, type: "error" });
         } finally {
           setLoading(false);
         }
@@ -246,7 +239,7 @@ export default function SandboxManagerDesktop() {
       }
     } catch (error) {
       console.error("Failed to select output directory:", error);
-      setPathError("选择路径失败");
+          setPathError("路径选择没有成功，请再试一次。");
     }
   };
 
@@ -283,7 +276,7 @@ export default function SandboxManagerDesktop() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="沙箱管理"
-        description="安全设置和文件输出配置"
+        description="管理沙箱访问方式、默认口令和文件保存位置"
         actions={
           <div className="flex gap-2">
             {!locked && pinExists && (
@@ -321,23 +314,22 @@ export default function SandboxManagerDesktop() {
             </CardHeader>
             <CardContent>
               {pinExists === null ? (
-                <p className="text-sm text-gray-500">正在检查 PIN 状态...</p>
+                <p className="text-sm text-gray-500">正在检查沙箱状态...</p>
               ) : !pinExists ? (
                 <div className="space-y-3">
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-yellow-800">尚未设置 PIN，沙箱当前无密码保护。请在下方「安全设置」中设置 PIN。</p>
-                  </div>
+                  <Message type="warning" title="沙箱还没有 PIN">
+                    当前沙箱没有密码保护。建议先在下方“安全设置”里设置 PIN。
+                  </Message>
                   <p className="text-xs text-gray-500">{pinStorageDescription}</p>
                 </div>
               ) : locked ? (
                 <div className="space-y-4">
-                  <p className="text-sm text-gray-600">沙箱已锁定，请输入 PIN 解锁</p>
+                  <p className="text-sm text-gray-600">沙箱已锁定。输入 PIN 后才能继续操作。</p>
                   <div className="flex gap-2 max-w-md">
                     <div className="relative flex-1">
                       <Input
                         type={showPin ? "text" : "password"}
-                        placeholder="输入 PIN"
+                        placeholder="请输入 PIN"
                         value={pin}
                         onChange={(e) => setPin(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
@@ -352,7 +344,7 @@ export default function SandboxManagerDesktop() {
                     </div>
                     <Button onClick={handleUnlock} disabled={!pin || loading}>
                       <Unlock className="w-4 h-4 mr-1" />
-                      解锁
+                      立即解锁
                     </Button>
                   </div>
                   <p className="text-xs text-gray-500">
@@ -367,7 +359,7 @@ export default function SandboxManagerDesktop() {
                 <div className="space-y-4">
                   <p className="text-sm text-blue-600 flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4" />
-                    沙箱已解锁，可以访问安全文件
+                    沙箱已解锁，可以继续访问安全文件。
                   </p>
                 </div>
               )}
@@ -386,12 +378,12 @@ export default function SandboxManagerDesktop() {
 
               {/* PIN 设置 */}
               <div className="space-y-4">
-                <Label className="text-sm font-medium">设置新 PIN</Label>
+                <Label className="text-sm font-medium">设置 PIN</Label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="relative">
                     <Input
                       type={showNewPin ? "text" : "password"}
-                      placeholder="新 PIN (至少4位)"
+                      placeholder="请输入新 PIN（至少 4 位）"
                       value={newPin}
                       onChange={(e) => setNewPin(e.target.value)}
                     />
@@ -405,7 +397,7 @@ export default function SandboxManagerDesktop() {
                   </div>
                   <Input
                     type="password"
-                    placeholder="确认 PIN"
+                    placeholder="请再次输入新 PIN"
                     value={confirmPin}
                     onChange={(e) => setConfirmPin(e.target.value)}
                   />
@@ -417,7 +409,7 @@ export default function SandboxManagerDesktop() {
                     size="sm"
                   >
                     <Save className="w-4 h-4 mr-1" />
-                    {pinExists ? '重新设置 PIN' : '设置 PIN'}
+                    {pinExists ? '保存新 PIN' : '设置 PIN'}
                   </Button>
                   {pinExists && (
                     <Button
@@ -427,7 +419,7 @@ export default function SandboxManagerDesktop() {
                       variant="outline"
                       className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
                     >
-                      清除 PIN
+                      删除 PIN
                     </Button>
                   )}
                 </div>
@@ -438,14 +430,12 @@ export default function SandboxManagerDesktop() {
               {/* 默认加密口令 */}
               <div className="space-y-4">
                 <Label className="text-sm font-medium">默认加密口令</Label>
-                <p className="text-xs text-gray-500">
-                  用于脱敏映射文件的加密，设置后会自动应用到文件处理
-                </p>
+                <p className="text-xs text-gray-500">这个口令会用于加密脱敏映射文件，设置后会自动用于文件处理。</p>
                 <div className="flex gap-2 max-w-md">
                   <div className="relative flex-1">
                     <Input
                       type={showPassphrase ? "text" : "password"}
-                      placeholder="加密口令"
+                      placeholder="请输入默认加密口令"
                       value={passphrase}
                       onChange={(e) => setPassphrase(e.target.value)}
                       className="pr-10"
@@ -476,7 +466,7 @@ export default function SandboxManagerDesktop() {
                     className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <label htmlFor="remember-passphrase" className="text-sm text-gray-700 cursor-pointer">
-                    记住解密口令（下次自动填充）
+                    记住这个口令（下次自动填充）
                   </label>
                 </div>
               </div>
@@ -491,21 +481,19 @@ export default function SandboxManagerDesktop() {
                     {platformName}
                   </div>
                 </div>
-                <p className="text-xs text-gray-500">
-                  脱敏文件的输出目录，同时也是沙箱的存储位置
-                </p>
+                <p className="text-xs text-gray-500">这里既是脱敏文件的保存位置，也是沙箱的存储位置。</p>
 
                 <div className="space-y-2">
                   <div className="flex gap-2">
                     <Input
-                      placeholder={`选择文件输出路径 (${defaultPathExample})`}
+                      placeholder={`请选择文件保存路径（例如：${defaultPathExample}）`}
                       value={outputDir}
                       onChange={(e) => handlePathChange(e.target.value)}
                       className={`flex-1 ${pathError ? 'border-red-300' : ''}`}
                     />
                     <Button variant="outline" onClick={handleSelectPath}>
                       <FolderOpen className="w-4 h-4 mr-1" />
-                      浏览
+                      选择文件夹
                     </Button>
                   </div>
 
@@ -522,19 +510,17 @@ export default function SandboxManagerDesktop() {
                     onClick={handleUseDefaultPath}
                     className="text-xs"
                   >
-                    使用默认路径 ({getDisplayPath(resolvedDefaultDocumentsPath, 40)})
+                    使用默认路径（{getDisplayPath(resolvedDefaultDocumentsPath, 40)}）
                   </Button>
                 </div>
 
                 {outputDir && !pathError && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      <strong>当前路径:</strong> {getDisplayPath(outputDir, 60)}
-                    </p>
-                    <p className="text-xs text-blue-600 mt-1">
-                      脱敏文件和映射文件都将保存到此目录
-                    </p>
-                  </div>
+                  <Message type="info" title="当前保存位置">
+                    <div>
+                      <p>{getDisplayPath(outputDir, 60)}</p>
+                      <p className="mt-1 text-xs opacity-80">脱敏文件和映射文件都会保存到这里。</p>
+                    </div>
+                  </Message>
                 )}
               </div>
             </CardContent>
@@ -543,21 +529,7 @@ export default function SandboxManagerDesktop() {
         </div>
       </div>
 
-      {/* Toast 通知 */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border ${
-            toast.type === 'success' ? 'bg-blue-50 border-blue-200 text-blue-800' :
-            toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
-            'bg-yellow-50 border-yellow-200 text-yellow-800'
-          }`}>
-            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
-            {toast.type === 'error' && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
-            {toast.type === 'warning' && <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </div>
-        </div>
-      )}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
       {/* 确认弹窗 */}
       <Dialog open={confirmDialog.open} onOpenChange={(v) => !v && setConfirmDialog(prev => ({ ...prev, open: false }))}>

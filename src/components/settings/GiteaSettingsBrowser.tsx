@@ -23,9 +23,9 @@ type ActionState =
 
 /** 区分“连不上本机 Runtime” 与业务错误，从不把两者混为一谈。 */
 function describeFailure(result: Extract<RuntimeFetchResult<unknown>, { ok: false }>): string {
-  if (result.reason === "network") return "无法连接本机 Runtime，请确认服务已启动后重试。";
-  if (result.reason === "http") return result.message ?? "请求失败，请稍后重试。";
-  return "响应异常，请稍后重试。";
+  if (result.reason === "network") return "当前连不上本地服务，请确认服务已启动后再试。";
+  if (result.reason === "http") return result.message ?? "操作没有成功，请稍后再试。";
+  return "服务返回异常，请稍后再试。";
 }
 
 function statusBadge(status: RuntimeFileBayStatusResponse["status"]) {
@@ -76,8 +76,8 @@ export default function GiteaSettingsBrowser() {
     setTestState({
       kind: "success",
       message: result.data.repository_exists
-        ? "连接成功：目标仓库已存在。"
-        : "连接成功：目标仓库尚不存在，可点击“创建私有仓库”。",
+        ? "连接正常，目标仓库已经存在。"
+        : "连接正常，目标仓库还没有创建，你可以继续创建私有仓库。",
     });
   };
 
@@ -91,7 +91,7 @@ export default function GiteaSettingsBrowser() {
     }
     setCreateState({
       kind: "success",
-      message: result.data.status === "created" ? "私有仓库已创建。" : "仓库已存在，无需重复创建。",
+      message: result.data.status === "created" ? "私有仓库已创建。" : "仓库已经存在，无需重复创建。",
     });
     void loadStatus();
   };
@@ -131,7 +131,7 @@ export default function GiteaSettingsBrowser() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="FileBay 上传设置"
-        description="URL、Token、owner、repo 均由服务器管理员环境变量配置；浏览器仅可查看安全状态并触发测试连接、创建私有仓库。"
+        description="这里仅展示当前连接状态。地址、令牌和仓库信息都由管理员统一维护。"
         actions={
           <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => void loadStatus()}>
             刷新
@@ -147,14 +147,14 @@ export default function GiteaSettingsBrowser() {
 
           {data.status === "unconfigured" && (
             <Message type="info">
-              尚未配置 FileBay。请联系服务器管理员在 Runtime 环境变量中设置{" "}
+              还没有配置 FileBay。请联系管理员在服务环境中设置{" "}
               <code>VAULT_FILEBAY_URL</code>/<code>VAULT_FILEBAY_TOKEN</code>/
               <code>VAULT_FILEBAY_OWNER</code>/<code>VAULT_FILEBAY_REPO</code> 后重启服务。
             </Message>
           )}
           {data.status === "invalid" && (
             <Message type="error">
-              当前 FileBay 配置无效（可能未同时设置全部四项，或格式不合法）。上传功能已禁用，请联系服务器管理员检查配置后重启服务。
+              当前 FileBay 配置有误，上传功能暂时不可用。请联系管理员检查配置后重新启动服务。
             </Message>
           )}
 
@@ -223,9 +223,9 @@ export default function GiteaSettingsBrowser() {
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-2">说明</h3>
           <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
-            <li>浏览器不显示、不接收 Token，也没有可编辑的地址/owner/repo 输入。</li>
-            <li>上传时只提交已完成脱敏的 Markdown 制品 ID，远程路径由服务器生成，不上传原文件、映射文件或还原产物。</li>
-            <li>“创建私有仓库”只会创建私有仓库，不会创建公开仓库。</li>
+            <li>浏览器版不会显示或接收访问令牌，也不能直接修改地址和仓库信息。</li>
+            <li>上传时只会提交已经脱敏完成的 Markdown 文件，不会上传原文件、映射文件或还原文件。</li>
+            <li>点击“创建私有仓库”后，只会创建私有仓库，不会创建公开仓库。</li>
           </ul>
         </Card>
       </div>

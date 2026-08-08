@@ -19,6 +19,7 @@ import type { LogLevel } from "@/types/log";
 import { useEffect, useState } from "react";
 import { tauriCommands } from "@/lib/tauri";
 import type { DatabaseStatistics } from "@/types/log";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 
 const levelColor: Record<LogLevel, string> = {
   info: "bg-blue-100 text-blue-600",
@@ -49,6 +50,7 @@ export default function OperationLogDesktop() {
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [statistics, setStatistics] = useState<DatabaseStatistics | null>(null);
   const [dbInfo, setDbInfo] = useState<any>(null);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   // 初始化数据库和加载数据
   useEffect(() => {
@@ -127,10 +129,9 @@ export default function OperationLogDesktop() {
 
   // 清空日志
   const handleClearLogs = async () => {
-    if (confirm("确定要清空所有日志吗？此操作不可撤销。")) {
-      await clearLogs();
-      await loadStatistics();
-    }
+    await clearLogs();
+    await loadStatistics();
+    setConfirmClearOpen(false);
   };
 
   // 处理分页
@@ -206,7 +207,7 @@ export default function OperationLogDesktop() {
               <RefreshCw className={cn("w-4 h-4 mr-1", loading && "animate-spin")} />
               刷新
             </Button>
-            <Button variant="outline" size="sm" onClick={handleClearLogs}>
+            <Button variant="outline" size="sm" onClick={() => setConfirmClearOpen(true)}>
               <Trash2 className="w-4 h-4 mr-1" />
               清空日志
             </Button>
@@ -438,6 +439,14 @@ export default function OperationLogDesktop() {
           </Card>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="确认清空操作日志"
+        description="这会删除当前页面里的所有操作记录。清空后无法恢复。"
+        confirmLabel="确认清空"
+        onConfirm={() => void handleClearLogs()}
+        onOpenChange={setConfirmClearOpen}
+      />
     </div>
   );
 }

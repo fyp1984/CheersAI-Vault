@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { ExternalLink, AlertCircle, Loader2, MonitorUp, RefreshCw, Shield, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Message } from "@/components/ui/cheersai-ui";
 import { CLOUD_APP_URL } from "@/lib/cloud";
 
 export type CloudFallbackState = "waiting" | "mounting" | "fallback";
@@ -27,6 +29,7 @@ export default function CheersAICloud({
   onOpenStandalone,
   onOpenExternal,
 }: CheersAICloudProps) {
+  const [actionError, setActionError] = useState<string | null>(null);
   const title =
     mountState === "fallback"
       ? "嵌入式云端页面暂时不可用"
@@ -85,7 +88,7 @@ export default function CheersAICloud({
       await openStandalone();
     } catch (error) {
       console.error("Failed to open standalone cloud window:", error);
-      window.alert(`打开应用内窗口失败：${getErrorMessage(error)}`);
+      setActionError(`打开应用内窗口没有成功：${getErrorMessage(error)}`);
     }
   };
 
@@ -94,7 +97,7 @@ export default function CheersAICloud({
       await openExternal();
     } catch (error) {
       console.error("Failed to open external cloud browser:", error);
-      window.alert(`打开系统浏览器失败：${getErrorMessage(error)}`);
+      setActionError(`打开系统浏览器没有成功：${getErrorMessage(error)}`);
     }
   };
 
@@ -157,6 +160,11 @@ export default function CheersAICloud({
         <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-6">
           <Card className="border-gray-200 shadow-sm">
             <CardContent className="space-y-4 p-6">
+              {actionError && (
+                <Message type="error" onClose={() => setActionError(null)}>
+                  {actionError}
+                </Message>
+              )}
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="space-y-2">
                   <div className="text-lg font-semibold text-gray-900">统一回退页</div>
