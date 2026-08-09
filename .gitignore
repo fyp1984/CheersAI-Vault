@@ -38,4 +38,9 @@ src-tauri/gen/
 test-results/
 .cleanup-archive/
 docs/.recycle-bin/
+docs/*_REPORT*.md
+docs/*_CANDIDATES*.md
 .pnpm-store/*
+marked/*
+.build_probe.txt
+.trae/

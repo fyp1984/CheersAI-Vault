@@ -47,6 +47,10 @@ const pageMeta: Record<string, { title: string; description: string }> = {
     title: "操作日志",
     description: "查看本地审计与操作记录",
   },
+  "/docs": {
+    title: "文档中心",
+    description: "统一浏览个人版与企业版操作文档",
+  },
 };
 
 interface StatusPillProps {
@@ -81,10 +85,11 @@ export function MainLayout() {
   const location = useLocation();
   const isDesktopHost = isTauriHost();
   const isCloudWorkspace = location.pathname.startsWith("/cloud");
-  const meta = pageMeta[location.pathname] ?? {
+  const isDocsRoute = location.pathname.startsWith("/docs");
+  const meta = pageMeta[location.pathname] ?? (location.pathname.startsWith("/docs") ? pageMeta["/docs"] : {
     title: isDesktopHost ? "CheersAI Vault" : "CheersAI Vault Pro",
     description: "把敏感数据留在本地，让AI能力触手可及。",
-  };
+  });
   // 浏览器宿主页头不得出现 "CheersAI Desktop"（该名称仅指智能体工作台，
   // 不得用于本项目浏览器版）；桌面宿主 `/cloud` 内嵌的正是智能体工作台
   // 子 WebView，保留其原名属已确认的指向性用法。
@@ -142,20 +147,22 @@ export function MainLayout() {
       <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
         <Sidebar />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          <header className="flex h-[120px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
-            <div className="min-w-0 max-w-[760px] pr-6">
-              <div className="text-sm font-semibold leading-6 text-slate-900">{headerTitle}</div>
-              <div className="mt-1 text-[13px] leading-5 text-slate-500">{meta.description}</div>
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div>
-                  <StatusPill {...networkPill} ariaLabel={`网络状态${networkPill.label}`} />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{networkTooltip}</TooltipContent>
-            </Tooltip>
-          </header>
+          {!isDocsRoute && (
+            <header className="flex h-[120px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
+              <div className="min-w-0 max-w-[760px] pr-6">
+                <div className="text-sm font-semibold leading-6 text-slate-900">{headerTitle}</div>
+                <div className="mt-1 text-[13px] leading-5 text-slate-500">{meta.description}</div>
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <StatusPill {...networkPill} ariaLabel={`网络状态${networkPill.label}`} />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{networkTooltip}</TooltipContent>
+              </Tooltip>
+            </header>
+          )}
           <section className="min-h-0 flex-1 overflow-auto bg-white">
             <Outlet />
           </section>

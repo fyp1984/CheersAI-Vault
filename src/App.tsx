@@ -9,6 +9,8 @@ import OperationLog from "@/pages/OperationLog";
 import CheersAICloudBrowser from "@/pages/CheersAICloudBrowser";
 import { FileManager } from "@/components/file/FileManager";
 import EnhancedServices from "@/pages/EnhancedServices";
+import DocumentationHubPage from "@/pages/DocumentationHubPage";
+import DocumentationViewerPage from "@/pages/DocumentationViewerPage";
 import { isTauriHost } from "@/lib/runtime/host";
 import { Loading } from "@/components/ui/cheersai-ui";
 
@@ -74,6 +76,8 @@ function AppRoutes() {
           <Route path="/log" element={<OperationLog />} />
           <Route path="/cloud" element={<CheersAICloudBrowser />} />
           <Route path="/enhanced" element={<EnhancedServices />} />
+          <Route path="/docs" element={<DocumentationHubPage />} />
+          <Route path="/docs/:docId" element={<DocumentationViewerPage />} />
         </Route>
       </Routes>
     </>
