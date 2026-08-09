@@ -1,5 +1,12 @@
 # CheersAI脱敏沙箱用户说明书
 
+> 版本选择入口
+>
+> - [个人版（桌面版）安装与操作说明](#personal-desktop-guide)
+> - [企业版（浏览器版）专项说明](#enterprise-special-guide)
+> - [企业版 API 接入详细指南](#enterprise-api-guide)
+> - [企业版批量操作执行说明](#enterprise-batch-guide)
+
 ## 1. 文档目的与适用对象
 
 本说明书用于帮助企业用户、个人用户、部署管理员与技术支持人员快速理解并使用 CheersAI脱敏沙箱。
@@ -27,11 +34,28 @@ CheersAI脱敏沙箱是一款面向企业与个人用户的本地敏感文件脱
 
 | 形态 | 主要使用者 | 典型场景 | 说明 |
 |---|---|---|---|
-| 桌面版 | 个人用户、单机办公用户 | 本机处理、离线处理、本地规则管理 | 基于 Tauri 运行 |
-| 浏览器版 | 企业内网用户 | 团队共享使用、统一部署、集中运维 | 由 Nginx + Runtime 提供服务 |
+| 个人版（桌面版） | 个人用户、单机办公用户 | 本机处理、离线处理、本地规则管理 | 基于 Tauri 运行，保留现有个人版操作说明 |
+| 企业版（浏览器版） | 企业内网用户、部署管理员、对接系统 | 团队共享使用、统一部署、集中运维、HTTP API 接入 | 由 Nginx + Runtime 提供服务 |
 | 本地 Docker 验证环境 | 开发与测试人员 | 快速联调、验证浏览器端链路 | 适合本地验证，不等同正式生产交付 |
 
-### 2.3 典型使用流程
+### 2.3 版本差异与适用边界
+
+| 维度 | 个人版（桌面版） | 企业版（浏览器版） |
+|---|---|---|
+| 使用入口 | 本机桌面应用 | 企业内网浏览器入口，或企业内网系统经 Nginx 调用 API |
+| 典型部署 | 单机安装或源码运行 | Linux + Nginx + Runtime 统一部署 |
+| 用户模型 | 本机用户为主 | 单一系统用户共享模型，无登录、无 RBAC、无多租户 |
+| HTTP API 接入 | 不提供 | 支持 4 项对外 API，属于企业版专项能力 |
+| 共享状态 | 以本机状态为主 | 共享沙箱、共享 PIN、共享 FileBay 配置 |
+| 安全边界 | 本机环境控制 | Nginx 客户 CIDR 白名单是当前版本唯一访问边界 |
+
+> 当前版本说明：
+>
+> - 个人版现有安装、操作与使用步骤保留不变，继续阅读第 `5` 至第 `9` 节即可。
+> - 企业版除浏览器操作外，还包含部署、API 对接、批量能力和共享状态边界，统一见第 `10` 节。
+> - 企业版当前没有应用层鉴权、权限分级和审批工作流，凡文档中提到的“审核”均指企业内部人工审批或变更流程，不是系统内置功能。
+
+### 2.4 典型使用流程
 
 ```text
 选择文件
@@ -51,7 +75,7 @@ CheersAI脱敏沙箱是一款面向企业与个人用户的本地敏感文件脱
 
 ### 3.1 核心能力矩阵
 
-| 能力 | 桌面版 | 浏览器版 | 说明 |
+| 能力 | 个人版（桌面版） | 企业版（浏览器版） | 说明 |
 |---|---|---|---|
 | 单文件脱敏 | 支持 | 支持 | 适合临时文件处理 |
 | 批量文件脱敏 | 支持 | 支持 | 适合批量资料外发或归档前处理 |
@@ -62,8 +86,26 @@ CheersAI脱敏沙箱是一款面向企业与个人用户的本地敏感文件脱
 | FileBay 集成 | 支持 | 支持 | 用于上传脱敏后的结果文件 |
 | OCR 能力 | 可选 | 可选 | 主要用于扫描版 PDF 文字识别 |
 | AI 多方法检测 | 支持 | 视部署能力而定 | 用于提高识别准确度，具体以当前界面为准 |
+| HTTP API 接入 | 不支持 | 支持（仅企业版） | 对外正式承诺范围仅 4 项 API |
+| 企业内网统一部署 | 不支持 | 支持（仅企业版） | 通过 Nginx + Runtime 提供统一入口 |
+| 共享 FileBay / 共享 PIN | 不支持 | 支持（仅企业版） | 以单 Runtime 共享状态运行 |
 
-### 3.2 支持的文件类型
+### 3.2 版本化功能权限边界
+
+| 模块 | 个人版（桌面版） | 企业版（浏览器版） | 当前边界说明 |
+|---|---|---|---|
+| `文件脱敏` | 支持 | 支持 | 两个版本都支持预览后确认 |
+| `文件反脱敏` | 支持 | 支持 | 企业版浏览器端不提供手动上传 `.cmap` |
+| `规则配置` | 支持 | 支持 | 企业版支持 CSV 导入/导出与共享词库 |
+| `沙箱管理` | 支持 | 支持 | 企业版为共享 PIN / 共享锁定状态 |
+| `FileBay 设置` | 支持 | 支持 | 企业版目标地址与 Token 由管理员统一维护 |
+| `增强服务` | 支持 | 支持 | 企业版浏览器通常只读显示 OCR 状态 |
+| `操作日志` | 支持 | 支持 | 企业版支持浏览器页查询与筛选 |
+| `API 接入` | 不支持 | 支持（仅企业版） | 仅 4 项对外 API 在正式承诺范围内 |
+| `批量权限配置` | 不支持 | 不支持 | 当前版本没有账号、角色、RBAC 或权限批量配置 |
+| `任务批量下发` | 不支持 | 部分支持（仅企业版） | 当前仅支持批量提交文件批次，不支持审批式任务下发 |
+
+### 3.3 支持的文件类型
 
 当前软件支持的常见文件类型包括：
 
@@ -79,6 +121,8 @@ CheersAI脱敏沙箱是一款面向企业与个人用户的本地敏感文件脱
 说明如下：
 
 - 扫描版 PDF 需要 OCR 组件支持
+- 企业版（浏览器版）当前正式支持的 Runtime 输入格式为：`TXT`、`Markdown`、`CSV`、`Excel (.xls/.xlsx)`、`DOCX`、`PDF`、`PPT`、`PPTX`
+- `JSON` 是否可处理以个人版当前界面与发布能力为准，不属于企业版当前正式承诺格式
 - 部分格式在不同运行形态下的细节能力可能不同，以当前发布版本界面和部署配置为准
 
 ## 4. 系统环境要求
@@ -99,6 +143,8 @@ CheersAI脱敏沙箱是一款面向企业与个人用户的本地敏感文件脱
 | OCR 组件管理 | `Python 3.11+`，仅 OCR 场景需要 |
 | 本地 Docker 验证 | Docker 与 Docker Compose |
 | 企业内网部署 | Linux 主机、Nginx、systemd、Runtime 运行环境 |
+
+<a id="personal-desktop-guide"></a>
 
 ## 5. 安装与部署指南
 
@@ -257,6 +303,11 @@ pnpm exec vite build
 - 映射文件与脱敏结果必须配套使用
 - 映射文件丢失、损坏或口令错误时，将无法恢复原文
 - 反脱敏结果应视为敏感信息，恢复后需要继续按内部安全规则管理
+
+企业版补充说明：
+
+- 企业版浏览器端反脱敏属于共享 Runtime 的服务器侧恢复流程，不提供手动上传 `.cmap`、手动输入映射口令或下载映射文件的入口
+- 企业版专项流程与差异边界见 [第 10 节](#10-企业版专项说明)
 
 ### 6.4 规则与敏感词库
 
@@ -427,13 +478,377 @@ FileBay 用于保存脱敏后的结果文件，不用于上传原始敏感文件
 - 如分发内容包含 `NOTICE` 文件要求，还需保留相关声明
 - 修改后的文件应按 Apache 2.0 要求保留修改说明和版权信息
 
-## 10. 技术支持与反馈渠道
+<a id="enterprise-special-guide"></a>
+
+## 10. 企业版专项说明
+
+### 10.1 【仅企业版】版本总览与使用入口
+
+企业版对应 `CheersAI Vault Pro` 浏览器形态，适用于企业统一部署、共享使用和内网系统对接。与个人版相比，企业版新增的是统一入口、共享状态、企业内网部署与 HTTP API 能力，而不是账号、权限或审批系统。
+
+| 企业版入口 | 访问方式 | 适用对象 | 说明 |
+|---|---|---|---|
+| 浏览器入口 | `http://<Nginx 内网地址>/` | 企业内网用户 | 访问左侧导航页面进行文件处理 |
+| API 入口 | `http://<Nginx 内网地址>/api/v1` | 企业内网系统 / 对接开发 | 只承诺 4 项 API |
+| 部署材料 | `deploy/linux/` | 部署管理员 | 包含 `systemd`、`nginx`、`env` 与 `smoke-test` 模板 |
+| 企业专项文档 | `docs/enterprise/` | 管理员 / 对接方 | 包含部署、操作手册和 API 参考 |
+
+### 10.2 【仅企业版】企业版专属接入流程
+
+> 重要说明：
+>
+> - 当前版本**不内置**在线审批、权限开通、工单流转或账号审核功能。
+> - 本节中的“审核”均指企业内部人工审批、变更评审或运维放行流程。
+> - 企业版接入对象分为两类：浏览器用户接入、企业内网系统 API 接入。
+
+#### 10.2.1 接入总流程
+
+```mermaid
+flowchart LR
+    A[需求确认] --> B[环境与网络审核]
+    B --> C[部署 Runtime 与 Nginx]
+    C --> D[配置 OCR / FileBay]
+    D --> E[浏览器验收]
+    E --> F[API 联调]
+    F --> G[正式接入与运维交接]
+```
+
+#### 10.2.2 接入步骤清单
+
+| 环节 | 审核重点 | 所需材料 | 操作入口 | 关联信息 |
+|---|---|---|---|---|
+| 1. 接入范围确认 | 确认仅需浏览器使用，还是同时需要 API 对接 | 使用场景说明、是否需要 OCR、是否需要 FileBay、是否需要 API | 本文档第 `2`、`3`、`10` 节 | 企业版只承诺 4 项 API |
+| 2. 网络与主机审核 | 确认 Linux 主机、客户网段、Nginx 监听地址、数据目录位置 | 服务器信息、客户 CIDR、Nginx 地址、数据目录规划 | `deploy/linux/README.md`、`deploy/linux/nginx-cheersai-vault.conf` | 当前唯一访问边界是 Nginx CIDR 白名单 |
+| 3. 部署准备 | 确认 Runtime、前端、systemd、Nginx 模板与环境文件准备完成 | `dist/` 构建产物、Runtime 二进制、`runtime.env`、服务账户 | `deploy/linux/`、`docs/enterprise/DEPLOYMENT.md` | Runtime 固定绑定 `127.0.0.1:8787` |
+| 4. 组件配置 | 按需配置 OCR、LibreOffice、FileBay | OCR Python/模型目录、`CHEERSAI_LIBREOFFICE_PATH`、FileBay 四项变量 | `docs/enterprise/DEPLOYMENT.md` 第 `3`、`4`、`5.2` 节 | 浏览器用户不能自行安装 OCR 或配置 Token |
+| 5. 就绪检查 | 确认服务、代理、浏览器入口可用 | 健康检查结果、Nginx 校验结果、页面访问截图 | `GET /api/v1/health`、浏览器首页、`smoke-test.sh` | OCR 需单独检查 `/api/v1/ocr/status` |
+| 6. 浏览器验收 | 确认预览、确认批次、日志、下载、反脱敏、FileBay 页面工作正常 | 验收用样例文件、验证记录 | 浏览器左侧导航各页面 | 企业版共享 PIN / 共享 FileBay 状态 |
+| 7. API 联调 | 确认提交、轮询、下载、健康检查闭环正确 | 接口调用样例、轮询策略、错误处理策略 | `/api/v1/batches` 等 4 项接口 | 不支持 SDK、Webhook、OpenAPI |
+| 8. 交付与运维交接 | 明确支持边界、故障上报方式、数据目录与 Token 管理责任 | 运维联系人、支持渠道、版本号、变更记录 | 本文档第 `11` 节 | 真实 Linux / 真实 FileBay 闭环需单独验收 |
+
+#### 10.2.3 企业版接入所需材料清单
+
+| 类别 | 必需项 | 说明 |
+|---|---|---|
+| 网络信息 | Nginx 内网地址、客户 CIDR 白名单 | 企业版当前唯一访问边界依赖 Nginx 网段控制 |
+| 服务资源 | Linux 主机、systemd、Nginx、Runtime 数据目录 | 由部署管理员维护 |
+| 组件能力 | OCR 解释器与模型目录、LibreOffice 路径（如需旧版 `.ppt`） | 仅在对应场景下需要 |
+| FileBay | `VAULT_FILEBAY_URL`、`VAULT_FILEBAY_TOKEN`、`VAULT_FILEBAY_OWNER`、`VAULT_FILEBAY_REPO` | 四项需同时完整配置 |
+| API 对接 | 调用方系统地址、轮询策略、错误处理规则、样例文件 | 仅 API 对接场景需要 |
+
+<a id="enterprise-api-guide"></a>
+
+### 10.3 【仅企业版】API 接入详细指南
+
+#### 10.3.1 鉴权方式与接入边界
+
+| 项目 | 当前版本口径 |
+|---|---|
+| Base URL | `http://<Nginx 内网地址>/api/v1` |
+| 应用层鉴权 | 不提供；没有 API Key、没有登录、没有会话 |
+| 网络访问控制 | 仅依赖 Nginx 客户 CIDR 白名单 |
+| CORS | 只影响浏览器同源策略，不构成鉴权 |
+| 稳定承诺范围 | 仅 `POST /batches`、`GET /batches/{batch_id}`、`GET /artifacts/{artifact_id}`、`GET /health` 四项 |
+| 不提供能力 | SDK、OpenAPI/Swagger、Webhook、幂等键、取消接口、多租户、RBAC |
+
+> 接入要求：
+>
+> - 企业内网系统必须经 Nginx 调用，不应直连 `127.0.0.1:8787`
+> - 不得将当前部署暴露到公网或不受信任网络
+> - 接入方不得依赖 4 项 API 之外的 Runtime 内部接口
+
+#### 10.3.2 接口清单
+
+| 接口 | 方法 | 用途 | 成功响应 | 说明 |
+|---|---|---|---|---|
+| `/api/v1/batches` | `POST` | 批量提交文件脱敏任务 | `202 Accepted` | 异步处理，返回 `batch_id` |
+| `/api/v1/batches/{batch_id}` | `GET` | 查询批次进度与失败信息 | `200 OK` | 需轮询直到终态 |
+| `/api/v1/artifacts/{artifact_id}` | `GET` | 下载单个脱敏 Markdown 结果 | `200 OK` | 不提供批量 zip 下载 |
+| `/api/v1/health` | `GET` | 部署就绪检查 | `200 OK` | 仅表示 Runtime 存活并已启动完成 |
+
+#### 10.3.3 请求规范
+
+| 项目 | 要求 |
+|---|---|
+| 提交方式 | `POST /batches` 使用 `multipart/form-data` |
+| 文件字段 | `files`，可重复提交多个 part |
+| 规则字段 | `rule_ids`，支持 JSON 字符串数组或逗号分隔字符串 |
+| 响应格式 | JSON；下载接口返回 `text/markdown` |
+| 轮询频率 | 建议间隔不低于 `1` 秒 |
+| 下载方式 | 每个 `artifact_id` 单独下载，不支持 zip 打包 |
+
+支持的 `rule_ids`：
+
+- `id_card`
+- `phone`
+- `email`
+- `bank_card`
+- `ipv4`
+- `passport`
+- `use_sensitive_terms`
+
+#### 10.3.4 关键请求参数与返回字段
+
+**1. 批量提交 `POST /api/v1/batches`**
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `files` | multipart file | 是 | 待脱敏原始文件，可重复出现 |
+| `rule_ids` | string | 是 | JSON 数组字符串或逗号分隔字符串，至少包含一个有效规则 |
+
+成功响应：
+
+| 字段 | 说明 |
+|---|---|
+| `batch_id` | 批次 ID |
+| `files[].file_id` | 单个文件 ID |
+| `files[].display_name` | 安全展示名 |
+
+**2. 批次查询 `GET /api/v1/batches/{batch_id}`**
+
+| 字段 | 说明 |
+|---|---|
+| `batch.status` | `Running` / `Completed` / `CompletedWithErrors` / `Failed` |
+| `files[].status` | `Pending` / `Processing` / `Completed` / `Failed` |
+| `files[].artifact_id` | 成功文件对应的下载 ID |
+| `files[].error_code` | 文件失败时的机器可读错误码 |
+| `files[].error_message` | 已消毒的人类可读说明 |
+| `files[].restore_available` | 是否允许服务器侧恢复 |
+
+#### 10.3.5 代码调用示例
+
+**示例 1：`curl` 提交批次**
+
+```bash
+BASE="http://<Nginx内网地址>/api/v1"
+
+curl -sS -X POST "$BASE/batches" \
+  -F "files=@/path/to/report.docx" \
+  -F "files=@/path/to/notes.txt" \
+  -F 'rule_ids=["id_card","phone","email"]'
+```
+
+**示例 2：Python 轮询到终态**
+
+```python
+import time
+import requests
+
+BASE = "http://<Nginx内网地址>/api/v1"
+batch_id = "replace-with-batch-id"
+
+while True:
+    resp = requests.get(f"{BASE}/batches/{batch_id}", timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    status = data["batch"]["status"]
+    if status in {"Completed", "CompletedWithErrors", "Failed"}:
+        print(status)
+        for item in data["files"]:
+            print(item["display_name"], item["status"], item.get("artifact_id"))
+        break
+    time.sleep(1)
+```
+
+**示例 3：JavaScript 下载单个结果**
+
+```javascript
+async function downloadArtifact(baseUrl, artifactId) {
+  const response = await fetch(`${baseUrl}/artifacts/${artifactId}`)
+  if (!response.ok) {
+    throw new Error(`download failed: ${response.status}`)
+  }
+  const text = await response.text()
+  return text
+}
+```
+
+#### 10.3.6 返回码、错误处理与重试建议
+
+| 场景 | HTTP / code | 说明 | 处理建议 |
+|---|---|---|---|
+| 请求体错误 | `400 INVALID_MULTIPART` | 表单结构错误或字段读取失败 | 修正请求结构后重试 |
+| 未传文件 | `400 FILES_REQUIRED` | 没有提交任何文件 | 补充 `files` 字段 |
+| 规则非法 | `400 INVALID_RULES` | `rule_ids` 缺失、为空或包含不支持值 | 改用支持的规则 ID |
+| 文件格式不支持 | `400 INPUT_FORMAT_UNSUPPORTED` | 扩展名或格式不在支持范围 | 调整输入格式 |
+| 大小超限 | `413 INPUT_LIMIT_EXCEEDED` | 超文件数、单文件或批次大小限制 | 拆分批次或缩减文件 |
+| 批次不存在 | `404 NOT_FOUND` | `batch_id` 或 `artifact_id` 无效 | 检查 ID 是否正确 |
+| 文件级失败 | `files[].error_code` | 某个文件处理失败，但请求本身成功 | 逐文件处理，不要把整批都判失败 |
+
+通用错误响应结构：
+
+```json
+{
+  "code": "INVALID_RULES",
+  "message": "At least one supported rule ID is required",
+  "retryable": false
+}
+```
+
+错误处理建议：
+
+- 对 `retryable=false` 的错误，先修正请求或输入数据，再重试
+- 对文件级失败，按 `error_code` 分类处理，不要直接重发整批
+- 对 `CompletedWithErrors` 批次，优先下载成功文件，再单独处理失败文件
+
+#### 10.3.7 API 限流规则与调用建议
+
+当前版本**未实现独立的应用层限流中间件**，因此没有可对外承诺的 API Key 配额、QPS 配置或租户级配额。接入方必须自行控制流量，并遵循以下建议：
+
+| 场景 | 当前版本约束 | 接入建议 |
+|---|---|---|
+| 批次提交 | 单批次最多 `100` 文件，单文件最多 `500 MB`，批次总大小最多 `2 GB` | 大文件或超大批次请拆分 |
+| 进度轮询 | 无服务端限流返回码约束 | 轮询间隔不少于 `1` 秒 |
+| 结果下载 | 仅支持单个 `artifact_id` 下载 | 由调用方自行串行或限速下载 |
+| 健康检查 | 无鉴权、无应用层限流 | 仅用于探活，不建议高频探测 |
+
+#### 10.3.8 数据安全要求
+
+- 当前版本没有应用层鉴权，必须依赖企业内网隔离和 Nginx CIDR 白名单
+- 不得把 Nginx 地址暴露到公网
+- 不得把原始文件、`.cmap`、访问令牌或服务器路径写入业务日志、调用日志或截图
+- `.cmap` 映射文件只保存在服务器内部，本次对外 API 不提供下载能力
+- FileBay 上传只允许脱敏 Markdown，不允许原文、映射文件和恢复文件出站
+
+#### 10.3.9 技术支持对接通道
+
+企业版 API 对接出现问题时，建议按以下顺序处理：
+
+1. 先检查 `GET /api/v1/health`
+2. 再核对 Nginx 访问范围、CIDR 白名单和反向代理配置
+3. 再检查请求参数、规则 ID、文件大小和格式
+4. 如仍无法处理，通过以下渠道反馈：
+
+- 产品主页与代码托管：当前项目托管于公开的 GitHub 代码仓库，仓库名为 `CheersAI-Vault`；请以客户内部资料表中登记的仓库地址为准。
+- 问题反馈：使用代码仓库的 Issues 渠道提交问题与复现信息。
+- 安全问题：优先使用私有漏洞报告或 `SECURITY.md` 中说明的渠道。
+
+提交支持请求时，请附带：
+
+- 软件版本或提交号
+- 浏览器版 / API 对接 / Docker 验证 / Linux 部署形态
+- 接口路径、请求方式、关键参数
+- 错误码、错误响应、健康检查结果
+- 是否启用了 OCR、FileBay、旧版 `.ppt` 转换
+
+<a id="enterprise-batch-guide"></a>
+
+### 10.4 【仅企业版】批量操作执行说明
+
+#### 10.4.1 批量操作能力总表
+
+| 批量能力 | 当前状态 | 操作入口 | 单次上限 | 格式 / 范围 | 处理方式 |
+|---|---|---|---|---|---|
+| 批量文件脱敏提交 | 支持 | 浏览器 `文件脱敏` / `POST /api/v1/batches` | `100` 文件 / 批次 | `TXT`、`Markdown`、`CSV`、`Excel`、`DOCX`、`PDF`、`PPT`、`PPTX` | 异步处理，轮询查询 |
+| 敏感词库 CSV 导入 | 支持 | 浏览器 `规则配置` / `/api/v1/sensitive-terms/import` | `5 MB`、`10,000` 行 | CSV，表头必须是 `分类,敏感词,描述,状态` | 同步校验并一次性入库 |
+| 敏感词库 CSV 导出 | 支持 | 浏览器 `规则配置` / `/api/v1/sensitive-terms/export` | 全量导出 | CSV | 同步导出 |
+| 批量结果上传 FileBay | 支持 | 浏览器 `文件管理` / `/api/v1/filebay/uploads` | `100` 个 `artifact_id` | 仅 `Completed` 的脱敏 Markdown | 服务器顺序上传 |
+| 数据批量导出 | 部分支持 | `GET /api/v1/artifacts/{artifact_id}` | 单次 `1` 个 `artifact_id` | 仅单个 Markdown | 不支持 zip 打包 |
+| 权限批量配置 | 不支持 | 无 | 无 | 无 | 当前版本没有账号、角色、RBAC |
+| 任务批量下发 | 部分支持 | `POST /api/v1/batches` | 同“批量文件脱敏提交” | 文件批次 | 不支持审批式下发、指派与回收 |
+
+#### 10.4.2 批量文件脱敏提交
+
+操作步骤：
+
+1. 准备符合格式和大小限制的文件
+2. 统一确认 `rule_ids`
+3. 通过浏览器或 `POST /api/v1/batches` 批量提交
+4. 用 `GET /api/v1/batches/{batch_id}` 轮询到终态
+5. 对成功文件逐个下载或继续上传 FileBay
+
+关键限制：
+
+- 单批次最多 `100` 个文件
+- 单文件最大 `500 MB`
+- 批次总大小最大 `2 GB`
+- PDF 最多 `1000` 页
+
+异常排查：
+
+| 现象 | 原因 | 修正方法 |
+|---|---|---|
+| `INPUT_LIMIT_EXCEEDED` | 文件数、单文件或批次总量超限 | 拆分批次、减小文件 |
+| `INPUT_FORMAT_UNSUPPORTED` | 输入格式不在企业版支持范围 | 调整为支持格式 |
+| `CompletedWithErrors` | 批次中部分文件失败 | 先下载成功项，再逐个排查失败项 |
+
+#### 10.4.3 敏感词库批量导入 / 导出
+
+导入步骤：
+
+1. 按 CSV 模板整理数据
+2. 确认表头严格为 `分类,敏感词,描述,状态`
+3. 状态列只允许填写 `启用` 或 `禁用`
+4. 在浏览器 `规则配置` 页面导入，或调用导入接口
+5. 导入成功后再做抽样验证
+
+导出步骤：
+
+1. 进入 `规则配置`
+2. 执行 CSV 导出
+3. 对导出文件做归档或二次审查
+
+导入限制与校验规则：
+
+- 只接受一个 CSV 文件
+- 文件大小最大 `5 MB`
+- 数据行数最多 `10,000`
+- CSV 必须是合法 `UTF-8`，支持 UTF-8 BOM
+- 表头、列数、状态值任一不合法，整份文件会被拒绝，不做部分导入
+
+常见异常与修正：
+
+| 错误 | 含义 | 修正方法 |
+|---|---|---|
+| `SENSITIVE_TERMS_IMPORT_INVALID` | 表头、编码、列数、状态值或上传字段不合法 | 按模板重做 CSV |
+| `INPUT_LIMIT_EXCEEDED` | 文件过大或行数超过上限 | 拆分导入文件 |
+| `SENSITIVE_TERM_DUPLICATE` | 存在重复敏感词 | 去重后重新导入 |
+
+#### 10.4.4 批量结果导出与 FileBay 批量上传
+
+当前版本的“批量导出”与“批量流转”边界如下：
+
+- **支持**：对同一批次中的多个成功文件逐个下载
+- **支持**：在 `文件管理` 中选择多个 `Completed` 产物上传 FileBay
+- **不支持**：批量 zip 打包下载
+- **不支持**：把原文、`.cmap` 或恢复文件批量导出到外部系统
+
+FileBay 批量上传步骤：
+
+1. 管理员先完成 FileBay 四项变量配置并重启 Runtime
+2. 用户在 `文件管理` 中选择已完成批次
+3. 点击 `上传到 FileBay`
+4. 勾选要上传的 Markdown 文件
+5. 核对目标地址、仓库和远端路径
+6. 点击确认上传，等待逐文件结果返回
+
+异常排查：
+
+| 现象 | 原因 | 修正方法 |
+|---|---|---|
+| `FILEBAY_NOT_CONFIGURED` | 管理员未配置四项变量 | 补齐配置并重启 Runtime |
+| `FILEBAY_CONFIG_INVALID` | URL / owner / repo 不合法或配置不完整 | 校正后重启 Runtime |
+| `FILEBAY_UPLOAD_DENIED` | 所选文件不在白名单范围 | 仅选择已完成的脱敏 Markdown |
+| `FILEBAY_REQUEST_INVALID` | `artifact_id` 为空、重复或超限 | 重新选择上传项 |
+
+#### 10.4.5 权限批量配置与任务批量下发边界
+
+为避免误解，当前版本明确如下：
+
+- **权限批量配置：不支持**
+  - 当前没有登录、用户、角色、组织、RBAC、管理员/普通用户区分
+  - 因此不存在“批量授权”“批量角色分配”“批量菜单开通”等操作
+- **任务批量下发：仅支持文件批次提交**
+  - 可以一次提交多个文件形成一个处理批次
+  - 不支持审批式任务分派、任务接收确认、按用户下发、按部门回收
+
+## 11. 技术支持与反馈渠道
 
 公开支持渠道如下：
 
-- 产品主页： `https://github.com/fyp1984/CheersAI-Vault`
-- 问题反馈： `https://github.com/fyp1984/CheersAI-Vault/issues`
-- 代码贡献： 通过 Pull Request 提交
+- 产品主页与代码托管：当前项目托管于公开的 GitHub 代码仓库，仓库名为 `CheersAI-Vault`；请以客户内部资料表中登记的仓库地址为准。
+- 问题反馈：使用代码仓库的 Issues 渠道提交问题与复现信息。
+- 代码贡献：通过 Pull Request 提交。
 
 安全问题反馈渠道如下：
 
