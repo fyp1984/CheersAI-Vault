@@ -44,3 +44,6 @@ docs/*_CANDIDATES*.md
 marked/*
 .build_probe.txt
 .trae/
+docs/Marked/*
+.build-cache/*
+.cache/*
