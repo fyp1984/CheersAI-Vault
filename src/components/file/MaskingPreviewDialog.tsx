@@ -5,11 +5,12 @@ import { Eye, Save, RotateCcw, Search } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { PreviewResult } from "@/types/commands";
 import { FindReplaceDialog } from "./FindReplaceDialog";
+import {
+  applyManualReplacementToPreviewFiles,
+  type PreviewFile,
+} from "./maskingPreviewManualReplace";
 
-interface FilePreview {
-  fileName: string;
-  preview: PreviewResult;
-}
+type FilePreview = PreviewFile;
 
 // 简单的文本差异高亮组件
 function DiffLine({ original, masked }: { original: string; masked: string }) {
@@ -76,7 +77,7 @@ interface MaskingPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   previews: FilePreview[];
-  onConfirm: (manualReplacements: ManualReplacement[]) => void;
+  onConfirm: (manualReplacements: ManualReplacement[], modifiedPreviews: FilePreview[]) => void;
   onCancel: () => void;
 }
 
@@ -136,35 +137,23 @@ export function MaskingPreviewDialog({
   // 1. 优先在当前 masked_rows 中搜索（包含历次手动替换的累积结果，避免二次替换回退）
   // 2. 当前 masked 中未找到时，fallback 到 original_rows（处理已被自动脱敏为占位符的情况）
   const handleReplace = (findText: string, replaceText: string): number => {
-    if (!findText.trim()) return 0;
-    let count = 0;
-    const newPreviews = modifiedPreviews.map((fp, idx) => {
-      if (idx !== currentFileIndex) return fp;
-      const newMasked = fp.preview.masked_rows.map((row, rowIdx) => {
-        const origRow = fp.preview.original_rows[rowIdx] ?? [];
-        return row.map((cell, cellIdx) => {
-          const origCell = origRow[cellIdx] ?? '';
-          // 先在当前 masked 内容（含前次手动替换结果）里找
-          if (cell.includes(findText)) {
-            count += cell.split(findText).length - 1;
-            return cell.split(findText).join(replaceText);
-          }
-          // 找不到时 fallback：原文有但被自动脱敏掉了，以原文为基础替换
-          if (origCell.includes(findText)) {
-            count += origCell.split(findText).length - 1;
-            return origCell.split(findText).join(replaceText);
-          }
-          return cell;
-        });
-      });
-      return { ...fp, preview: { ...fp.preview, masked_rows: newMasked } };
-    });
+    const result = applyManualReplacementToPreviewFiles(
+      modifiedPreviews,
+      currentFileIndex,
+      findText,
+      replaceText,
+    );
+
+    if (result.count === 0) {
+      return 0;
+    }
+
     setManualReplacements(prev => [
       ...prev.filter(r => r.find !== findText),
       { find: findText, replace: replaceText },
     ]);
-    setModifiedPreviews(newPreviews);
-    return count;
+    setModifiedPreviews(result.previews);
+    return result.count;
   };
 
   // 收集所有检测到的实体
@@ -275,7 +264,7 @@ export function MaskingPreviewDialog({
             重新开始
           </Button>
           <Button
-            onClick={() => onConfirm(manualReplacements)}
+            onClick={() => onConfirm(manualReplacements, modifiedPreviews)}
             className="bg-blue-600 hover:bg-blue-700 flex items-center gap-2"
           >
             <Save className="w-4 h-4" />

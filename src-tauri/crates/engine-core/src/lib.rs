@@ -60,6 +60,13 @@ pub struct MaskingResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilenameMaskingResult {
+    pub masked: String,
+    pub mappings: Vec<MappingEntry>,
+    pub masked_entity_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
 pub struct AppError {
@@ -74,7 +81,7 @@ static BUILTIN_RULES: Lazy<Vec<MaskingRule>> = Lazy::new(|| {
         MaskingRule {
             id: "id_card".into(),
             name: "身份证号".into(),
-            pattern: r"[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]".into(),
+            pattern: r"(?:[1-9]\d{7}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}|[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx])".into(),
             replacement_template: "***IDCARD***".into(),
             enabled: true,
             builtin: true,
@@ -130,15 +137,95 @@ static BUILTIN_RULES: Lazy<Vec<MaskingRule>> = Lazy::new(|| {
             name: "中文姓名".into(),
             pattern: r"[一-龥]{2,4}".into(),
             replacement_template: "姓名".into(),
-            enabled: false,
+            enabled: true,
             builtin: true,
             use_counter: true,
         },
     ]
 });
 
+const COMMON_CHINESE_SURNAMES: &[&str] = &[
+    "王", "李", "张", "刘", "陈", "杨", "黄", "赵", "周", "吴", "徐", "孙", "朱", "马", "胡",
+    "郭", "林", "何", "高", "梁", "郑", "罗", "宋", "谢", "唐", "韩", "曹", "许", "邓", "萧",
+    "冯", "曾", "程", "蔡", "彭", "潘", "袁", "于", "董", "余", "苏", "叶", "吕", "魏", "蒋",
+    "田", "杜", "丁", "沈", "姜", "范", "江", "傅", "钟", "卢", "汪", "戴", "崔", "任", "陆",
+    "廖", "姚", "方", "金", "邱", "夏", "谭", "韦", "贾", "邹", "石", "熊", "孟", "秦", "阎",
+    "薛", "侯", "雷", "白", "龙", "段", "郝", "孔", "邵", "史", "毛", "常", "万", "顾", "赖",
+    "武", "康", "贺", "严", "尹", "钱", "施", "牛", "洪", "龚",
+];
+
+const COMPOUND_CHINESE_SURNAMES: &[&str] = &[
+    "欧阳", "司马", "上官", "诸葛", "东方", "夏侯", "尉迟", "公孙", "慕容", "司徒",
+];
+
 pub fn get_builtin_rules() -> &'static Vec<MaskingRule> {
     &BUILTIN_RULES
+}
+
+fn filename_name_rule_enabled(rules: &[MaskingRule]) -> bool {
+    rules
+        .iter()
+        .any(|rule| rule.enabled && rule.id == "chinese_name")
+}
+
+fn looks_like_filename_name(candidate: &str) -> bool {
+    let chars: Vec<char> = candidate.chars().collect();
+    if !(2..=4).contains(&chars.len()) {
+        return false;
+    }
+
+    if !chars.iter().all(|ch| matches!(ch, '\u{4e00}'..='\u{9fa5}')) {
+        return false;
+    }
+
+    if COMPOUND_CHINESE_SURNAMES.iter().any(|surname| {
+        candidate.starts_with(surname)
+            && (surname.chars().count() + 1..=surname.chars().count() + 2).contains(&chars.len())
+    }) {
+        return true;
+    }
+
+    COMMON_CHINESE_SURNAMES
+        .iter()
+        .any(|surname| candidate.starts_with(surname))
+}
+
+pub fn collect_filename_findings(value: &str, rules: &[MaskingRule]) -> Vec<DeterministicFinding> {
+    if !filename_name_rule_enabled(rules) {
+        return vec![];
+    }
+
+    let mut findings = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    let push_candidate =
+        |findings: &mut Vec<DeterministicFinding>, start: usize, end: usize| {
+            let candidate = &value[start..end];
+            if looks_like_filename_name(candidate) {
+                findings.push(DeterministicFinding {
+                    text: candidate.to_string(),
+                    entity_type: "姓名".to_string(),
+                    start,
+                    end,
+                });
+            }
+        };
+
+    for (index, ch) in value.char_indices() {
+        if matches!(ch, '\u{4e00}'..='\u{9fa5}') {
+            if current_start.is_none() {
+                current_start = Some(index);
+            }
+        } else if let Some(start) = current_start.take() {
+            push_candidate(&mut findings, start, index);
+        }
+    }
+
+    if let Some(start) = current_start {
+        push_candidate(&mut findings, start, value.len());
+    }
+
+    findings
 }
 
 /// A single sensitive-term library entry, in the plain, I/O-free shape the
@@ -202,6 +289,262 @@ impl MaskingService {
         let mut session = MaskingSession::new(request.rules);
         let markdown = session.mask_document(&request.content, &request.deterministic_findings);
         Ok(session.finish(markdown))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FilenameCandidate {
+    start: usize,
+    end: usize,
+    original: String,
+    rule_id: String,
+    replacement_template: String,
+}
+
+fn has_ascii_digit_neighbor(value: &str, start: usize, end: usize) -> bool {
+    let bytes = value.as_bytes();
+    let before_is_digit = start > 0 && bytes[start - 1].is_ascii_digit();
+    let after_is_digit = end < bytes.len() && bytes[end].is_ascii_digit();
+    before_is_digit || after_is_digit
+}
+
+fn has_ascii_alnum_neighbor(value: &str, start: usize, end: usize) -> bool {
+    let bytes = value.as_bytes();
+    let before_is_alnum = start > 0 && bytes[start - 1].is_ascii_alphanumeric();
+    let after_is_alnum = end < bytes.len() && bytes[end].is_ascii_alphanumeric();
+    before_is_alnum || after_is_alnum
+}
+
+fn filename_candidate_priority(rule_id: &str) -> usize {
+    if rule_id.starts_with("sensitive_term_") {
+        return 0;
+    }
+
+    match rule_id {
+        "id_card" => 1,
+        "bank_card" => 2,
+        "phone" => 3,
+        "email" => 4,
+        "passport" => 5,
+        "ipv4" => 6,
+        "chinese_name" | "chinese_name_ner" | "name_ner" => 7,
+        _ => 8,
+    }
+}
+
+fn mask_name_for_filename(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 1 {
+        return "*".to_string();
+    }
+
+    let head = chars[0];
+    format!("{head}{}", "*".repeat(chars.len() - 1))
+}
+
+fn mask_phone_for_filename(value: &str) -> String {
+    if value.chars().count() < 7 {
+        return "****".to_string();
+    }
+
+    format!("{}****{}", &value[..3], &value[value.len() - 4..])
+}
+
+fn mask_id_card_for_filename(value: &str) -> String {
+    if value.chars().count() <= 10 {
+        return "******".to_string();
+    }
+
+    format!(
+        "{}{}{}",
+        &value[..6],
+        "*".repeat(value.len() - 10),
+        &value[value.len() - 4..]
+    )
+}
+
+fn mask_bank_card_for_filename(value: &str) -> String {
+    if value.chars().count() <= 8 {
+        return "****".to_string();
+    }
+
+    format!(
+        "{}{}{}",
+        &value[..4],
+        "*".repeat(value.len() - 8),
+        &value[value.len() - 4..]
+    )
+}
+
+fn mask_passport_for_filename(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 3 {
+        return "*".repeat(chars.len().max(1));
+    }
+
+    let head = chars[0];
+    let tail: String = chars[chars.len() - 2..].iter().collect();
+    format!("{head}{}{}", "*".repeat(chars.len() - 3), tail)
+}
+
+fn mask_email_for_filename(value: &str) -> String {
+    let Some((local, domain)) = value.split_once('@') else {
+        return "***EMAIL***".to_string();
+    };
+
+    let local_head = local.chars().next().unwrap_or('*');
+    format!("{local_head}***@{domain}")
+}
+
+fn mask_ipv4_for_filename(value: &str) -> String {
+    let parts: Vec<&str> = value.split('.').collect();
+    if parts.len() == 4 {
+        format!("{}.{}.*.*", parts[0], parts[1])
+    } else {
+        "***IP***".to_string()
+    }
+}
+
+fn mask_filename_value(rule_id: &str, original: &str, replacement_template: &str) -> String {
+    match rule_id {
+        "phone" | "phone_ner" => mask_phone_for_filename(original),
+        "id_card" | "id_card_ner" => mask_id_card_for_filename(original),
+        "bank_card" | "bank_card_ner" => mask_bank_card_for_filename(original),
+        "passport" | "passport_ner" => mask_passport_for_filename(original),
+        "email" | "email_ner" => mask_email_for_filename(original),
+        "ipv4" | "ipv4_ner" => mask_ipv4_for_filename(original),
+        "chinese_name" | "chinese_name_ner" | "name_ner" => mask_name_for_filename(original),
+        _ if rule_id.starts_with("sensitive_term_") => replacement_template.to_string(),
+        _ => replacement_template.to_string(),
+    }
+}
+
+pub fn mask_filename(
+    value: &str,
+    rules: &[MaskingRule],
+    deterministic_findings: &[DeterministicFinding],
+) -> FilenameMaskingResult {
+    let mut candidates = Vec::new();
+
+    for rule in rules {
+        if !rule.enabled || rule.id == "chinese_name" {
+            continue;
+        }
+
+        let regex = match Regex::new(&rule.pattern) {
+            Ok(regex) => regex,
+            Err(_) => continue,
+        };
+
+        for capture in regex.find_iter(value) {
+            if matches!(rule.id.as_str(), "phone" | "id_card" | "bank_card")
+                && has_ascii_digit_neighbor(value, capture.start(), capture.end())
+            {
+                continue;
+            }
+            if rule.id == "passport"
+                && has_ascii_alnum_neighbor(value, capture.start(), capture.end())
+            {
+                continue;
+            }
+
+            candidates.push(FilenameCandidate {
+                start: capture.start(),
+                end: capture.end(),
+                original: capture.as_str().to_string(),
+                rule_id: rule.id.clone(),
+                replacement_template: rule.replacement_template.clone(),
+            });
+        }
+    }
+
+    for finding in deterministic_findings {
+        if finding.text.is_empty() || finding.end <= finding.start || finding.end > value.len() {
+            continue;
+        }
+
+        let rule_id = match finding.entity_type.as_str() {
+            "姓名" | "中文姓名" => "chinese_name",
+            "手机号" => "phone",
+            "身份证号" => "id_card",
+            "银行卡号" => "bank_card",
+            "邮箱" => "email",
+            "IP地址" => "ipv4",
+            "护照号" => "passport",
+            _ => continue,
+        };
+
+        let Some(rule) = rules.iter().find(|rule| rule.enabled && rule.id == rule_id) else {
+            continue;
+        };
+
+        candidates.push(FilenameCandidate {
+            start: finding.start,
+            end: finding.end,
+            original: finding.text.clone(),
+            rule_id: rule.id.clone(),
+            replacement_template: rule.replacement_template.clone(),
+        });
+    }
+
+    candidates.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| filename_candidate_priority(&left.rule_id).cmp(&filename_candidate_priority(&right.rule_id)))
+            .then_with(|| (right.end - right.start).cmp(&(left.end - left.start)))
+    });
+
+    let mut accepted = Vec::new();
+    let mut last_end = 0usize;
+    for candidate in candidates {
+        if candidate.start < last_end {
+            continue;
+        }
+        last_end = candidate.end;
+        accepted.push(candidate);
+    }
+
+    let mut result = String::new();
+    let mut cursor = 0usize;
+    let mut mappings = Vec::new();
+
+    for candidate in &accepted {
+        if candidate.start > cursor {
+            result.push_str(&value[cursor..candidate.start]);
+        }
+
+        let masked = mappings
+            .iter()
+            .find(|entry: &&MappingEntry| {
+                entry.original == candidate.original && entry.rule_id == candidate.rule_id
+            })
+            .map(|entry| entry.masked.clone())
+            .unwrap_or_else(|| {
+                let masked = mask_filename_value(
+                    &candidate.rule_id,
+                    &candidate.original,
+                    &candidate.replacement_template,
+                );
+                mappings.push(MappingEntry {
+                    original: candidate.original.clone(),
+                    masked: masked.clone(),
+                    rule_id: candidate.rule_id.clone(),
+                });
+                masked
+            });
+
+        result.push_str(&masked);
+        cursor = candidate.end;
+    }
+
+    if cursor < value.len() {
+        result.push_str(&value[cursor..]);
+    }
+
+    FilenameMaskingResult {
+        masked: if accepted.is_empty() { value.to_string() } else { result },
+        mappings,
+        masked_entity_count: accepted.len(),
     }
 }
 
@@ -324,12 +667,16 @@ impl MaskingSession {
         content: &str,
         findings: &[DeterministicFinding],
     ) -> String {
+        // `chinese_name` is enabled by default for the personal client, but it
+        // should be driven by NER findings instead of the broad fallback regex
+        // alone, otherwise ordinary Chinese UI text may be over-masked.
         // Pre-compile regexes + copy rule fields into owned data once, not per
         // line.  This avoids O(lines × rules) regex compilation – formerly the
         // dominant cost for large inputs (10 MB → ~230k lines × 2 regexes).
         let compiled: Vec<(regex::Regex, bool, String, String)> = self.rules
             .iter()
             .filter(|r| r.enabled)
+            .filter(|r| r.id != "chinese_name")
             .filter_map(|rule| {
                 regex::Regex::new(&rule.pattern).ok().map(|re| {
                     (re, rule.use_counter, rule.replacement_template.clone(), rule.id.clone())
@@ -630,6 +977,116 @@ mod tests {
             category: category.into(),
             enabled,
         }
+    }
+
+    #[test]
+    fn builtin_chinese_name_is_enabled_by_default() {
+        let rule = get_builtin_rules()
+            .iter()
+            .find(|rule| rule.id == "chinese_name")
+            .expect("builtin chinese_name rule should exist");
+
+        assert!(rule.enabled);
+        assert_eq!(rule.replacement_template, "姓名");
+    }
+
+    #[test]
+    fn enabled_chinese_name_does_not_regex_mask_plain_text_without_findings() {
+        let result = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: "项目代号：流程验证\n备注：完成验收".into(),
+            rules: rules(&["chinese_name"]),
+            deterministic_findings: vec![],
+        })
+        .unwrap();
+        assert_eq!(result.markdown, "项目代号：流程验证\n备注：完成验收");
+        assert_eq!(result.masked_entity_count, 0);
+    }
+
+    #[test]
+    fn deterministic_name_findings_mask_when_chinese_name_enabled() {
+        let content = "客户姓名：张三\n联系电话：13900000000\n";
+        let start = content.find("张三").unwrap();
+        let end = start + "张三".len();
+        let result = MaskingService::mask(MaskingRequest {
+            input_format: InputFormat::Text,
+            content: content.into(),
+            rules: rules(&["chinese_name", "phone"]),
+            deterministic_findings: vec![DeterministicFinding {
+                text: "张三".into(),
+                entity_type: "姓名".into(),
+                start,
+                end,
+            }],
+        })
+        .unwrap();
+
+        assert!(result.markdown.contains("客户姓名：姓名1"));
+        assert!(result.markdown.contains("联系电话：***PHONE***2"));
+        assert!(!result.markdown.contains("客户姓名：张三"));
+        assert_eq!(result.masked_entity_count, 2);
+    }
+
+    #[test]
+    fn mask_filename_applies_compliant_partial_masks() {
+        let rules = rules(&["chinese_name", "phone", "id_card", "bank_card"]);
+        let findings = vec![DeterministicFinding {
+            text: "张三".into(),
+            entity_type: "姓名".into(),
+            start: 0,
+            end: "张三".len(),
+        }];
+
+        let result = mask_filename(
+            "张三_13812345678_11010519491231002X_6222020202020202020_合同",
+            &rules,
+            &findings,
+        );
+
+        assert_eq!(
+            result.masked,
+            "张*_138****5678_110105********002X_6222***********2020_合同"
+        );
+        assert_eq!(result.masked_entity_count, 4);
+    }
+
+    #[test]
+    fn mask_filename_uses_category_for_sensitive_terms() {
+        let rules = sensitive_term_rules(&[sensitive_term("t1", "机密项目", "机密", true)]);
+        let result = mask_filename("机密项目-交付件", &rules, &[]);
+        assert_eq!(result.masked, "[机密]-交付件");
+        assert_eq!(result.masked_entity_count, 1);
+    }
+
+    #[test]
+    fn mask_filename_supports_legacy_15_digit_id_cards() {
+        let result = mask_filename("档案_130503670401001_签收", &rules(&["id_card"]), &[]);
+        assert_eq!(result.masked, "档案_130503*****1001_签收");
+        assert_eq!(result.masked_entity_count, 1);
+    }
+
+    #[test]
+    fn mask_filename_handles_adjacent_sensitive_segments_without_separators() {
+        let findings = vec![DeterministicFinding {
+            text: "张三".into(),
+            entity_type: "姓名".into(),
+            start: 0,
+            end: "张三".len(),
+        }];
+        let result = mask_filename(
+            "张三13812345678合同",
+            &rules(&["chinese_name", "phone"]),
+            &findings,
+        );
+        assert_eq!(result.masked, "张*138****5678合同");
+        assert_eq!(result.masked_entity_count, 2);
+    }
+
+    #[test]
+    fn mask_filename_skips_phone_inside_bank_card_overlap() {
+        let result = mask_filename("6222021381234567890", &rules(&["phone", "bank_card"]), &[]);
+        assert_eq!(result.masked, "6222***********7890");
+        assert_eq!(result.masked_entity_count, 1);
     }
 
     /// B3: a term containing CJK characters is matched exactly, with no word

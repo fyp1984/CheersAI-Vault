@@ -2961,6 +2961,7 @@ dependencies = [
  "filebay-core",
  "futures-util",
  "once_cell",
+ "regex",
  "sandbox-core",
  "serde",
  "serde_json",

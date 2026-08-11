@@ -37,10 +37,10 @@ impl NERDetector {
         
         // 优先级从高到低排列，更具体的模式放在前面
         
-        // 中国身份证号（18位）
+        // 中国身份证号（18位 / 15位）
         patterns.push((
             "身份证号".to_string(),
-            Regex::new(r"\b[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b").unwrap()
+            Regex::new(r"\b(?:[1-9]\d{7}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}|[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx])\b").unwrap()
         ));
         
         // 手机号（11位，1开头）。注意：不使用 \b —— `regex` crate 的 \b 是
@@ -162,11 +162,12 @@ impl NERDetector {
             
             merged
         } else {
-            // 传统模式：只使用正则表达式检测
-            
+            // 非 AI 模式仍需保留基于上下文/姓氏的姓名检测，否则默认启用
+            // `chinese_name` 规则时无法产出姓名 findings。
             let regex_entities = self.detect_with_regex(text);
-            
-            regex_entities
+            let ner_entities = self.detect_with_ner(text);
+
+            self.merge_detections(regex_entities, ner_entities, vec![], vec![])
         }
     }
     
@@ -747,5 +748,22 @@ mod tests {
         assert!(!entities.is_empty());
         assert_eq!(entities[0].entity_type, "邮箱");
         assert_eq!(entities[0].text, "test@example.com");
+    }
+
+    #[test]
+    fn test_detect_name_with_context_without_ai() {
+        let detector = NERDetector::new();
+        let text = "客户姓名：张三\n联系电话：13812345678";
+        let entities = detector.detect_entities(text);
+
+        let name = entities
+            .iter()
+            .find(|entity| entity.entity_type == "姓名" && entity.text == "张三")
+            .expect("name should be detected in non-AI mode when context is present");
+
+        let expected_start = text.find("张三").unwrap();
+        let expected_end = expected_start + "张三".len();
+        assert_eq!(name.start, expected_start);
+        assert_eq!(name.end, expected_end);
     }
 }

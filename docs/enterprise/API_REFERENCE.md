@@ -27,7 +27,7 @@
 - 错误响应经过消毒：不包含脱敏前原文、SQL、服务器文件路径、堆栈或内部命令
   （见 §5）。
 - 不提供 `.cmap`（映射文件）下载接口；`GET /api/v1/artifacts/{artifact_id}`
-  只返回脱敏后的 Markdown。
+  只返回脱敏后的 Markdown，且下载文件名会沿用已脱敏的展示名。
 
 ## 1. 基础信息
 
@@ -55,7 +55,12 @@ Runtime 端口默认 `8787`，只监听 `127.0.0.1`；客户内网系统**必须
 | `rule_ids` | 否 | JSON 字符串数组（如 `["id_card","phone","email"]`），也接受逗号分隔字符串作为兼容格式；至少一个受支持规则 ID |
 
 支持的 `rule_ids` 值：`id_card`、`phone`、`email`、`bank_card`、`ipv4`、
-`passport`、`use_sensitive_terms`（启用已配置的敏感词库，无需逐词列出）。
+`passport`、`chinese_name`、`use_sensitive_terms`（启用已配置的敏感词库，无需逐词列出）。
+
+说明：
+
+- `filename` 不仅用于安全展示名生成；当文件名中命中启用的脱敏规则时，Runtime 会在入库前同步对文件名做脱敏处理。
+- 因此后续 `batch/files[].display_name`、预览文件名、下载文件名都会使用脱敏后的展示名，而不是原始上传文件名。
 
 ```bash
 curl -sS -X POST "http://<Nginx地址>/api/v1/batches" \
@@ -183,7 +188,7 @@ curl -sS -o masked-report.md \
 
 ```
 Content-Type: text/markdown; charset=utf-8
-Content-Disposition: attachment; filename="masked-a1....md"
+Content-Disposition: attachment; filename="姓名1-PHONE2_脱敏.md"
 ```
 
 响应体是脱敏后的 Markdown 纯文本。

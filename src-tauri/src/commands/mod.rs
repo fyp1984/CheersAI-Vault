@@ -19,3 +19,4 @@ pub mod sensitive_terms;
 pub mod installer;
 pub mod sync_config;
 pub mod extract_config;
+pub mod app_update;
