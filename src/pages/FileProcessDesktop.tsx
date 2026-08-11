@@ -298,7 +298,10 @@ export default function FileProcessDesktop() {
 
   const pendingCount = files.filter((f) => f.status === "pending").length;
 
-  const handlePreviewConfirm = async (_manualReplacements: ManualReplacement[]) => {
+  const handlePreviewConfirm = async (
+    _manualReplacements: ManualReplacement[],
+    modifiedPreviews: Array<{ fileName: string; preview: PreviewResult }>,
+  ) => {
     setShowPreview(false);
     setIsProcessing(true); // 显示保存进度
 
@@ -319,7 +322,7 @@ export default function FileProcessDesktop() {
 
       for (let i = 0; i < pendingFiles.length; i++) {
         const file = pendingFiles[i];
-        const filePreview = previewData[i];
+        const filePreview = modifiedPreviews[i];
 
         if (!filePreview) continue;
 

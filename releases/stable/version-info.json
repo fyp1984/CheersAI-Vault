@@ -1,0 +1,34 @@
+{
+  "product": "CheersAI Vault",
+  "channel": "stable",
+  "latestVersion": "0.1.41",
+  "minimumSupportedVersion": "0.1.40",
+  "publishedAt": "2026-08-11T00:00:00Z",
+  "releaseNotesSummary": "CheersAI Vault 0.1.41 修复个人版与企业版文件名敏感信息脱敏链路。",
+  "releaseNotes": [
+    {
+      "kind": "fix",
+      "text": "修复个人版与企业版文件名脱敏，支持姓名、手机号、15位/18位身份证、银行卡及敏感词文件名合规遮罩。"
+    },
+    {
+      "kind": "fix",
+      "text": "修复桌面端手工替换后文件名不同步的问题，导出文件名与预览替换结果保持一致。"
+    },
+    {
+      "kind": "ops",
+      "text": "本次增量包版本号提升至 0.1.41，可用于验证版本展示、更新检测与手工更新入口。"
+    }
+  ],
+  "desktop": {
+    "enabled": true,
+    "pollIntervalMinutes": 30,
+    "remindAfterHours": 6,
+    "backupRequired": true,
+    "updateManifestUrl": "https://raw.githubusercontent.com/fyp1984/CheersAI-Vault/main/releases/stable/latest.json",
+    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.41"
+  },
+  "web": {
+    "pollIntervalMinutes": 30,
+    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.41"
+  }
+}

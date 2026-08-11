@@ -44,6 +44,13 @@ docs/*_CANDIDATES*.md
 marked/*
 .build_probe.txt
 .trae/
+enterprise-data-regression/*
+docs/manual-test-report-2026-08-10.md
+docs/personal-manual-debug-plan-2026-08-10.md
+docs/personal-test-fix-summary-2026-08-10.md
+docs/local-sim-lab.md
+docs/VERSION_MANAGEMENT.md
+docs/edition-gap-plan-2026-08-10.md
 docs/Marked/*
 .build-cache/*
 .cache/*

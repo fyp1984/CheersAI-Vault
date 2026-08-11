@@ -26,7 +26,14 @@ use store::{NewUpload, PendingJob, Store, StoreError};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const ENTERPRISE_RULE_IDS: &[&str] =
-    &["id_card", "phone", "email", "bank_card", "ipv4", "passport"];
+    &["id_card", "phone", "email", "bank_card", "ipv4", "passport", "chinese_name"];
+
+fn enterprise_rule_enabled_by_default(rule_id: &str, builtin_enabled: bool) -> bool {
+    if rule_id == "chinese_name" {
+        return false;
+    }
+    builtin_enabled
+}
 
 use store::SENSITIVE_TERMS_RULE_ID;
 
@@ -335,7 +342,10 @@ pub fn routes(
                 .map(|rule| RuleMetadata {
                     id: rule.id.clone(),
                     name: rule.name.clone(),
-                    enabled_by_default: rule.enabled,
+                    enabled_by_default: enterprise_rule_enabled_by_default(
+                        &rule.id,
+                        rule.enabled,
+                    ),
                 })
                 .collect();
             // Special metadata entry for the sensitive-term library (7.1):
@@ -404,7 +414,7 @@ pub fn routes(
 }
 
 async fn create_batch(form: FormData, runtime: Runtime) -> Result<impl Reply, Rejection> {
-    let (uploads, rules, restore_mode) = parse_form(form, &runtime.limits).await?;
+    let (uploads, rules, restore_mode) = parse_form(form, &runtime).await?;
     let response = runtime
         .store
         .create_batch(uploads, rules, &restore_mode)
@@ -419,7 +429,7 @@ async fn create_batch(form: FormData, runtime: Runtime) -> Result<impl Reply, Re
 
 async fn parse_form(
     mut form: FormData,
-    limits: &Limits,
+    runtime: &Runtime,
 ) -> Result<(Vec<NewUpload>, Vec<String>, String), Rejection> {
     let mut uploads = Vec::new();
     let mut rules = None;
@@ -453,7 +463,7 @@ async fn parse_form(
             .to_vec();
 
         if name == "files" {
-            if uploads.len() >= limits.max_files {
+            if uploads.len() >= runtime.limits.max_files {
                 return Err(api_error(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "INPUT_LIMIT_EXCEEDED",
@@ -461,7 +471,7 @@ async fn parse_form(
                     false,
                 ));
             }
-            if data.len() > limits.max_file_bytes {
+            if data.len() > runtime.limits.max_file_bytes {
                 return Err(api_error(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "INPUT_LIMIT_EXCEEDED",
@@ -470,7 +480,7 @@ async fn parse_form(
                 ));
             }
             total_bytes = total_bytes.saturating_add(data.len());
-            if total_bytes > limits.max_batch_bytes {
+            if total_bytes > runtime.limits.max_batch_bytes {
                 return Err(api_error(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "INPUT_LIMIT_EXCEEDED",
@@ -545,6 +555,27 @@ async fn parse_form(
             false,
         )
     })?;
+    let sensitive_terms = if rules.iter().any(|rule| rule == store::SENSITIVE_TERMS_RULE_ID) {
+        runtime
+            .store
+            .list_sensitive_terms(None, None, true)
+            .await
+            .map_err(store_rejection)?
+            .into_iter()
+            .map(|term| engine_core::SensitiveTermDefinition {
+                id: term.id,
+                term: term.term,
+                category: term.category,
+                enabled: term.enabled,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for upload in &mut uploads {
+        upload.display_name =
+            processing::mask_display_name(&upload.display_name, &rules, &sensitive_terms);
+    }
     Ok((uploads, rules, restore_mode))
 }
 
@@ -578,14 +609,14 @@ fn parse_rules(value: &str) -> Result<Vec<String>, Rejection> {
     Ok(parsed)
 }
 
-fn sanitize_display_name(raw: &str) -> String {
+pub(crate) fn sanitize_display_name(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("upload");
     let cleaned: String = base
         .chars()
         .take(120)
         .map(|character| {
             if character.is_control()
-                || matches!(character, ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                || matches!(character, ':' | '?' | '"' | '<' | '>' | '|')
             {
                 '_'
             } else {
@@ -681,20 +712,41 @@ async fn retry_file(file_id: String, runtime: Runtime) -> Result<impl Reply, Rej
 }
 
 async fn download_artifact(artifact_id: String, runtime: Runtime) -> Result<impl Reply, Rejection> {
-    let (_, bytes) = runtime
+    let (record, bytes) = runtime
         .store
         .artifact(&artifact_id)
         .await
         .map_err(store_rejection)?;
+    let download_name = artifact_download_name(&record.display_name);
     Ok(warp::http::Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "text/markdown; charset=utf-8")
         .header(
             "content-disposition",
-            format!("attachment; filename=\"masked-{artifact_id}.md\""),
+            format!("attachment; filename=\"{}\"", download_name),
         )
         .body(bytes)
         .expect("valid artifact response"))
+}
+
+fn artifact_download_name(display_name: &str) -> String {
+    let sanitized = sanitize_display_name(display_name);
+    let stem = std::path::Path::new(&sanitized)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("masked_file");
+    sanitize_display_name(&format!("{stem}_脱敏.md"))
+}
+
+fn restored_download_name(display_name: &str) -> String {
+    let sanitized = sanitize_display_name(display_name);
+    let stem = std::path::Path::new(&sanitized)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("restored_file");
+    sanitize_display_name(&format!("{stem}_还原.md"))
 }
 
 fn store_rejection(error: StoreError) -> Rejection {
@@ -747,7 +799,7 @@ async fn artifact_restore_handler(
 ) -> Result<impl Reply, Rejection> {
     use engine_core::{decode_server_cmap, restore_markdown};
 
-    let (markdown_bytes, mapping_bytes) =
+    let (display_name, markdown_bytes, mapping_bytes) =
         match runtime.store.artifact_with_mapping(&artifact_id).await {
             Ok(pair) => pair,
             Err(_) => {
@@ -827,7 +879,7 @@ async fn artifact_restore_handler(
         .log_restore_event("RestoreSucceeded", "completed", None, Some(count))
         .await;
 
-    let fname = format!("restored-{}.md", artifact_id);
+    let fname = restored_download_name(&display_name);
     let resp = warp::http::Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "text/markdown; charset=utf-8")
@@ -1022,6 +1074,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn batch_creation_masks_uploaded_display_name_before_persistence() {
+        let (_temp, runtime) = test_runtime().await;
+        let (content_type, body) = multipart(
+            &[("张三-13900000000-报价单.txt", b"ok")],
+            "[\"chinese_name\",\"phone\"]",
+        );
+        let response = request()
+            .method("POST")
+            .path("/api/v1/batches")
+            .header("content-type", content_type)
+            .body(body)
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let created: CreateBatchResponse = serde_json::from_slice(response.body()).unwrap();
+        assert_eq!(created.files.len(), 1);
+        assert!(created.files[0].display_name.ends_with(".txt"));
+        assert!(!created.files[0].display_name.contains("张三"));
+        assert!(!created.files[0].display_name.contains("13900000000"));
+
+        let detail = wait_terminal(&runtime, &created.batch_id).await;
+        assert_eq!(detail.files.len(), 1);
+        assert_eq!(detail.files[0].display_name, created.files[0].display_name);
+    }
+
+    #[tokio::test]
     async fn empty_and_missing_rules_are_rejected_before_persistence() {
         let (temp, runtime) = test_runtime().await;
         for rules in ["[]", "", "   "] {
@@ -1106,18 +1184,32 @@ mod tests {
             "bank_card",
             "ipv4",
             "passport",
+            "chinese_name",
             "use_sensitive_terms",
         ];
         let ids: Vec<&str> = rules.rules.iter().map(|rule| rule.id.as_str()).collect();
         assert_eq!(ids, expected_ids);
-        assert!(rules.rules.iter().all(|rule| rule.enabled_by_default));
+        let chinese_name = rules
+            .rules
+            .iter()
+            .find(|rule| rule.id == "chinese_name")
+            .expect("chinese_name metadata should exist");
+        assert!(!chinese_name.enabled_by_default);
+        assert!(rules
+            .rules
+            .iter()
+            .filter(|rule| rule.id != "chinese_name")
+            .all(|rule| rule.enabled_by_default));
         let builtin = get_builtin_rules()
             .iter()
             .filter(|rule| ENTERPRISE_RULE_IDS.contains(&rule.id.as_str()));
         for (metadata, source) in rules.rules.iter().zip(builtin) {
             assert_eq!(metadata.id, source.id);
             assert_eq!(metadata.name, source.name);
-            assert_eq!(metadata.enabled_by_default, source.enabled);
+            assert_eq!(
+                metadata.enabled_by_default,
+                enterprise_rule_enabled_by_default(&source.id, source.enabled)
+            );
         }
         let body = std::str::from_utf8(response.body()).unwrap();
         assert!(!body.contains("pattern"));
@@ -1126,33 +1218,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chinese_name_is_rejected_before_persistence() {
-        let (temp, runtime) = test_runtime().await;
-        let before = batch_ids(&runtime).await;
+    async fn chinese_name_is_accepted_and_masks_contextual_names() {
+        let (_temp, runtime) = test_runtime().await;
+        let (content_type, body) = multipart(
+            &[(
+                "gating.txt",
+                "客户姓名：张三\n联系电话：13900000000\n电子邮箱：zhangsan@example.com\n".as_bytes(),
+            )],
+            r#"["chinese_name","phone","email"]"#,
+        );
+        let response = request()
+            .method("POST")
+            .path("/api/v1/batches")
+            .header("content-type", content_type)
+            .body(body)
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let created: CreateBatchResponse = serde_json::from_slice(response.body()).unwrap();
 
-        for rules in [r#"["chinese_name"]"#, r#"["phone","chinese_name"]"#] {
-            let (content_type, body) = multipart(
-                &[("gating.txt", "虚构联系人 13900000000".as_bytes())],
-                rules,
-            );
-            let response = request()
-                .method("POST")
-                .path("/api/v1/batches")
-                .header("content-type", content_type)
-                .body(body)
-                .reply(&routes(runtime.clone()))
-                .await;
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-            let error: ErrorResponse = serde_json::from_slice(response.body()).unwrap();
-            assert_eq!(error.code, "INVALID_RULES");
-            assert_eq!(batch_ids(&runtime).await, before);
-            assert_eq!(runtime.store.record_counts().await.unwrap(), (0, 0));
-        }
-
-        let mut input_entries = tokio::fs::read_dir(temp.path().join("enterprise-data/input"))
-            .await
-            .unwrap();
-        assert!(input_entries.next_entry().await.unwrap().is_none());
+        let detail = wait_terminal(&runtime, &created.batch_id).await;
+        assert_eq!(detail.batch.status, BatchStatus::Completed);
+        let artifact_id = detail.files[0].artifact_id.clone().unwrap();
+        let artifact = request()
+            .method("GET")
+            .path(&format!("/api/v1/artifacts/{artifact_id}"))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(artifact.status(), StatusCode::OK);
+        let markdown = std::str::from_utf8(artifact.body()).unwrap();
+        assert!(markdown.contains("客户姓名：姓名1"));
+        assert!(markdown.contains("联系电话：***PHONE***2"));
+        assert!(markdown.contains("电子邮箱：***EMAIL***3"));
+        assert!(!markdown.contains("客户姓名：张三"));
     }
 
     #[tokio::test]
@@ -1299,9 +1397,8 @@ mod tests {
         assert!(!body.contains("alice@example.invalid"));
         assert!(!body.contains("13900000000"));
         assert!(downloaded.headers()["content-disposition"]
-            .to_str()
-            .unwrap()
-            .ends_with(".md\""));
+            .as_bytes()
+            .ends_with(".md\"".as_bytes()));
     }
 
     #[tokio::test]
@@ -1405,9 +1502,8 @@ mod tests {
         assert!(!body.contains("alice@example.invalid"));
         assert!(!body.contains("13900000000"));
         assert!(downloaded.headers()["content-disposition"]
-            .to_str()
-            .unwrap()
-            .ends_with(".md\""));
+            .as_bytes()
+            .ends_with(".md\"".as_bytes()));
     }
 
     #[tokio::test]
@@ -1538,9 +1634,8 @@ mod tests {
         assert!(!body.contains("13900000000"));
         assert!(!body.contains("alice@example.invalid"));
         assert!(downloaded.headers()["content-disposition"]
-            .to_str()
-            .unwrap()
-            .ends_with(".md\""));
+            .as_bytes()
+            .ends_with(".md\"".as_bytes()));
     }
 
     #[tokio::test]
@@ -1763,6 +1858,12 @@ mod tests {
     async fn validation_blocks_traversal_unsupported_ids_and_limits() {
         assert_eq!(sanitize_display_name("../../safe.txt"), "safe.txt");
         assert_eq!(sanitize_display_name("..\\..\\safe.md"), "safe.md");
+        let artifact_name = artifact_download_name("姓名2-***PHONE***1.txt");
+        assert!(artifact_name.ends_with("_脱敏.md"));
+        assert!(artifact_name.contains("PHONE"));
+        let restored_name = restored_download_name("姓名2-***PHONE***1.txt");
+        assert!(restored_name.ends_with("_还原.md"));
+        assert!(restored_name.contains("PHONE"));
         let (_temp, runtime) = test_runtime().await;
         let (content_type, body) = multipart(&[("unsafe.json", b"value")], "[\"phone\"]");
         let unsupported = request()
@@ -2728,6 +2829,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preview_creation_masks_uploaded_display_name_with_sensitive_terms() {
+        let (_temp, runtime) = test_runtime().await;
+        runtime
+            .store
+            .create_sensitive_term("机密项目", "机密", None)
+            .await
+            .unwrap();
+        let created = submit_preview_with_rules(
+            &runtime,
+            &[("机密项目-13900000000-交付单.txt", b"Call 13900000000")],
+            "[\"use_sensitive_terms\",\"phone\"]",
+        )
+        .await;
+        assert_eq!(created.files.len(), 1);
+        assert!(created.files[0].display_name.ends_with(".txt"));
+        assert!(!created.files[0].display_name.contains("机密项目"));
+        assert!(!created.files[0].display_name.contains("13900000000"));
+        assert!(created.files[0].display_name.contains("[机密]"));
+
+        let detail = wait_preview_terminal(&runtime, &created.preview_id).await;
+        assert_eq!(detail.files[0].display_name, created.files[0].display_name);
+    }
+
+    #[tokio::test]
     async fn preview_before_confirm_creates_no_real_batch_records() {
         let (_temp, runtime) = test_runtime().await;
         let before_counts = runtime.store.record_counts().await.unwrap();
@@ -3598,13 +3723,13 @@ mod tests {
         );
     }
 
-    /// B4: `chinese_name` remains rejected from the enterprise `/rules`
-    /// contract even when combined with `use_sensitive_terms`.
+    /// B4: `chinese_name` is now part of the enterprise `/rules` contract and
+    /// can coexist with the sensitive-term library without being rejected.
     #[tokio::test]
-    async fn chinese_name_stays_rejected_alongside_use_sensitive_terms() {
+    async fn chinese_name_is_allowed_alongside_use_sensitive_terms() {
         let (_temp, runtime) = test_runtime().await;
         let (content_type, body) = multipart(
-            &[("safe.txt", b"content")],
+            &[("safe.txt", "姓名：张三\n".as_bytes())],
             r#"["chinese_name","use_sensitive_terms"]"#,
         );
         let response = request()
@@ -3614,10 +3739,11 @@ mod tests {
             .body(body)
             .reply(&routes(runtime.clone()))
             .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let error: ErrorResponse = serde_json::from_slice(response.body()).unwrap();
-        assert_eq!(error.code, "INVALID_RULES");
-        assert_eq!(runtime.store.record_counts().await.unwrap(), (0, 0));
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let created: CreateBatchResponse = serde_json::from_slice(response.body()).unwrap();
+        let detail = wait_terminal(&runtime, &created.batch_id).await;
+        assert_eq!(detail.batch.status, BatchStatus::Completed);
+        assert_eq!(runtime.store.record_counts().await.unwrap().0, 1);
     }
 
     /// A3/A4: the sensitive-term table survives a fresh `Store::open` against

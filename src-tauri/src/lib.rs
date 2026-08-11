@@ -1,7 +1,7 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, vault_api_server, vault, ai_model, platform, installer, sensitive_terms, sync_config, extract_config};
+use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, vault_api_server, vault, ai_model, platform, installer, sensitive_terms, sync_config, extract_config, app_update};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +26,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(gitea::GiteaState::default())
         .manage(webview::BrowserFetchPending::default())
         .invoke_handler(tauri::generate_handler![
@@ -157,6 +158,8 @@ pub fn run() {
             sync_config::sync_config_from_desktop,
             extract_config::extract_config_from_desktop_webview,
             extract_config::eval_js_in_desktop_webview,
+            app_update::prepare_update_backup,
+            app_update::restart_app,
         ])
         .setup(|app| {
             // 暂时禁用 Vault API 服务器自动启动以排查崩溃问题

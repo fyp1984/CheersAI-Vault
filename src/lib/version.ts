@@ -1,4 +1,5 @@
 import { isTauriHost } from "@/lib/runtime/host";
+import { formatDisplayVersion } from "@/lib/versionPolicy";
 
 const buildVersion = import.meta.env.VITE_APP_VERSION ?? "0.0.0";
 
@@ -18,4 +19,8 @@ export async function getAppVersion() {
 
 export function getBuildVersion() {
   return buildVersion;
+}
+
+export function getDisplayBuildVersion() {
+  return formatDisplayVersion(buildVersion);
 }
