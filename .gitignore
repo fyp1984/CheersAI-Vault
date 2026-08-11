@@ -51,3 +51,6 @@ docs/personal-test-fix-summary-2026-08-10.md
 docs/local-sim-lab.md
 docs/VERSION_MANAGEMENT.md
 docs/edition-gap-plan-2026-08-10.md
+docs/Marked/*
+.build-cache/*
+.cache/*
