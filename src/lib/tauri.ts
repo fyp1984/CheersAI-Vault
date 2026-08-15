@@ -226,6 +226,12 @@ export const tauriCommands = {
   getPlatformContext: () =>
     invoke<PlatformContext>("get_platform_context"),
 
+  prepareUpdateBackup: () =>
+    invoke<UpdateBackupSummary>("prepare_update_backup"),
+
+  restartApp: () =>
+    invoke<void>("restart_app"),
+
   checkOcrInstalled: () =>
     invoke<boolean>("check_ocr_installed"),
 

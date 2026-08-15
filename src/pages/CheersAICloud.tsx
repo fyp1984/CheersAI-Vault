@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { ExternalLink, AlertCircle, Loader2, MonitorUp, RefreshCw, Shield, Wifi } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Message } from "@/components/ui/cheersai-ui";
+import { documentCatalog } from "@/lib/docs/catalog";
 import { CLOUD_APP_URL } from "@/lib/cloud";
 
 export type CloudFallbackState = "waiting" | "mounting" | "fallback";
@@ -261,6 +264,51 @@ export default function CheersAICloud({
 
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs leading-6 text-gray-500">
                 提示：若某些 macOS 环境下内嵌 WebView 未能稳定挂载，优先使用“在应用内独立窗口打开”；若需要最高兼容性，再使用“在系统浏览器打开”。
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-gray-200 shadow-sm">
+            <CardContent className="space-y-6 p-6">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-2">
+                  <div className="text-lg font-semibold text-gray-900">帮助与文档</div>
+                </div>
+                <Button asChild variant="outline" className="border-gray-200 text-gray-700 hover:bg-gray-50">
+                  <Link to="/docs">打开文档中心</Link>
+                </Button>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                {documentCatalog.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`rounded-2xl border p-4 ${
+                      item.id === "personal"
+                        ? "border-emerald-200 bg-emerald-50/70"
+                        : "border-blue-200 bg-blue-50/70"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={
+                          item.id === "personal"
+                            ? "border-emerald-300 bg-white text-emerald-700"
+                            : "border-blue-300 bg-white text-blue-700"
+                        }
+                      >
+                        {item.versionLabel}
+                      </Badge>
+                    </div>
+                    <div className="mt-4">
+                      <div className="text-base font-semibold text-gray-900">{item.title}</div>
+                    </div>
+                    <Button asChild className="mt-5 w-full">
+                      <Link to={`/docs/${item.id}`}>进入阅读</Link>
+                    </Button>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>

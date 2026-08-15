@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   FileText,
@@ -12,17 +12,15 @@ import {
   Upload,
   RotateCcw,
   Sparkles,
-  ExternalLink,
+  BookOpenText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getBuildVersion, getAppVersion } from "@/lib/version";
+import { getDisplayBuildVersion, getAppVersion } from "@/lib/version";
+import { formatDisplayVersion } from "@/lib/versionPolicy";
 import { useAppStore } from "@/store/appStore";
 import { useRuntimeHealthStore } from "@/store/runtimeStore";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isTauriHost } from "@/lib/runtime/host";
-
-const HELP_WIKI_URL =
-  "https://dcnd0q32i5v3.feishu.cn/wiki/TVChw3onji9mVdkx96tcXsSYnlf?from=from_copylink";
 
 const navItems = [
   { to: "/cloud", icon: Cloud, label: "CheersAI", description: "访问云端AI服务" },
@@ -41,7 +39,8 @@ const navItems = [
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, activePreviewId } = useAppStore();
   const location = useLocation();
-  const [appVersion, setAppVersion] = useState(`v${getBuildVersion()}`);
+  const navigate = useNavigate();
+  const [appVersion, setAppVersion] = useState(getDisplayBuildVersion());
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const isDesktop = isTauriHost();
   // 浏览器宿主：底部"Runtime 状态"来自单一事实源 store（与 MainLayout 同源），
@@ -53,7 +52,7 @@ export function Sidebar() {
 
     void getAppVersion().then((version) => {
       if (active) {
-        setAppVersion(`v${version}`);
+        setAppVersion(formatDisplayVersion(version));
       }
     });
 
@@ -66,20 +65,8 @@ export function Sidebar() {
     setHoveredItem(null);
   }, [sidebarCollapsed]);
 
-  const handleOpenHelpWiki = async () => {
-    // 浏览器宿主直接用标准浏览器能力打开，不尝试任何 Tauri 调用。
-    if (!isDesktop) {
-      window.open(HELP_WIKI_URL, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(HELP_WIKI_URL);
-    } catch (error) {
-      console.error("Failed to open help wiki:", error);
-      window.open(HELP_WIKI_URL, "_blank", "noopener,noreferrer");
-    }
+  const handleOpenDocs = () => {
+    navigate("/docs");
   };
 
   return (
@@ -205,14 +192,29 @@ export function Sidebar() {
             </div>
             <button
               type="button"
-              onClick={handleOpenHelpWiki}
+              onClick={handleOpenDocs}
               className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 text-xs font-medium text-slate-200 transition-all hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-white active:scale-95"
-              aria-label="打开使用文档"
+              aria-label="打开文档中心"
             >
-              <ExternalLink className="h-4 w-4" />
-              使用说明
+              <BookOpenText className="h-4 w-4" />
+              文档中心
             </button>
           </div>
+        )}
+
+        {sidebarCollapsed && (
+          <Tooltip delayDuration={100}>
+            <TooltipTrigger asChild>
+              <div className="mb-3 flex justify-center">
+                <div className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-medium text-slate-300">
+                  {appVersion}
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700 shadow-xl">
+              当前运行版本 {appVersion}
+            </TooltipContent>
+          </Tooltip>
         )}
         
         {/* Collapse toggle */}

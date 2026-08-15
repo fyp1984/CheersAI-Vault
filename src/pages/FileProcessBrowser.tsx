@@ -79,6 +79,7 @@ type RulesState =
   | { kind: "error"; message: string };
 
 const SENSITIVE_TERMS_RULE_ID = "use_sensitive_terms";
+const DEFAULT_UNSELECTED_RULE_IDS = new Set(["chinese_name"]);
 
 type SensitiveTermsSummaryState =
   | { kind: "loading" }
@@ -289,7 +290,14 @@ export default function FileProcessBrowser() {
       return;
     }
     setRulesState({ kind: "ready", rules: result.data.rules });
-    setSelectedRuleIds(new Set(result.data.rules.filter((rule) => rule.enabled_by_default).map((rule) => rule.id)));
+    setSelectedRuleIds(
+      new Set(
+        result.data.rules
+          .filter((rule) => rule.enabled_by_default)
+          .filter((rule) => !DEFAULT_UNSELECTED_RULE_IDS.has(rule.id))
+          .map((rule) => rule.id)
+      )
+    );
   }, []);
 
   useEffect(() => {

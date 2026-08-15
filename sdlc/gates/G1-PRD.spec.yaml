@@ -1,0 +1,25 @@
+gate_id: G1-PRD
+name: PRD 质量门禁（需求分析 → 功能设计）
+rationale: Harness Engineering HE-1 (Fail-Fast 显式分层) + HE-4 (Zero-Trusted 过站) + HE-3 (Evidence 签收)
+thresholds:
+  completeness:
+    required_sections:
+      - 一、背景与目标
+      - 二、用户故事与核心场景
+      - 三、验收标准（AC，可量化）
+      - 四、优先级（MoSCoW：Must/Should/Could/Won't）
+      - 五、依赖关系 & 上下游影响
+      - 六、合规与数据分级（C1-C4 逐字段）
+    min_section_ratio: 1.0
+  compliance:
+    classification:
+      C1: 公开（无风险）          # 例：产品帮助文档、公开博客
+      C2: 内部（员工可见）        # 例：内部 OA 流程
+      C3: 敏感（PII/财务）        # 例：手机号、身份证号
+      C4: 核心机密（密钥/支付）   # 例：JWT_SECRET、私钥
+    required_fields_in_prd_if_pii:
+      - pii_fields_listed: true
+      - masking_policy_defined: true
+sign_off_evidence:
+  - gate-prd.py exit 0
+  - audit entry with artifact_sha256 of PRD

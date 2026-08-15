@@ -12,6 +12,8 @@ const files = {
   packageJson: path.join(rootDir, "package.json"),
   cargoToml: path.join(rootDir, "src-tauri", "Cargo.toml"),
   tauriConf: path.join(rootDir, "src-tauri", "tauri.conf.json"),
+  versionInfo: path.join(rootDir, "releases", "stable", "version-info.json"),
+  updateManifest: path.join(rootDir, "releases", "stable", "latest.json"),
 };
 
 const semverPattern =
@@ -21,7 +23,15 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function readOptionalJson(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  return readJson(filePath);
+}
+
 function writeJson(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
@@ -91,11 +101,113 @@ function updateTauriVersion(nextVersion) {
   writeJson(files.tauriConf, tauriConf);
 }
 
+function compareSemver(left, right) {
+  const parse = (value) =>
+    value
+      .replace(/^v/i, "")
+      .split(/[+-]/, 1)[0]
+      .split(".")
+      .map(Number);
+  const [leftMajor, leftMinor, leftPatch] = parse(left);
+  const [rightMajor, rightMinor, rightPatch] = parse(right);
+  if (leftMajor !== rightMajor) return leftMajor - rightMajor;
+  if (leftMinor !== rightMinor) return leftMinor - rightMinor;
+  return leftPatch - rightPatch;
+}
+
+function releaseBaseUrl(packageJson) {
+  return (packageJson.homepage || packageJson.repository?.url || "https://github.com/fyp1984/CheersAI-Vault")
+    .replace(/\.git$/, "");
+}
+
+function updaterManifestUrl() {
+  return "https://raw.githubusercontent.com/fyp1984/CheersAI-Vault/main/releases/stable/latest.json";
+}
+
+function placeholderPlatforms(version, baseUrl) {
+  return {
+    "darwin-x86_64": {
+      signature: "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
+      url: `${baseUrl}/releases/download/v${version}/CheersAI_Vault_${version}_x86_64.app.tar.gz`,
+    },
+    "darwin-aarch64": {
+      signature: "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
+      url: `${baseUrl}/releases/download/v${version}/CheersAI_Vault_${version}_aarch64.app.tar.gz`,
+    },
+    "windows-x86_64": {
+      signature: "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
+      url: `${baseUrl}/releases/download/v${version}/CheersAI_Vault_${version}_x64.nsis.zip`,
+    },
+    "linux-x86_64": {
+      signature: "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
+      url: `${baseUrl}/releases/download/v${version}/CheersAI_Vault_${version}_x86_64.AppImage.tar.gz`,
+    },
+  };
+}
+
+function syncReleaseMetadata(nextVersion) {
+  const packageJson = readJson(files.packageJson);
+  const currentInfo = readOptionalJson(files.versionInfo);
+  const currentManifest = readOptionalJson(files.updateManifest);
+  const baseUrl = releaseBaseUrl(packageJson);
+  const releasePageUrl = `${baseUrl}/releases/tag/v${nextVersion}`;
+
+  const versionInfo = {
+    product: currentInfo?.product || "CheersAI Vault",
+    channel: currentInfo?.channel || "stable",
+    latestVersion: nextVersion,
+    minimumSupportedVersion:
+      currentInfo?.minimumSupportedVersion &&
+      compareSemver(currentInfo.minimumSupportedVersion, nextVersion) <= 0
+        ? currentInfo.minimumSupportedVersion
+        : nextVersion,
+    publishedAt: currentInfo?.publishedAt || new Date().toISOString(),
+    releaseNotesSummary:
+      currentInfo?.releaseNotesSummary || `CheersAI Vault ${nextVersion} 版本发布`,
+    releaseNotes: Array.isArray(currentInfo?.releaseNotes) ? currentInfo.releaseNotes : [],
+    desktop: {
+      enabled: currentInfo?.desktop?.enabled ?? true,
+      pollIntervalMinutes: currentInfo?.desktop?.pollIntervalMinutes ?? 30,
+      remindAfterHours: currentInfo?.desktop?.remindAfterHours ?? 6,
+      backupRequired: currentInfo?.desktop?.backupRequired ?? true,
+      updateManifestUrl: updaterManifestUrl(),
+      releasePageUrl,
+    },
+    web: {
+      pollIntervalMinutes: currentInfo?.web?.pollIntervalMinutes ?? 30,
+      releasePageUrl,
+    },
+  };
+
+  const shouldRegeneratePlatforms =
+    !currentManifest?.platforms ||
+    currentManifest.version !== nextVersion ||
+    Object.values(currentManifest.platforms).every(
+      (entry) => entry.signature === "RELEASE_SIGNATURE_NOT_PUBLISHED_YET"
+    );
+
+  const manifest = {
+    version: nextVersion,
+    notes:
+      versionInfo.releaseNotes.length > 0
+        ? versionInfo.releaseNotes.map((item) => `- ${item.text}`).join("\n")
+        : versionInfo.releaseNotesSummary,
+    pub_date: versionInfo.publishedAt,
+    platforms: shouldRegeneratePlatforms
+      ? placeholderPlatforms(nextVersion, baseUrl)
+      : currentManifest.platforms,
+  };
+
+  writeJson(files.versionInfo, versionInfo);
+  writeJson(files.updateManifest, manifest);
+}
+
 function setVersion(nextVersion) {
   assertSemver(nextVersion);
   updatePackageVersion(nextVersion);
   updateCargoVersion(nextVersion);
   updateTauriVersion(nextVersion);
+  syncReleaseMetadata(nextVersion);
   return nextVersion;
 }
 
@@ -104,6 +216,7 @@ function syncFromPackageVersion() {
   assertSemver(packageVersion);
   updateCargoVersion(packageVersion);
   updateTauriVersion(packageVersion);
+  syncReleaseMetadata(packageVersion);
   return packageVersion;
 }
 

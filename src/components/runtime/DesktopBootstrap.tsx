@@ -3,8 +3,25 @@ import { useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { useLogStore } from "@/store/logStore";
 import { tauriCommands } from "@/lib/tauri";
+import { fetchRuntimeHealth, fetchRuntimeRules, runtimeBaseUrl } from "@/lib/runtime/client";
 import { setPlatformContext } from "@/lib/path";
 import "@/lib/sync-config";
+
+const DESKTOP_SIM_LAB_PROBE_SESSION_KEY = "__cheersai_vault_desktop_sim_lab_probe__";
+
+function describeRuntimeProbeFailure(
+  result:
+    | Awaited<ReturnType<typeof fetchRuntimeHealth>>
+    | Awaited<ReturnType<typeof fetchRuntimeRules>>
+) {
+  if (result.ok) {
+    return "ok";
+  }
+  if (result.reason === "network" || result.reason === "parse") {
+    return result.reason;
+  }
+  return `${result.reason}:${result.status}`;
+}
 
 /**
  * 桌面（Tauri）宿主专属的应用启动编排：平台上下文、旧数据库迁移与初始化、
@@ -44,6 +61,76 @@ export function DesktopBootstrap() {
     };
     init();
   }, [initializeDatabase]);
+
+  useEffect(() => {
+    const proxyTarget = import.meta.env.DEV
+      ? ((import.meta.env.VITE_DESKTOP_SIM_LAB_PROXY as string | undefined)
+        ?? (import.meta.env.VITE_RUNTIME_PROXY_TARGET as string | undefined))
+      : undefined;
+    if (!proxyTarget || typeof window === "undefined") {
+      return;
+    }
+    if (window.sessionStorage.getItem(DESKTOP_SIM_LAB_PROBE_SESSION_KEY) === proxyTarget) {
+      return;
+    }
+
+    let cancelled = false;
+    const probeSimLab = async () => {
+      try {
+        await fetch(`${runtimeBaseUrl}/api/v1/health?desktop_probe=tauri`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+      } catch (error) {
+        console.warn("[desktop-sim-lab] signature probe failed:", error);
+      }
+
+      const [healthResult, rulesResult] = await Promise.all([
+        fetchRuntimeHealth(),
+        fetchRuntimeRules(),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      if (healthResult.ok && rulesResult.ok) {
+        const details = `proxy=${proxyTarget}; health=${healthResult.data.status}; rules=${rulesResult.data.rules.length}`;
+        window.sessionStorage.setItem(DESKTOP_SIM_LAB_PROBE_SESSION_KEY, proxyTarget);
+        console.info("[desktop-sim-lab] connected", details);
+        try {
+          await tauriCommands.addLogEntry(
+            "info",
+            "Desktop Sim Lab probe connected",
+            details,
+            undefined,
+            "desktop-sim-lab"
+          );
+        } catch (error) {
+          console.warn("[desktop-sim-lab] failed to persist probe log:", error);
+        }
+        return;
+      }
+
+      const details = `proxy=${proxyTarget}; health=${describeRuntimeProbeFailure(healthResult)}; rules=${describeRuntimeProbeFailure(rulesResult)}`;
+      console.warn("[desktop-sim-lab] probe failed", details);
+      try {
+        await tauriCommands.addLogEntry(
+          "warning",
+          "Desktop Sim Lab probe failed",
+          details,
+          undefined,
+          "desktop-sim-lab"
+        );
+      } catch (error) {
+        console.warn("[desktop-sim-lab] failed to persist probe log:", error);
+      }
+    };
+
+    void probeSimLab();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     // 卸载可能发生在 listen() 尚未 resolve 之前；用 cancelled 标记确保晚到的

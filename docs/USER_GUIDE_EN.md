@@ -431,8 +431,8 @@ Distribution requirements include:
 
 The public support channels are:
 
-- Product home page: `https://github.com/fyp1984/CheersAI-Vault`
-- Issue tracker: `https://github.com/fyp1984/CheersAI-Vault/issues`
+- Product home and code hosting: The project is hosted on a public GitHub repository under the name `CheersAI-Vault`; please use the repository URL recorded in your customer internal documentation as the single source of truth.
+- Issue tracking: Submit issues and reproduction details through the Issues channel of the code repository.
 - Code contribution path: Pull Request
 
 The security reporting channels are:

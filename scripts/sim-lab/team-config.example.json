@@ -1,0 +1,156 @@
+{
+  "ports": {
+    "dashboard": 9090,
+    "proxy": 9091,
+    "mock": 9092,
+    "clientDev": 3002,
+    "clientPreview": 4176
+  },
+  "globalScenarioId": "normal",
+  "logLimit": 400,
+  "routes": [
+    {
+      "id": "health",
+      "label": "Runtime Health",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/health",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "rules",
+      "label": "Runtime Rules",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/rules",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "previews",
+      "label": "Preview Sessions",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/previews",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "batches",
+      "label": "Batches",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/batches",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "files-retry",
+      "label": "Retry Files",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/files",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "artifacts",
+      "label": "Artifacts",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/artifacts",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "sensitive-terms",
+      "label": "Sensitive Terms",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/sensitive-terms",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "operation-logs",
+      "label": "Operation Logs",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/operation-logs",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "sandbox",
+      "label": "Sandbox",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/sandbox",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "filebay",
+      "label": "FileBay",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/filebay",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "ocr-status",
+      "label": "OCR Status",
+      "protocol": "http",
+      "pathPrefix": "/api/v1/ocr/status",
+      "enabled": true,
+      "strategy": "mock",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:8788",
+      "mockTarget": "http://127.0.0.1:9092"
+    },
+    {
+      "id": "websocket-template",
+      "label": "WebSocket Template",
+      "protocol": "websocket",
+      "pathPrefix": "/ws",
+      "enabled": false,
+      "strategy": "forward",
+      "scenarioId": "normal",
+      "forwardTarget": "ws://127.0.0.1:19091",
+      "mockTarget": "ws://127.0.0.1:19092"
+    },
+    {
+      "id": "grpc-template",
+      "label": "gRPC Template",
+      "protocol": "grpc",
+      "pathPrefix": "/grpc",
+      "enabled": false,
+      "strategy": "forward",
+      "scenarioId": "normal",
+      "forwardTarget": "http://127.0.0.1:50051",
+      "mockTarget": "http://127.0.0.1:50052"
+    }
+  ]
+}

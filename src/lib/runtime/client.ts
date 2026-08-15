@@ -51,6 +51,10 @@ import {
   classifyRuntimeHttpResponse,
   parseRuntimeJsonResponse,
 } from "./errorClassification";
+import {
+  artifactDownloadName,
+  restoreDownloadName,
+} from "./downloadName";
 
 function resolveBaseUrl(raw: string | undefined): string {
   if (!raw) {
@@ -250,21 +254,6 @@ export async function cancelRuntimePreview(previewId: string): Promise<RuntimeAc
 }
 
 /**
- * 从文件名中提取一个安全的、不含路径分隔符或控制字符的“主干名”，
- * 用于拼装下载文件名——展示名视为不可信输入，不直接用作 HTML/路径/
- * `Content-Disposition` 指令的一部分。
- */
-function safeStem(displayName: string): string {
-  const withoutPath = displayName.replace(/^.*[\\/]/, "");
-  // eslint-disable-next-line no-control-regex
-  const withoutControlChars = withoutPath.replace(/[\x00-\x1f\x7f]/g, "");
-  const withoutReservedChars = withoutControlChars.replace(/[<>:"/\\|?*]/g, "_");
-  const dot = withoutReservedChars.lastIndexOf(".");
-  const stem = dot > 0 ? withoutReservedChars.slice(0, dot) : withoutReservedChars;
-  return stem.trim() || "artifact";
-}
-
-/**
  * 下载脱敏产物：`GET /api/v1/artifacts/{artifact_id}`，只使用编码后的
  * artifact ID，不接受或拼接任何服务器路径。下载后立即释放对象 URL。
  */
@@ -291,7 +280,10 @@ export async function downloadRuntimeArtifact(
   try {
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = `${safeStem(displayName)}.masked.md`;
+    anchor.download = artifactDownloadName(
+      displayName,
+      response.headers.get("content-disposition")
+    );
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
@@ -344,7 +336,10 @@ export async function restoreRuntimeArtifact(
   try {
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = `${safeStem(displayName)}.restored.md`;
+    anchor.download = restoreDownloadName(
+      displayName,
+      response.headers.get("content-disposition")
+    );
     document.body.append(anchor);
     anchor.click();
     anchor.remove();

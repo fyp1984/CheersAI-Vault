@@ -93,7 +93,7 @@ fn sanitize_output_file_stem(file_stem: &str) -> String {
     let mut sanitized: String = file_stem
         .chars()
         .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' => '_',
             ch if ch.is_control() => '_',
             ch => ch,
         })
@@ -131,6 +131,8 @@ pub struct PreviewResult {
     pub original_rows: Vec<Vec<String>>,
     pub masked_rows: Vec<Vec<String>>,
     pub headers: Vec<String>,
+    pub original_file_stem: String,
+    pub original_file_name: String,
     pub masked_file_stem: String,
     pub masked_file_name: String,
     pub detected_entities: Option<Vec<ner::RowEntities>>,
@@ -172,6 +174,16 @@ fn mask_text_through_shared_core(
         MaskingSession::with_state(rules.to_vec(), initial_mappings, placeholder_counter);
     let markdown = session.mask_document(content, &findings);
     session.finish(markdown)
+}
+
+fn mask_filename_stem_through_shared_core(
+    original_file_stem: &str,
+    rules: &[masking_engine::MaskingRule],
+    detector: &ner::NERDetector,
+) -> engine_core::FilenameMaskingResult {
+    let mut findings = engine_core::collect_filename_findings(original_file_stem, rules);
+    findings.extend(deterministic_findings(detector, original_file_stem));
+    engine_core::mask_filename(original_file_stem, rules, &findings)
 }
 
 fn output_extension_for_format(_format: &file_parser::FileFormat) -> &'static str {
@@ -267,6 +279,8 @@ fn preview_content_for_save(
 #[cfg(test)]
 mod preview_save_content_tests {
     use super::*;
+    use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn text_and_markdown_preserve_canonical_line_endings_exactly() {
@@ -336,6 +350,61 @@ mod preview_save_content_tests {
         assert_eq!(actual, rows_to_markdown(Some(&headers), &rows));
         assert_eq!(actual, "alpha\nbeta\n");
     }
+
+    #[tokio::test]
+    async fn save_preview_result_persists_manual_replacements_to_output_and_mapping() {
+        let temp_dir = std::env::temp_dir().join(format!("vault-manual-replace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let source_path = temp_dir.join("manual-replace-source.md");
+        fs::write(
+            &source_path,
+            "# 手工替换回归测试\n联系人：金金\n手机：13800138000\n",
+        )
+        .unwrap();
+
+        let output_dir = temp_dir.join("output");
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let result = save_preview_result(SavePreviewOptions {
+            file_path: source_path.to_string_lossy().to_string(),
+            output_dir: output_dir.to_string_lossy().to_string(),
+            masked_rows: vec![vec!["联系人：甲方".to_string()], vec!["手机：联系电话".to_string()]],
+            headers: None,
+            passphrase: None,
+            mapping: Some(vec![
+                masking_engine::MappingEntry {
+                    original: "金金".to_string(),
+                    masked: "甲方".to_string(),
+                    rule_id: "chinese_name".to_string(),
+                },
+                masking_engine::MappingEntry {
+                    original: "13800138000".to_string(),
+                    masked: "联系电话".to_string(),
+                    rule_id: "phone".to_string(),
+                },
+            ]),
+            masked_file_stem: Some("manual_replace_regression_result".to_string()),
+            rule_ids: Some(vec!["chinese_name".to_string(), "phone".to_string()]),
+            custom_rules: None,
+            page_range: None,
+            masked_entity_count: Some(2),
+            masked_markdown: Some("# 手工替换回归测试\n联系人：甲方\n手机：联系电话\n".to_string()),
+        })
+        .await
+        .unwrap();
+
+        let saved_content = fs::read_to_string(&result.output_path).unwrap();
+        assert_eq!(saved_content, "# 手工替换回归测试\n联系人：甲方\n手机：联系电话\n");
+
+        let mapping_path = result.mapping_path.expect("mapping path should exist");
+        let mappings = crypto::load_encrypted_mapping(&mapping_path, "").unwrap();
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(mappings[0].masked, "甲方");
+        assert_eq!(mappings[1].masked, "联系电话");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
 
 fn build_masked_file_stem(
@@ -351,18 +420,18 @@ fn build_masked_file_stem(
         .and_then(|s| s.to_str())
         .unwrap_or("文件");
 
-    let masked = masking_engine::mask_value_with_ner(
-        original_file_name,
-        active_rules,
-        ner_detector,
-        mapping,
-        counter,
-    );
+    let masked_result =
+        mask_filename_stem_through_shared_core(original_file_name, active_rules, ner_detector);
+
+    for entry in masked_result.mappings {
+        mapping.entry(entry.original.clone()).or_insert(entry);
+    }
+    *counter += masked_result.masked_entity_count;
 
     let with_suffix = if let Some((start, end)) = page_range {
-        format!("{}_脱敏_p{}-{}", masked, start, end)
+        format!("{}_脱敏_p{}-{}", masked_result.masked, start, end)
     } else {
-        format!("{}_脱敏", masked)
+        format!("{}_脱敏", masked_result.masked)
     };
 
     sanitize_output_file_stem(&with_suffix)
@@ -871,6 +940,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -915,6 +986,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows: preview_rows,
                 masked_rows,
                 headers,
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -959,6 +1032,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -1011,6 +1086,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -1054,6 +1131,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -1097,6 +1176,8 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
                 original_rows,
                 masked_rows,
                 headers: vec!["内容".to_string()],
+                original_file_stem: original_file_stem.clone(),
+                original_file_name: original_file_name.clone(),
                 masked_file_stem: masked_file_stem.clone(),
                 masked_file_name: masked_file_name.clone(),
                 detected_entities,
@@ -1141,6 +1222,65 @@ mod shared_core_adapter_tests {
         assert_eq!(adapter.markdown, direct.markdown);
         assert_eq!(adapter.mappings, direct.mappings);
         assert_eq!(adapter.masked_entity_count, direct.masked_entity_count);
+    }
+
+    #[test]
+    fn text_adapter_masks_chinese_name_via_ner_when_rule_enabled() {
+        let rules: Vec<_> = masking_engine::get_builtin_rules()
+            .iter()
+            .filter(|rule| ["chinese_name", "phone", "email"].contains(&rule.id.as_str()))
+            .cloned()
+            .map(|mut rule| {
+                rule.enabled = true;
+                rule
+            })
+            .collect();
+        let content = "客户姓名：张三\n联系电话：13900000000\n电子邮箱：zhangsan@example.com\n";
+
+        let adapter = mask_text_through_shared_core(
+            content,
+            &rules,
+            &ner::NERDetector::new(),
+            vec![],
+            0,
+        );
+
+        assert!(adapter.markdown.contains("客户姓名：姓名1"));
+        assert!(adapter.markdown.contains("联系电话：***PHONE***2"));
+        assert!(adapter.markdown.contains("电子邮箱：***EMAIL***3"));
+        assert!(!adapter.markdown.contains("客户姓名：张三"));
+        assert!(!adapter.markdown.contains("13900000000"));
+        assert!(!adapter.markdown.contains("zhangsan@example.com"));
+    }
+
+    #[test]
+    fn build_masked_file_stem_masks_sensitive_filename_for_desktop_flow() {
+        let rules: Vec<_> = masking_engine::get_builtin_rules()
+            .iter()
+            .filter(|rule| ["chinese_name", "phone"].contains(&rule.id.as_str()))
+            .cloned()
+            .map(|mut rule| {
+                rule.enabled = true;
+                rule
+            })
+            .collect();
+        let mut mapping = std::collections::HashMap::new();
+        let mut counter = 0usize;
+
+        let stem = build_masked_file_stem(
+            "/tmp/张三-13900000000-测试文档.md",
+            &rules,
+            &ner::NERDetector::new(),
+            &mut mapping,
+            &mut counter,
+            None,
+        );
+
+        assert!(stem.ends_with("_脱敏"));
+        assert!(!stem.contains("张三"));
+        assert!(!stem.contains("13900000000"));
+        assert!(stem.contains("张*"));
+        assert!(stem.contains("139****0000"));
     }
 }
 
@@ -1217,8 +1357,8 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         // 对文件名应用脱敏规则
         let mut temp_mapping = std::collections::HashMap::new();
         let mut temp_counter = 0usize;
-        let masked = masking_engine::mask_value_with_ner(
-            original_file_name,
+        build_masked_file_stem(
+            &options.file_path,
             &active_rules,
             &ner_detector,
             &mut temp_mapping,

@@ -110,10 +110,21 @@ easyocr.Reader(['ch_sim','en'], gpu=False, model_storage_directory='/path/to/ocr
 
 这条检查只接受已经存在且可离线加载的模型，不会联网下载。部署管理员可以在受控的安装流程中准备模型文件；本任务和 Runtime 本身不安装、下载、复制或移动 OCR 组件。
 
-**方式 B：手动下载官方发布包放置**：从 EasyOCR 官方发布地址下载后解压到同一目录：
+**方式 B：管理员在受控安装流程中手动准备模型文件放置**：
 
-- `craft_mlt_25k.pth`：<https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip>
-- `zh_sim_g2.pth`：<https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/zh_sim_g2.zip>
+推荐使用管理员可控的内网安装流程准备文件，而不是在生产部署阶段直接依赖外网下载链接。两种任选其一：
+
+1. 在可联网的受控环境中，按本项目既定的 OCR venv 准备方式，一次性安装并导出模型：
+   - 创建 OCR venv，并按 `src-tauri/scripts/requirements-ocr.txt` 安装依赖。
+   - 在受控环境执行一次 `easyocr.Reader(['ch_sim','en'], gpu=False, model_storage_directory='/path/to/ocr-models', download_enabled=True)`，让其在可控环境拉取并落盘。
+   - 将生成的两个模型文件（`craft_mlt_25k.pth` 与 `zh_sim_g2.pth`）与第 7 节的 SHA-256 一起归档，作为企业内部的模型交付物，再分发到生产 `VAULT_OCR_MODEL_DIR`。
+
+2. 如企业已有固定的 OCR 制品库，可在制品库中对上述两个模型文件按名称与 SHA-256 做版本化管理，生产部署时从制品库直接拉取落盘。
+
+无论采用哪一种方式，生产 Runtime 启动前必须确认：
+- `VAULT_OCR_MODEL_DIR` 下同时存在 `craft_mlt_25k.pth` 和 `zh_sim_g2.pth`；
+- 两者 SHA-256 与第 7 节完全一致；
+- 运行时使用 `download_enabled=False` 的离线加载检查命令（见方式 A）返回成功。
 
 两种方式都应放到同一个目录（即 `VAULT_OCR_MODEL_DIR` 指向的目录），并用 SHA-256 校验（见第 7 节）确认文件完整、未被篡改，作为两种获取路径的共同校验手段。
 
@@ -303,10 +314,10 @@ enterprise-data/
 
 ## 7. 模型来源与校验
 
-| 文件 | 用途 | 大小 | SHA-256（本机实测） | 官方来源 |
+| 文件 | 用途 | 大小 | SHA-256（本机实测） | 官方来源说明 |
 |---|---|---|---|---|
-| `craft_mlt_25k.pth` | 文字检测模型 | 83,152,330 字节（约 79 MB） | `4a5efbfb48b4081100544e75e1e2b57f8de3d84f213004b14b85fd4b3748db17` | <https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip> |
-| `zh_sim_g2.pth` | 简体中文识别模型 | 21,951,421 字节（约 21 MB） | `cb678fdef09d651e7763ca551ad790dc89f0b2e3d2a640484330e338fb574c7a` | <https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/zh_sim_g2.zip> |
+| `craft_mlt_25k.pth` | 文字检测模型 | 83,152,330 字节（约 79 MB） | `4a5efbfb48b4081100544e75e1e2b57f8de3d84f213004b14b85fd4b3748db17` | 由 EasyOCR 官方在其 GitHub Releases 中提供；生产交付时建议使用第 3.2 节的“受控安装 + 企业内部制品库”方式准备文件，不依赖单次外网下载。 |
+| `zh_sim_g2.pth` | 简体中文识别模型 | 21,951,421 字节（约 21 MB） | `cb678fdef09d651e7763ca551ad790dc89f0b2e3d2a640484330e338fb574c7a` | 由 EasyOCR 官方在其 GitHub Releases 中提供；生产交付时建议使用第 3.2 节的“受控安装 + 企业内部制品库”方式准备文件，不依赖单次外网下载。 |
 
 计算方式（本机实测命令）：
 
@@ -314,7 +325,7 @@ enterprise-data/
 shasum -a 256 /path/to/ocr-models/craft_mlt_25k.pth /path/to/ocr-models/zh_sim_g2.pth
 ```
 
-**许可证**：两个模型文件随 `easyocr` 包分发，`easyocr` 本体许可证为 **Apache License 2.0**（来源：`pip show easyocr` 的 `License` 字段，仓库 <https://github.com/jaidedai/easyocr>）。
+**许可证**：两个模型文件随 `easyocr` 包分发，`easyocr` 本体许可证为 **Apache License 2.0**（来源：`pip show easyocr` 的 `License` 字段，以及 EasyOCR 官方 GitHub 仓库公开资料）。
 
 无论采用第 3.2 节的方式 A 还是方式 B 获取模型，都应用上表的 SHA-256 校验文件完整性，这是两种获取路径的共同校验手段。
 
@@ -403,3 +414,250 @@ curl -s http://127.0.0.1:8787/api/v1/filebay/status
 - **单系统用户边界**：本版本按单一系统用户交付，FileBay 与沙箱/PIN 都是单 Runtime 共享的服务器状态（一台 Runtime、一个受信任工作区、一套 FileBay 配置、一个共享 PIN）。共享 PIN 只保护沙箱操作，共享 FileBay 配置也不是用户级授权；不提供“个人账号/管理员账号/普通用户/每用户仓库、Token、PIN、目录”，也不提供 RBAC 或多租户隔离。单用户不等于公网匿名开放——Linux 内网、Nginx CIDR 与 Runtime loopback 边界继续保留。
 - **真实 Linux / 真实 FileBay 尚未验收**：浏览器 FileBay Runtime 适配已通过 Review（基于 fake transport 与受控浏览器响应，未连接真实 FileBay），Linux systemd/Nginx 部署与 FileBay 远端闭环仍需在提供隔离 Linux 主机与专用测试凭据后另行独立验收；不得把本机 macOS 或 fake 测试结果当作真实远端已通过的证据。
 - **Linux 内网客户测试部署没有应用层鉴权**：唯一的访问控制是 Nginx 的客户 CIDR 白名单（见 [`deploy/linux/nginx-cheersai-vault.conf`](../../deploy/linux/nginx-cheersai-vault.conf)），任何能连通 Nginx 监听地址的主机都能调用全部四项客户 API（见 [API_REFERENCE.md](./API_REFERENCE.md)）。**不得将本部署对公网开放，不得将其描述为正式安全生产部署**。数据目录的访问控制完全依赖部署方自己的操作系统权限设置（用户账号隔离 + 文件权限）。
+
+## 10. 私有化部署前的资源与合规要求
+
+本节给出企业内网私有化部署的**规划建议值**，用于容量和环境准备；它们不是 Runtime
+代码层面的强制限制，也不等同于性能承诺。实际容量应结合文件类型、OCR 比例、
+并发量和保留周期做二次评估。
+
+### 10.1 服务器资源建议
+
+| 场景 | 建议 CPU / 内存 | 建议磁盘 | 说明 |
+|---|---|---|---|
+| 本地验证 / POC | `4 vCPU / 8 GB RAM` | `100 GB SSD` | 适合少量联调、少量样本文件、单人验证 |
+| 企业内网试运行 | `8 vCPU / 16 GB RAM` | `200 GB SSD` 起 | 适合日常批量提交、结果下载、少量 OCR |
+| OCR 较多或大文件较多 | `8-16 vCPU / 16-32 GB RAM` | `300 GB SSD` 起 | 建议把 OCR 负载和大批量测试单独评估 |
+
+规划建议：
+
+- `VAULT_RUNTIME_DATA_DIR` 至少预留**峰值日输入量的 3 倍空间**，因为会同时保留
+  原始输入、脱敏产物、映射文件与 SQLite 元数据。
+- 若需要长期保留历史批次，应按保留周期叠加容量，并为备份预留额外空间。
+- 扫描件 OCR、旧版 `.ppt` 转换都会额外消耗 CPU、内存与临时磁盘 IO。
+
+### 10.2 网络与访问要求
+
+| 项目 | 要求 |
+|---|---|
+| 网络边界 | 仅允许企业内网访问，禁止公网暴露 |
+| 入口 | Nginx 为唯一入口；Runtime 仍只监听 `127.0.0.1:8787` |
+| 带宽 | 企业内网建议 `>= 100 Mbps`，大量文件或 OCR 集中时建议 `>= 1 Gbps` |
+| DNS / 域名 | 建议使用企业内网域名或固定内网地址，便于白名单、监控和证书管理 |
+| 时间同步 | 所有节点需保持 NTP 同步，避免日志和批次时间线混乱 |
+
+### 10.3 安全与合规基线
+
+- 使用专用 Linux 服务账户运行 Runtime，不与 Nginx 或普通用户混用。
+- `runtime.env` 必须设置为 `0600`，数据目录权限建议 `0700`。
+- Nginx Web root 与 `VAULT_RUNTIME_DATA_DIR` 必须物理隔离。
+- 若企业有 TLS 要求，应在 Nginx 或企业网关层终止 HTTPS。
+- 测试、压测与上线前验收均应使用虚构数据或已脱敏样本，不直接使用真实生产敏感数据。
+- 若企业要求 OAuth2.0、API Key、审计签名或细粒度权限控制，应在 Runtime 外侧
+  增加网关或中间层；当前版本不原生支持这些能力。
+
+## 11. 部署路径选择
+
+当前仓库支持两类部署路径：
+
+| 路径 | 适用场景 | 当前状态 |
+|---|---|---|
+| `docker-compose.yml` | 本地联调、试运行、容器化验证 | 仓库已提供，可用于快速拉起 Runtime 与 Web |
+| `deploy/linux/` + systemd + Nginx | 企业内网正式交付主线 | 当前正式文档主线，适合作为私有化交付基线 |
+
+使用建议：
+
+- **本地容器化验证**：优先用于开发、演示、接口联调和压力前预演。
+- **企业生产或准生产环境**：以 `deploy/linux/` 模板为准，使用 systemd 管理
+  Runtime，使用 Nginx 托管前端并反代 `/api/`。
+
+## 12. 容器化部署操作手册
+
+### 12.1 当前容器化能力边界
+
+- 仓库根目录提供 `docker-compose.yml`，使用源码构建镜像。
+- 当前仓库**没有提供官方公共镜像仓库地址**；默认做法是本地或企业 CI 从源码构建。
+- 若企业需要私有镜像仓库，应自行基于仓库内 Dockerfile 构建并推送到企业私库。
+
+### 12.2 本地或私有环境容器化拉起步骤
+
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+当前 `docker-compose.yml` 提供：
+
+- `vault-runtime-api`：运行 Runtime，挂载独立数据卷，内置 `healthcheck`；
+- `vault-pro-web`：运行浏览器端 Web 容器，并依赖 Runtime 健康状态。
+
+容器化验证建议步骤：
+
+1. 准备 Docker / Docker Compose 运行环境。
+2. 在仓库根目录执行 `docker compose build`。
+3. 执行 `docker compose up -d`。
+4. 通过 `docker compose ps` 确认 Runtime 处于 `healthy`。
+5. 用 `curl http://127.0.0.1:8787/api/v1/health` 验证 Runtime。
+6. 进入浏览器验证页面打开、文件提交、轮询和下载。
+
+### 12.3 容器化配置要点
+
+- Runtime 数据卷应映射到持久化磁盘，不要使用临时容器层保存正式数据。
+- 若需 OCR、LibreOffice、FileBay，应在容器镜像或运行环境中额外准备依赖和环境变量。
+- 容器网络暴露策略仍应遵循“仅内网访问、禁止公网暴露”的原则。
+- 若企业使用 K8s、Harbor 或其他私有平台，建议先在 `docker-compose.yml`
+  的环境变量、卷和健康检查语义基础上做企业内部二次封装。
+
+## 13. 生产环境初始化配置
+
+### 13.1 初始化顺序
+
+1. 创建 Linux 服务账户与数据目录。
+2. 准备 `runtime.env`，填写 Runtime、OCR、LibreOffice、FileBay 变量。
+3. 构建 Runtime release 二进制与根前端 `dist/`。
+4. 安装 systemd 单元并启动 Runtime。
+5. 配置 Nginx，托管 `dist/` 并反代 `/api/`。
+6. 执行 `smoke-test.sh` 与浏览器人工冒烟验证。
+7. 通过后再放开目标客户 CIDR。
+
+### 13.2 初始化检查项
+
+| 检查项 | 验收要求 |
+|---|---|
+| Runtime 健康检查 | `GET /api/v1/health` 返回 `200` |
+| 数据目录权限 | Runtime 服务账户可读写，其他账户不可读 |
+| OCR 状态 | 如纳入交付，`/api/v1/ocr/status` 为 `ready` |
+| LibreOffice | `soffice --version` 可正常执行 |
+| FileBay | 如纳入交付，`/api/v1/filebay/status` 为 `configured` |
+| 前端入口 | 浏览器能经 Nginx 打开页面并正常调用 `/api/` |
+
+### 13.3 生产配置建议
+
+- 前端生产构建保持同源 `/api`，不要把 Runtime 地址写死在前端代码里。
+- Nginx 模板中仅放行已审批的客户网段，禁止 `allow all`。
+- 若企业要求统一日志采集，应接入 systemd、Nginx 与宿主机日志方案。
+- 若企业要求备份，应把 `VAULT_RUNTIME_DATA_DIR` 纳入定时备份与恢复演练。
+
+## 14. 与企业内部知识库系统的集成对接
+
+### 14.1 推荐集成架构
+
+```text
+企业知识库 / 文档系统
+        ↓ 导出原始文件
+企业集成适配层
+  ├─ 调用 CheersAI Vault Runtime 4 项正式 API
+  ├─ 维护业务主键、batch_id、artifact_id 关联表
+  └─ 负责用户权限、审计、重试与回滚
+        ↓
+脱敏 Markdown 结果
+        ↓
+企业自有检索 / 知识库 / 文件平台
+```
+
+### 14.2 数据格式适配步骤
+
+1. 从企业知识库导出原始文件，保留业务主键和元数据。
+2. 调用 `POST /api/v1/batches` 提交文件脱敏。
+3. 轮询 `GET /api/v1/batches/{batch_id}` 直至终态。
+4. 对成功文件调用 `GET /api/v1/artifacts/{artifact_id}` 下载 Markdown。
+5. 由企业适配层把 Markdown 写回内部知识库、搜索引擎或文件平台。
+
+建议保留的企业侧字段：
+
+| 企业字段 | 用途 |
+|---|---|
+| `external_doc_id` | 外部知识库文档主键 |
+| `batch_id` | Runtime 批次主键 |
+| `artifact_id` | 脱敏结果主键 |
+| `source_system` | 来源系统标识 |
+| `owner_user_id` / `owner_dept` | 企业侧权限与审计 |
+| `sync_status` | 同步状态、失败重试状态 |
+
+### 14.3 流程打通的业务逻辑建议
+
+- 若要求人工审核后再正式外发，优先使用浏览器端“先预览、再确认”的业务流程。
+- 若要求系统到系统自动处理，则使用 4 项正式 API 直接提交和轮询，不经过浏览器。
+- 对 `CompletedWithErrors` 批次按文件拆分处理，不要把整批视作成功。
+- 对下载后的 Markdown 是否入库、是否继续分发、是否同步到外部平台，应由企业
+  侧工作流决定；Runtime 不提供审批流。
+
+### 14.4 权限体系双向同步方案
+
+当前版本**没有权限同步接口**。推荐做法如下：
+
+1. 由企业知识库或网关保存“用户/角色/部门 -> external_doc_id”的原始权限关系。
+2. 在脱敏完成后，将 `external_doc_id -> batch_id -> artifact_id` 关联写入企业
+   自有映射表。
+3. 企业检索系统对外提供搜索与访问控制，查询命中后再决定是否允许用户查看对应
+   脱敏结果。
+4. Runtime 只作为脱敏处理引擎，不作为权限中心。
+
+## 15. 上线前安全测试与压力测试标准
+
+### 15.1 安全测试检查项
+
+- **网络边界**：确认 Runtime 没有直接暴露到非 loopback 网卡。
+- **白名单校验**：从白名单外地址访问 Nginx，应被拒绝。
+- **错误信息消毒**：提交损坏文件、非法请求，确认错误响应不包含原文、路径、SQL、
+  堆栈或 Token。
+- **文件隔离**：确认 Nginx 静态目录无法访问 `VAULT_RUNTIME_DATA_DIR`。
+- **凭据管理**：确认 `runtime.env` 不在版本库中，权限为 `0600`，日志中不出现
+  FileBay Token。
+
+### 15.2 压力测试建议方法
+
+压测时使用虚构样本，覆盖以下维度：
+
+1. 批量提交：按企业预计峰值并发，连续提交多批次文件。
+2. 轮询读取：模拟对接系统持续调用 `GET /api/v1/batches/{batch_id}`。
+3. 结果下载：对成功 `artifact_id` 进行批量下载。
+4. OCR 场景：加入少量扫描件 PDF，观察 CPU、内存与处理耗时。
+5. 重启恢复：在有运行中或已完成批次的情况下重启 Runtime，确认状态恢复。
+
+建议的通过标准：
+
+- Runtime 无崩溃、无数据损坏、无原文泄露。
+- 错误码仍保持受控、可分类。
+- 重启后批次、产物、日志状态可恢复。
+- 宿主机 CPU、内存、磁盘与 IO 使用率处于企业可接受范围。
+
+## 16. 上线后的运维维护指南
+
+### 16.1 日常巡检项
+
+- `GET /api/v1/health` 是否正常。
+- Nginx 访问日志和错误日志是否异常增长。
+- Runtime 进程是否频繁重启。
+- `VAULT_RUNTIME_DATA_DIR` 所在磁盘空间是否充足。
+- OCR、LibreOffice、FileBay（如启用）是否保持可用。
+- 白名单、证书、域名、环境变量文件是否有未授权变更。
+
+### 16.2 故障排查流程
+
+1. 先看 `health` 是否正常。
+2. 再看 Nginx 是否能反代 `/api/`，以及白名单是否误拦截。
+3. 再看 Runtime 日志、systemd 状态、数据目录权限。
+4. 若只在扫描件或旧版 `.ppt` 出错，再分别检查 OCR 和 LibreOffice。
+5. 若只在 FileBay 上传失败，再检查 `/api/v1/filebay/status` 和 `FILEBAY_*`
+   错误码。
+
+### 16.3 版本升级步骤
+
+1. 选择维护窗口，冻结新的业务接入。
+2. 备份当前 `VAULT_RUNTIME_DATA_DIR`、`runtime.env`、Nginx 配置和前端 `dist/`。
+3. 在新版本代码上重新构建 Runtime 与前端。
+4. 先在测试环境完成 smoke test、浏览器冒烟和关键集成验证。
+5. 生产环境依次替换二进制、前端 `dist/`、必要配置，重启 Runtime 与 Nginx。
+6. 执行 `GET /api/v1/health`、提交流程、结果下载等最小闭环验证。
+
+### 16.4 回滚步骤
+
+若升级失败，应按以下顺序回滚：
+
+1. 停止新版本 Runtime；
+2. 恢复上一版本 Runtime 二进制与前端 `dist/`；
+3. 如有需要，恢复升级前备份的 `runtime.env` 与 Nginx 配置；
+4. 重新启动 Runtime 与 Nginx；
+5. 用既有 `batch_id` / `artifact_id` 做一次读取验证，确认数据目录未受损。

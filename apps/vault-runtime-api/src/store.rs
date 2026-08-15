@@ -82,6 +82,7 @@ pub struct PendingJob {
 #[derive(Debug)]
 pub struct ArtifactRecord {
     pub object_key: String,
+    pub display_name: String,
 }
 
 #[derive(Debug)]
@@ -516,13 +517,13 @@ impl Store {
         Ok(artifact_id.to_string())
     }
 
-    /// Read markdown + mapping for a completed artifact (restore).
+    /// Read markdown + mapping + display name for a completed artifact (restore).
     pub async fn artifact_with_mapping(
         &self,
         artifact_id: &str,
-    ) -> Result<(Vec<u8>, Vec<u8>), StoreError> {
+    ) -> Result<(String, Vec<u8>, Vec<u8>), StoreError> {
         let row = sqlx::query(
-            "SELECT a.object_key, f.mapping_object_key FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?",
+            "SELECT a.object_key, f.mapping_object_key, f.display_name FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?",
         )
         .bind(artifact_id)
         .bind(FileStatus::Completed.as_str())
@@ -531,11 +532,12 @@ impl Store {
         .ok_or(StoreError::NotFound)?;
         let object_key: String = row.get("object_key");
         let mapping_key: Option<String> = row.get("mapping_object_key");
+        let display_name: String = row.get("display_name");
         let markdown = fs::read(self.controlled_path(&object_key)?).await?;
         match mapping_key {
             Some(key) => {
                 let mapping = fs::read(self.controlled_path(&key)?).await?;
-                Ok((markdown, mapping))
+                Ok((display_name, markdown, mapping))
             }
             None => Err(StoreError::NotFound),
         }
@@ -679,7 +681,7 @@ impl Store {
         &self,
         artifact_id: &str,
     ) -> Result<(ArtifactRecord, Vec<u8>), StoreError> {
-        let row = sqlx::query("SELECT a.object_key FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?")
+        let row = sqlx::query("SELECT a.object_key, f.display_name FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?")
             .bind(artifact_id)
             .bind(FileStatus::Completed.as_str())
             .fetch_optional(&self.pool)
@@ -687,6 +689,7 @@ impl Store {
             .ok_or(StoreError::NotFound)?;
         let record = ArtifactRecord {
             object_key: row.get("object_key"),
+            display_name: row.get("display_name"),
         };
         let bytes = fs::read(self.controlled_path(&record.object_key)?).await?;
         Ok((record, bytes))

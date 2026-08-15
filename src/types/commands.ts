@@ -48,6 +48,8 @@ export interface PreviewResult {
   original_rows: string[][];
   masked_rows: string[][];
   headers: string[];
+  original_file_stem: string;
+  original_file_name: string;
   masked_file_stem: string;
   masked_file_name: string;
   detected_entities?: RowEntities[];
@@ -160,6 +162,13 @@ export interface PlatformContext {
   pinStorageMode: "windows_dpapi" | "macos_keychain" | "fallback_file" | string;
   ocrStrategy: "embedded_python" | "system_python_venv" | "system_python" | string;
   ollamaStrategy: "binary_check_plus_background_serve" | "binary_check_plus_app_launch" | "binary_check_plus_cli_serve" | string;
+}
+
+export interface UpdateBackupSummary {
+  backupPath: string;
+  sourcePath: string;
+  copiedFiles: number;
+  createdAt: string;
 }
 // FileBay Config types
 export interface FileBayConfig {
