@@ -1,0 +1,62 @@
+# G5-RELEASE Harness 驱动定义（灰度 & SLA）
+harness_id: G5-RELEASE
+harness_version: v2.0
+related_he_principles: [HE-1, HE-2, HE-3, HE-4, HE-5, HE-6, HE-7]
+
+scope:
+  phase: release-and-operations
+  actor: RO (发布运维)
+  input_artifact: "sdlc/artifacts/release-v<X.Y.Z>-<TICKET>.json"
+  upstream_bound: "G4-TEST 必须先 PASS"
+  # HE-1：灰度必须分层 1% → 10% → 50% → 100%
+  canary_stages_mandatory: [0.01, 0.10, 0.50, 1.00]
+  # HE-2：一键回滚演练必须在预演环境跑 ≥1 次才允许灰度
+  rollback_drill_mandatory: true
+
+deterministic:
+  command_template: "python3 {{sdlc_root}}/bin/gate-release.py --release-log {{release_log}} --ticket {{ticket}} --actor {{actor_email}}"
+  required_env: [SDLC_SESSION_ID, G5_CANARY_MIN_OBSERVE_MINUTES = 60]
+  demo_mode_allowed: true
+  allow_impure_env: true  # 对接 Prometheus/Grafana/K8s API 允许外部依赖；对缺失依赖会标注 evidence
+
+observability:
+  trace_9_fields_required: true
+  mandatory_metrics:
+    - canary_stages_count_and_ratios  # 必须 4 段 & 比值匹配
+    - red_dashboard_configured        # true/false
+    - use_dashboard_configured        # true/false
+    - p0_response_minutes             # ≤ 15
+    - p1_response_minutes             # ≤ 60
+    - rollback_drill_passed           # true
+    - sla_actual_over_target          # ≥ 1
+  alerting_webhook_env: "G5_ALERT_WEBHOOK_URL"   # 若 set，则 P0 失败会自动 POST webhook
+
+zerotrust_gate:
+  exit_code_map:
+    0: PASS
+    1: MISSING_OR_EMPTY_RELEASE_LOG
+    7: ANY_RELEASE_THRESHOLD_BREACH
+  # HE-4：RO 发布失败立即终止 → 触发告警 webhook → 自动 postmortem 模板生成
+  immediate_terminate_on_nonzero: true
+  postmortem_template: "sdlc/templates/RELEASE-TEMPLATE.md §六"
+
+hac:
+  file_globs_included_in_manifest:
+    - "sdlc/harnesses/G5-RELEASE.harness.yaml"
+    - "sdlc/gates/G5-RELEASE.spec.yaml"
+    - "sdlc/bin/gate-release.py"
+    - "sdlc/templates/RELEASE-TEMPLATE.md"
+  change_require_approvals: [RO, QA]   # 阈值放宽必须 RO+QA 双签，禁止 RO 单签放水
+
+# HE-6：任何一次灰度失败必须反哺到风险预案
+regression_registry:
+  auto_ingest_fail_evidence_to: "sdlc/audit/{date}/regression-harness-registry.jsonl"
+  tuning_policy:
+    - trigger: 任何 1 次灰度阶段 error_rate ≥ 0.1% 中断
+      action: 自动把此失败场景写入 DESIGN-TEMPLATE §六 风险预案模板
+
+# HE-7：Release Harness 覆盖率最严，1 sprint 内必须至少有 1 次完整灰度流程演练（哪怕无版本）
+coverage:
+  min_triggers_per_sprint: 1
+  weight_in_overall_coverage: 0.15
+  sla_must_meet_target_for_coverage_pass: true

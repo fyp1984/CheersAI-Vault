@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# post-commit.sample — Git commit 后钩子（接入 Harness Engineering HE-3 审计链）
+#
+# 启用方式（二选一，SOX 合规建议方式一全局统一）：
+#   方式一（全局）：git config --global core.hooksPath ~/.config/git/hooks
+#                    将本脚本重命名为 post-commit 放到该目录，并 chmod +x
+#   方式二（单仓）：软链到 <repo>/.git/hooks/post-commit
+#                    ln -sf /path/to/sdlc/templates/post-commit.sample  <repo>/.git/hooks/post-commit
+#
+# 审计链内容（写 BIZ-COMMIT 事件，与 BIZ-BRANCH / BIZ-PR 串联形成三元组）：
+#   ticket  = 从当前分支名推导（feature/IMP-001-xxx → IMP-001），找不到则填 NO-TICKET
+#   actor   = git user.email（未配置时跳过审计，不阻断提交）
+#   artifact= <commit-sha>
+#   evidence= files changed / insertion / deletion（git show --stat 摘要）
+#
+# 设计注意：post-commit 钩子无论成功与否都 **不能** 影响 commit 本身（用户已经 commit 完了）。
+#           所以所有错误都吞掉（set +e），仅打印警告。
+set +euo pipefail
+
+# 1. 定位 sdlc 根：优先用环境变量 SDLC_ROOT；否则找当前仓库下的 ./sdlc；否则找 hook 自身的相对路径 ../../
+if [[ -n "${SDLC_ROOT:-}" && -x "$SDLC_ROOT/bin/audit-writer.py" ]]; then
+  :
+elif [[ -x "$(pwd)/sdlc/bin/audit-writer.py" ]]; then
+  SDLC_ROOT="$(pwd)/sdlc"
+else
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  if [[ -x "$SCRIPT_DIR/../../sdlc/bin/audit-writer.py" ]]; then
+    SDLC_ROOT="$(cd "$SCRIPT_DIR/../../sdlc" && pwd)"
+  else
+    # 全局 hook 时：按仓库根找 /path/to/workspace/sdlc （hook 所在仓库外一级的 /sdlc）
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$REPO_ROOT" && -x "$REPO_ROOT/../sdlc/bin/audit-writer.py" ]]; then
+      SDLC_ROOT="$(cd "$REPO_ROOT/../sdlc" && pwd)"
+    fi
+  fi
+fi
+if [[ -z "${SDLC_ROOT:-}" || ! -x "$SDLC_ROOT/bin/audit-writer.py" ]]; then
+  # 未接入 sdlc 的仓库静默退出（不骚扰用户）
+  exit 0
+fi
+
+# 2. 基本信息
+COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+[[ -z "$COMMIT_SHA" ]] && exit 0
+ACTOR_EMAIL="$(git config user.email 2>/dev/null || true)"
+[[ -z "$ACTOR_EMAIL" ]] && exit 0
+
+# 3. 从分支名提取 TICKET
+HEAD="$(git symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)"
+TICKET="$(printf '%s' "$HEAD" | grep -oE '[A-Z]{1,8}-[0-9]{1,6}' | head -n 1 || true)"
+[[ -z "$TICKET" ]] && TICKET="NO-TICKET"
+
+# 4. role 推断：从 git user.name 前缀匹配；未命中 → CD（提代码的人默认 CD）
+ROLE="CD"
+NAME_PREFIX="$(printf '%s' "${ACTOR_EMAIL%%@*}" | tr '[:upper:]' '[:lower:]')"
+case "$NAME_PREFIX" in
+  sdlc-ra|*requirement*|*product*|*pm*)      ROLE="RA" ;;
+  sdlc-td|*architecture*|*design*|*arch*)   ROLE="TD" ;;
+  sdlc-qa|*tester*|*qae*|*quality*)         ROLE="QA" ;;
+  sdlc-ro|*ops*|*devops*|*sre*|*release*)  ROLE="RO" ;;
+  sdlc-cd|*dev*|*engineer*)                 ROLE="CD" ;;
+esac
+
+# 5. evidence：files changed / add / del
+STAT="$(git show --numstat --format='' HEAD 2>/dev/null | awk 'BEGIN{a=0;d=0;f=0} NF>=3 && $1~/^[0-9-]+$/ {gsub(/-/,"0",$1);gsub(/-/,"0",$2);a+=$1;d+=$2;f+=1} END{printf "{\"files\":%d,\"additions\":%d,\"deletions\":%d}",f,a,d}')"
+[[ -z "$STAT" ]] && STAT='{"files":0,"additions":0,"deletions":0}'
+
+# 6. commit 摘要
+SUBJECT="$(git log -1 --pretty=%s | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().rstrip("\n"),ensure_ascii=False))' || echo '""')"
+
+# 7. 写入审计（HE-3 链式哈希，绝对不能失败 → 全部吞异常）
+(
+  EVIDENCE=$(python3 - <<PY 2>/dev/null || true
+import json
+try:
+    s = json.loads('$STAT')
+except Exception:
+    s = {}
+print(json.dumps({
+  "commit_sha": "$COMMIT_SHA",
+  "branch": "$HEAD",
+  "subject": json.loads('$SUBJECT'),
+  "stats": s,
+  "repo": "$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo unknown)")",
+}, ensure_ascii=False))
+PY
+  )
+  if [[ -n "${EVIDENCE:-}" ]]; then
+    python3 "$SDLC_ROOT/bin/audit-writer.py" \
+      --ticket "$TICKET" --gate "BIZ-COMMIT" \
+      --actor_email "$ACTOR_EMAIL" --role "$ROLE" \
+      --artifact "$COMMIT_SHA" --exit_code 0 \
+      --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+  fi
+) &
+
+exit 0

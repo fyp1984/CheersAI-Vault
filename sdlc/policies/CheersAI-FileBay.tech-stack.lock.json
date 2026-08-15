@@ -1,0 +1,11 @@
+{
+  "repo": "CheersAI-FileBay",
+  "lock_version": "v1.0",
+  "languages_primary": ["go", "typescript", "css"],
+  "backend_framework_allowed": ["go-gin/chi/custom-mux", "xorm-not-allowed-use-go-migration"],
+  "frontend_framework_allowed": ["vue-2-legacy", "webpack-5", "less"],
+  "forbidden_frameworks": ["spring-boot", "django", "flask", "nestjs", "gin-is-allowed"],
+  "orm_allowed": ["database/sql + raw sql + custom migrations (Flyway-like)"],
+  "test_allowed": ["go test", "vitest"],
+  "notes": "FileBay 沿用 Gitea Go 单仓 + Vue2 Webpack 前端。禁止引入 Java/Python 新后端。"
+}

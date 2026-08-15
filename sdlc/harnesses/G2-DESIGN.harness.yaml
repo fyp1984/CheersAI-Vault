@@ -1,0 +1,58 @@
+# G2-DESIGN Harness 驱动定义
+harness_id: G2-DESIGN
+harness_version: v2.0
+related_he_principles: [HE-1, HE-2, HE-3, HE-4, HE-5, HE-6]
+
+scope:
+  phase: technical-design
+  actor: TD (功能设计)
+  input_artifact: "sdlc/docs/DESIGN-<TICKET>.md"
+  # HE-2 关键：必须绑定 BASE-PRD 锚点 sha，保证可复现
+  required_bound_artifacts:
+    - "sdlc/docs/PRD-<TICKET>.md (sha256 必须与 DESIGN 首行 BASE-PRD 完全相等)"
+  forbidden_upstream_bypass: [CD, QA, RO]
+
+deterministic:
+  command_template: "python3 {{sdlc_root}}/bin/gate-design.py --design {{design_path}} --repo {{repo_path}} --ticket {{ticket}} --actor {{actor_email}}"
+  required_env: [SDLC_SESSION_ID]
+  idempotent: true
+  allow_impure_env: false
+
+observability:
+  trace_9_fields_required: true
+  mandatory_metrics:
+    - name: base_prd_anchor_ok
+      allowed_values: [true, false]
+    - name: prd_sha256
+      format: "[0-9a-f]{64}"
+    - name: forbidden_violations
+      spec: "设计文档中包含 forbidden 语言/框架的正则命中数量"
+      allowed_range: [0, 99]
+    - name: checklist_unchecked
+      allowed_range: [0, 99]
+
+zerotrust_gate:
+  exit_code_map:
+    0: PASS
+    1: DESIGN_FILE_MISSING
+    4: ANCHOR_OR_TECH_STACK_OR_CHECKLIST_FAIL
+  immediate_terminate_on_nonzero: true
+
+hac:
+  file_globs_included_in_manifest:
+    - "sdlc/harnesses/G2-DESIGN.harness.yaml"
+    - "sdlc/gates/G2-DESIGN.spec.yaml"
+    - "sdlc/bin/gate-design.py"
+    - "sdlc/templates/DESIGN-TEMPLATE.md"
+    - "sdlc/policies/*.tech-stack.lock.json"
+  change_require_approvals: [TD, RO]
+
+regression_registry:
+  auto_ingest_fail_evidence_to: "sdlc/audit/{date}/regression-harness-registry.jsonl"
+  tuning_policy:
+    - trigger: 连续 2 次 FAIL "forbidden_violations>0"
+      action: 在 DESIGN-TEMPLATE 里新增「禁止框架扫描」显性章节 + gate-design.py 扫描强度升级 1 档
+
+coverage:
+  min_triggers_per_sprint: 1
+  weight_in_overall_coverage: 0.2
