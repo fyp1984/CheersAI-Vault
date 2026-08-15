@@ -1,0 +1,17 @@
+gate_id: G2-DESIGN
+name: DESIGN 质量门禁（功能设计 → 程序开发）
+thresholds:
+  base_prd_anchor:
+    must_have_base_prd_line: true   # 首行或前 10 行必须有 <!-- BASE-PRD: PRD-xxx.md@sha256 -->
+  tech_stack_consistency:
+    policy_file: sdlc/policies/<REPO>-tech-stack.lock.json
+    forbidden_new_languages:        # 禁止在某一仓库主语言外新增重型框架/语言
+      CheersAI-FileBay: [java, spring, django]
+      CheersAI-Vault:   [vue, angular, dotnet]
+      CheersAI-Nexus:   [nestjs, gin, actix-web]
+      CheersAI-Desktop: [spring, gin]
+  api_contract:
+    http_openapi3_required_if_routes_added: true
+sign_off_evidence:
+  - gate-design.py exit 0
+  - ADR 目录存在（对中大型改动）

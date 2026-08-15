@@ -1,0 +1,57 @@
+# G3-CODE Harness 驱动定义
+harness_id: G3-CODE
+harness_version: v2.0
+related_he_principles: [HE-1, HE-2, HE-3, HE-4, HE-5, HE-7]
+
+scope:
+  phase: coding-implementation
+  actor: CD (程序开发)
+  input_artifact: "<REPO>/feature/<ticket>-* 分支源码"
+  upstream_bound: "sdlc/docs/DESIGN-<TICKET>.md (G2 必须先 PASS)"
+  forbidden_upstream_bypass: [QA, RO]
+  # HE-5 复用子仓 Makefile：Harness 禁止另起一套 lint/test 工具链
+  toolchain_reuse_policy: STRICT_REUSE_SUBREPO_MAKEFILE_TARGETS
+
+deterministic:
+  command_template: "bash {{sdlc_root}}/bin/gate-code.sh --repo {{repo_path}} --ticket {{ticket}} --actor {{actor_email}}"
+  required_env: [SDLC_SESSION_ID]
+  # 语言识别顺序：go.mod → package.json → Cargo.toml → pom.xml (nexus) → pyproject.toml
+  language_detection_order: [go, ts_react, rust, java_maven, python]
+  allow_impure_env: true      # 允许调用本机 make/maven/pnpm/ruff；HE-2 不要求语言工具链在本脚本装
+  toolchain_missing_policy: SKIP_GRACEFULLY_AND_NOT_FAIL   # 缺 pnpm/cargo 不阻断，只标注在 evidence
+
+observability:
+  trace_9_fields_required: true
+  mandatory_metrics_per_language:
+    go:         [go_lint, go_fmt, go_tidy, go_test]
+    ts_react:   [ts_lint, ts_typecheck, ts_test]
+    rust:       [rust_clippy, rust_test]
+    java_maven: [java_checkstyle, java_test]
+    python:     [py_ruff, py_pytest]
+  optional_metrics:
+    - coverage_ratio_pct
+
+zerotrust_gate:
+  exit_code_map:
+    0: PASS
+    5: ANY_LANGUAGE_TARGET_FAILED   # lint/typecheck/test 任一 FAIL
+  immediate_terminate_on_nonzero: true
+
+hac:
+  file_globs_included_in_manifest:
+    - "sdlc/harnesses/G3-CODE.harness.yaml"
+    - "sdlc/gates/G3-CODE.spec.yaml"
+    - "sdlc/bin/gate-code.sh"
+    - "<REPO>/Makefile · <REPO>/{package.json, go.mod, Cargo.toml, pom.xml, pyproject.toml}"
+  change_require_approvals: [TD, RO]
+
+regression_registry:
+  auto_ingest_fail_evidence_to: "sdlc/audit/{date}/regression-harness-registry.jsonl"
+  tuning_policy:
+    - trigger: 连续 3 次同一种 lint FAIL
+      action: 在子仓 AGENTS 末尾追加该 lint 的解释 & 修复示例
+
+coverage:
+  # HE-7：代码 Harness 必须在 1 sprint 内 ≥ N×Ticket 触发
+  min_triggers_per_sprint: 3
+  weight_in_overall_coverage: 0.25

@@ -198,7 +198,7 @@ export default function SensitiveTermsDesktop() {
   // 排序和分页逻辑
   const sortedAndPagedTerms = useMemo(() => {
     // 1. 排序
-    let sorted = [...filteredTerms];
+    const sorted = [...filteredTerms];
     if (sortBy === 'time') {
       // 按时间排序（新的在前）
       sorted.sort((a, b) => {
