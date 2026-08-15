@@ -201,9 +201,8 @@ impl FormatCatalog {
     }
 
     pub fn enterprise_from_filename(filename: &str) -> Result<FormatDefinition, AppError> {
-        let definition = Self::from_filename(filename).ok_or_else(|| {
-            unsupported_format_error("The input format is not supported")
-        })?;
+        let definition = Self::from_filename(filename)
+            .ok_or_else(|| unsupported_format_error("The input format is not supported"))?;
         if !definition.enterprise_supported || !definition.is_currently_parsed() {
             return Err(unsupported_format_error(
                 "The input format is not supported by the enterprise runtime",

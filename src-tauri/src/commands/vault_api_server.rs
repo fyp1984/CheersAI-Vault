@@ -1,10 +1,9 @@
 /// Vault API Server - 提供 HTTP API 供 Desktop 调用
-/// 
+///
 /// 功能:
 /// 1. 接收 Desktop 传递的 FileBay 配置
 /// 2. 写入 Vault 本地数据库
 /// 3. 提供配置查询接口
-
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -104,10 +103,8 @@ impl VaultApiServer {
                 .or(health)
                 .with(cors)
                 .with(warp::log("vault_api"));
-            
-            warp::serve(routes)
-                .run(([127, 0, 0, 1], port))
-                .await;
+
+            warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 
             // 服务器停止后更新状态
             let mut running = is_running.lock().await;
@@ -225,8 +222,8 @@ async fn save_filebay_config_to_db(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     // 将配置序列化为 JSON
-    let config_json = serde_json::to_string(config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let config_json =
+        serde_json::to_string(config).map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     // 保存到 user_settings 表
     db.save_setting("filebay_config", &config_json)
@@ -237,7 +234,9 @@ async fn save_filebay_config_to_db(
 }
 
 /// 从数据库获取 FileBay 配置
-async fn get_filebay_config_from_db(app: &AppHandle) -> Result<Option<FileBayConfigPayload>, String> {
+async fn get_filebay_config_from_db(
+    app: &AppHandle,
+) -> Result<Option<FileBayConfigPayload>, String> {
     use crate::core::database::Database;
 
     let db = Database::new()
@@ -245,7 +244,8 @@ async fn get_filebay_config_from_db(app: &AppHandle) -> Result<Option<FileBayCon
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     // 从 user_settings 表读取
-    let config_json = db.get_setting("filebay_config")
+    let config_json = db
+        .get_setting("filebay_config")
         .await
         .map_err(|e| format!("Failed to read from database: {}", e))?;
 
@@ -281,9 +281,9 @@ async fn delete_filebay_config_from_db(app: &AppHandle) -> Result<(), String> {
 pub async fn start_vault_api_server(app: AppHandle, port: Option<u16>) -> Result<String, String> {
     let port = port.unwrap_or(7788);
     let server = VaultApiServer::new(app, port);
-    
+
     server.start().await?;
-    
+
     Ok(format!("Vault API Server started on port {}", port))
 }
 

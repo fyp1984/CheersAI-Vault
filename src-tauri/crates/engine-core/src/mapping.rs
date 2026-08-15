@@ -136,8 +136,7 @@ pub fn encrypt_v2(
     artifact_id: &str,
     created_at: &str,
 ) -> Result<Vec<u8>, MappingError> {
-    let payload = serde_json::to_vec(entries)
-        .map_err(|_| MappingError::InvalidMapping)?;
+    let payload = serde_json::to_vec(entries).map_err(|_| MappingError::InvalidMapping)?;
 
     let mut salt = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
@@ -145,8 +144,7 @@ pub fn encrypt_v2(
     OsRng.fill_bytes(&mut nonce_bytes);
 
     let key = derive_key(passphrase, &salt, V2_KDF_ITERATIONS)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| MappingError::AuthFailed)?;
 
     let header = V2Header {
         version: 2,
@@ -159,8 +157,7 @@ pub fn encrypt_v2(
         artifact_id: artifact_id.into(),
         created_at: created_at.into(),
     };
-    let header_json = serde_json::to_vec(&header)
-        .map_err(|_| MappingError::InvalidMapping)?;
+    let header_json = serde_json::to_vec(&header).map_err(|_| MappingError::InvalidMapping)?;
     let header_len = header_json.len() as u32;
 
     // Build AAD = magic + version byte + header_len (BE) + raw header_json
@@ -176,9 +173,8 @@ pub fn encrypt_v2(
         .map_err(|_| MappingError::AuthFailed)?;
 
     // Build binary: magic + version + header_len + header_json + ciphertext+tag
-    let mut output = Vec::with_capacity(
-        V2_MAGIC.len() + 1 + 4 + header_json.len() + ciphertext.len(),
-    );
+    let mut output =
+        Vec::with_capacity(V2_MAGIC.len() + 1 + 4 + header_json.len() + ciphertext.len());
     output.extend_from_slice(V2_MAGIC);
     output.push(2u8);
     output.extend_from_slice(&header_len.to_be_bytes());
@@ -191,7 +187,10 @@ pub fn encrypt_v2(
 /// Decrypt a v2 `.cmap` byte slice.
 ///
 /// Returns `(entries, header)` on success.
-fn decrypt_v2(data: &[u8], passphrase: &str) -> Result<(Vec<MappingEntry>, V2Header), MappingError> {
+fn decrypt_v2(
+    data: &[u8],
+    passphrase: &str,
+) -> Result<(Vec<MappingEntry>, V2Header), MappingError> {
     let mut offset = V2_MAGIC.len() + 1; // skip magic + version byte
     if data.len() < offset + 4 {
         return Err(MappingError::AuthFailed);
@@ -216,8 +215,8 @@ fn decrypt_v2(data: &[u8], passphrase: &str) -> Result<(Vec<MappingEntry>, V2Hea
     offset += header_len;
     let ciphertext = &data[offset..];
 
-    let header: V2Header = serde_json::from_slice(header_json)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let header: V2Header =
+        serde_json::from_slice(header_json).map_err(|_| MappingError::AuthFailed)?;
 
     // Rebuild AAD exactly as was used during encryption
     let mut aad = Vec::with_capacity(V2_MAGIC.len() + 1 + 4 + header_json.len());
@@ -236,16 +235,15 @@ fn decrypt_v2(data: &[u8], passphrase: &str) -> Result<(Vec<MappingEntry>, V2Hea
     }
 
     let key = derive_key(passphrase, &salt, header.kdf_iterations)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| MappingError::AuthFailed)?;
 
     let nonce = Nonce::from_slice(&nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| MappingError::AuthFailed)?;
 
-    let entries: Vec<MappingEntry> = serde_json::from_slice(&plaintext)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let entries: Vec<MappingEntry> =
+        serde_json::from_slice(&plaintext).map_err(|_| MappingError::AuthFailed)?;
 
     Ok((entries, header))
 }
@@ -268,16 +266,15 @@ fn decrypt_v1(data: &[u8], passphrase: &str) -> Result<Vec<MappingEntry>, Mappin
     let ciphertext = &data[offset + SALT_LEN + NONCE_LEN..];
 
     let key = derive_key(passphrase, salt, V1_KDF_ITERATIONS)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| MappingError::AuthFailed)?;
 
     let nonce = Nonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| MappingError::AuthFailed)?;
 
-    let entries: Vec<MappingEntry> = serde_json::from_slice(&plaintext)
-        .map_err(|_| MappingError::AuthFailed)?;
+    let entries: Vec<MappingEntry> =
+        serde_json::from_slice(&plaintext).map_err(|_| MappingError::AuthFailed)?;
 
     Ok(entries)
 }
@@ -289,7 +286,10 @@ fn decrypt_v1(data: &[u8], passphrase: &str) -> Result<Vec<MappingEntry>, Mappin
 /// Decode a `.cmap` byte slice, auto-detecting v2, legacy v1, or plaintext.
 ///
 /// Returns `(entries, cmap_version, is_legacy)`.
-pub fn decode_cmap(data: &[u8], passphrase: &str) -> Result<(Vec<MappingEntry>, CmapVersion), MappingError> {
+pub fn decode_cmap(
+    data: &[u8],
+    passphrase: &str,
+) -> Result<(Vec<MappingEntry>, CmapVersion), MappingError> {
     if data.starts_with(V2_MAGIC) {
         let (entries, _header) = decrypt_v2(data, passphrase)?;
         Ok((entries, CmapVersion::V2))
@@ -395,13 +395,8 @@ pub fn decode_server_cmap(data: &[u8]) -> Result<ServerCmap, MappingError> {
 
 fn derive_key(passphrase: &str, salt: &[u8], iterations: u32) -> Result<[u8; 32], MappingError> {
     let mut key = [0u8; 32];
-    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(
-        passphrase.as_bytes(),
-        salt,
-        iterations,
-        &mut key,
-    )
-    .map_err(|_| MappingError::AuthFailed)?;
+    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(passphrase.as_bytes(), salt, iterations, &mut key)
+        .map_err(|_| MappingError::AuthFailed)?;
     Ok(key)
 }
 
@@ -453,8 +448,7 @@ mod tests {
     fn v2_encrypt_decrypt_round_trip() {
         let entries = sample_entries();
         let pass = "test-passphrase-123";
-        let encoded = encrypt_v2(&entries, pass, "test-artifact", "2026-07-23T00:00:00Z")
-            .unwrap();
+        let encoded = encrypt_v2(&entries, pass, "test-artifact", "2026-07-23T00:00:00Z").unwrap();
         assert!(encoded.starts_with(V2_MAGIC));
 
         let (decoded, version) = decode_cmap(&encoded, pass).unwrap();
@@ -482,7 +476,11 @@ mod tests {
             encoded[pos] ^= 0x01;
         }
         let result = decode_cmap(&encoded, pass);
-        assert_eq!(result.unwrap_err().error_code(), "CMAP_AUTH_FAILED", "tampered header");
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            "CMAP_AUTH_FAILED",
+            "tampered header"
+        );
     }
 
     #[test]
@@ -495,7 +493,11 @@ mod tests {
             encoded[last] ^= 0xff;
         }
         let result = decode_cmap(&encoded, pass);
-        assert_eq!(result.unwrap_err().error_code(), "CMAP_AUTH_FAILED", "tampered ciphertext");
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            "CMAP_AUTH_FAILED",
+            "tampered ciphertext"
+        );
     }
 
     #[test]
@@ -566,8 +568,14 @@ mod tests {
         let md = "***PHONE***1\n***PHONE***10\n";
         let (restored, count) = restore_markdown(md, &entries);
         assert_eq!(count, 2);
-        assert!(restored.contains("13800000000-EXT"), "longer pattern preserved");
-        assert!(restored.contains("13800000000\n"), "shorter pattern restored");
+        assert!(
+            restored.contains("13800000000-EXT"),
+            "longer pattern preserved"
+        );
+        assert!(
+            restored.contains("13800000000\n"),
+            "shorter pattern restored"
+        );
     }
 
     #[test]
@@ -595,7 +603,9 @@ mod tests {
         let nonce = [0xcdu8; 12];
         let key = derive_key(pass, &salt, V1_KDF_ITERATIONS).unwrap();
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let ct = cipher.encrypt(Nonce::from_slice(&nonce), payload.as_slice()).unwrap();
+        let ct = cipher
+            .encrypt(Nonce::from_slice(&nonce), payload.as_slice())
+            .unwrap();
 
         let mut cmap = Vec::new();
         cmap.extend_from_slice(V1_MAGIC);
@@ -611,7 +621,10 @@ mod tests {
     #[test]
     fn mapping_error_codes_are_stable() {
         assert_eq!(MappingError::AuthFailed.error_code(), "CMAP_AUTH_FAILED");
-        assert_eq!(MappingError::VersionUnsupported.error_code(), "CMAP_VERSION_UNSUPPORTED");
+        assert_eq!(
+            MappingError::VersionUnsupported.error_code(),
+            "CMAP_VERSION_UNSUPPORTED"
+        );
         assert_eq!(MappingError::InvalidMapping.error_code(), "CMAP_MISMATCH");
     }
 

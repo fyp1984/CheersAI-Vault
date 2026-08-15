@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader};
 use tauri::{AppHandle, Emitter};
-use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -23,7 +23,7 @@ fn get_python_exe() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         // 尝试 python3
         if let Ok(output) = Command::new("where")
             .creation_flags(CREATE_NO_WINDOW)
@@ -38,7 +38,7 @@ fn get_python_exe() -> Result<String, String> {
                 }
             }
         }
-        
+
         // 尝试 python
         if let Ok(output) = Command::new("where")
             .creation_flags(CREATE_NO_WINDOW)
@@ -53,7 +53,7 @@ fn get_python_exe() -> Result<String, String> {
                 }
             }
         }
-        
+
         // 尝试 py launcher
         if let Ok(output) = Command::new("py")
             .creation_flags(CREATE_NO_WINDOW)
@@ -65,14 +65,11 @@ fn get_python_exe() -> Result<String, String> {
             }
         }
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         // 尝试 python3
-        if let Ok(output) = Command::new("which")
-            .arg("python3")
-            .output()
-        {
+        if let Ok(output) = Command::new("which").arg("python3").output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !path.is_empty() {
@@ -80,12 +77,9 @@ fn get_python_exe() -> Result<String, String> {
                 }
             }
         }
-        
+
         // 尝试 python
-        if let Ok(output) = Command::new("which")
-            .arg("python")
-            .output()
-        {
+        if let Ok(output) = Command::new("which").arg("python").output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !path.is_empty() {
@@ -94,13 +88,12 @@ fn get_python_exe() -> Result<String, String> {
             }
         }
     }
-    
+
     Err("Python 未安装。请先安装 Python 3.7 或更高版本。".to_string())
 }
 
 /// 获取或创建安装脚本
 fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
-
     // 获取脚本内容
     let script_content = match script_name {
         "install_ollama.py" => INSTALL_OLLAMA_SCRIPT,
@@ -109,12 +102,11 @@ fn get_or_create_script(script_name: &str) -> Result<PathBuf, String> {
         }
         _ => return Err(format!("Unknown script: {}", script_name)),
     };
-    
+
     // 创建临时目录
     let temp_dir = std::env::temp_dir().join("cheersai_scripts");
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
-    
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
+
     // 写入脚本文件
     let script_path = temp_dir.join(script_name);
     std::fs::write(&script_path, script_content)
@@ -134,9 +126,6 @@ async fn run_installer_script(
     let python_exe = get_python_exe()?;
     let script_path = get_or_create_script(script_name)?;
 
-
-
-
     // 构建命令
     #[cfg(target_os = "windows")]
     let mut cmd = {
@@ -145,70 +134,67 @@ async fn run_installer_script(
         cmd.creation_flags(CREATE_NO_WINDOW);
         cmd
     };
-    
+
     #[cfg(not(target_os = "windows"))]
     let mut cmd = Command::new(&python_exe);
-    
+
     cmd.arg(&script_path);
     for arg in args {
         cmd.arg(arg);
     }
-    
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
     // 启动进程
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start installer: {}", e))?;
-    
+
     // 读取输出
-    let stdout = child.stdout.take()
-        .ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take()
-        .ok_or("Failed to capture stderr")?;
-    
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
     let window_clone = window.clone();
     let event_name_clone = event_name.to_string();
-    
+
     // 在单独的线程中读取 stdout
     let stdout_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(line) = line {
-
                 // 解析进度信息
                 let progress = parse_installer_log(&line);
                 let _ = window_clone.emit(&event_name_clone, progress);
             }
         }
     });
-    
+
     // 在单独的线程中读取 stderr
     let stderr_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut stderr_lines = Vec::new();
         for line in reader.lines() {
             if let Ok(line) = line {
-
                 stderr_lines.push(line);
             }
         }
         stderr_lines
     });
-    
+
     // 等待进程完成
-    let status = child.wait()
+    let status = child
+        .wait()
         .map_err(|e| format!("Failed to wait for installer: {}", e))?;
-    
+
     // 等待输出线程完成
     stdout_handle.join().ok();
     let stderr_lines = stderr_handle.join().unwrap_or_default();
-    
+
     if !status.success() {
         let error_msg = stderr_lines.join("\n");
         return Err(format!("安装失败:\n{}", error_msg));
     }
-    
+
     Ok("安装完成".to_string())
 }
 
@@ -218,10 +204,10 @@ fn parse_installer_log(line: &str) -> InstallerProgress {
     // 1. [2024-01-01 12:00:00] [INFO] 下载进度: 50.0% (5.60 MB / 11.20 MB)
     // 2. pulling 183715c43589: 50% ▕████████▏ 500 MB
     // 3. downloading: 75.5%
-    
+
     let mut percentage = 0.0;
     let mut status = line.to_string();
-    
+
     // 提取百分比 - 支持多种格式
     if let Some(pos) = line.find('%') {
         // 向前查找数字开始位置
@@ -234,12 +220,12 @@ fn parse_installer_log(line: &str) -> InstallerProgress {
                 break;
             }
         }
-        
+
         if let Ok(pct) = line[start..pos].trim().parse::<f64>() {
             percentage = pct;
         }
     }
-    
+
     // 提取状态信息
     // 优先处理带时间戳的日志格式
     if let Some(pos) = line.find("] [") {
@@ -256,9 +242,9 @@ fn parse_installer_log(line: &str) -> InstallerProgress {
             .replace("\x1b[?2026l", "")
             .replace("\x1b[1G", "")
             .replace("[K", "");
-        
+
         status = cleaned.trim().to_string();
-        
+
         // 如果是 pulling 行，提取更友好的状态
         if status.starts_with("pulling") {
             // 提取文件名和进度
@@ -287,7 +273,7 @@ fn parse_installer_log(line: &str) -> InstallerProgress {
             percentage = 100.0;
         }
     }
-    
+
     InstallerProgress {
         percentage,
         status: status.clone(),
@@ -323,14 +309,14 @@ pub async fn install_ollama_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-
     run_installer_script(
         app,
         window,
         "install_ollama.py",
         vec![],
         "ollama-install-progress",
-    ).await
+    )
+    .await
 }
 
 /// 卸载 Ollama + AI 模型
@@ -339,28 +325,22 @@ pub async fn uninstall_ollama_with_script(
     app: AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
-
     run_installer_script(
         app,
         window,
         "install_ollama.py",
         vec!["uninstall"],
         "ollama-uninstall-progress",
-    ).await
+    )
+    .await
 }
 
 /// 检查 Python 是否可用
 #[tauri::command]
 pub async fn check_python_available() -> Result<bool, String> {
     match get_python_exe() {
-        Ok(python) => {
-
-            Ok(true)
-        },
-        Err(e) => {
-
-            Ok(false)
-        }
+        Ok(python) => Ok(true),
+        Err(e) => Ok(false),
     }
 }
 
@@ -369,7 +349,7 @@ pub async fn check_python_available() -> Result<bool, String> {
 pub async fn get_ollama_installer_path() -> Result<Option<String>, String> {
     let temp_dir = std::env::temp_dir();
     let installer_path = temp_dir.join("OllamaSetup.exe");
-    
+
     if installer_path.exists() {
         Ok(Some(installer_path.to_string_lossy().to_string()))
     } else {
@@ -381,18 +361,18 @@ pub async fn get_ollama_installer_path() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn open_installer_folder() -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    
+
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         std::process::Command::new("explorer")
             .creation_flags(CREATE_NO_WINDOW)
             .arg(temp_dir)
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         std::process::Command::new("open")
@@ -400,6 +380,6 @@ pub async fn open_installer_folder() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     Ok(())
 }

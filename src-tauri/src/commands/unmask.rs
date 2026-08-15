@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use engine_core::{decode_cmap, restore_markdown, MappingEntry};
 
@@ -37,8 +37,8 @@ pub async fn unmask_file(options: UnmaskFileOptions) -> Result<UnmaskResult, Str
     }
 
     // 1. Read cmap bytes and decode via engine-core (shared)
-    let cmap_bytes = fs::read(&options.mapping_file_path)
-        .map_err(|e| format!("读取对照文件失败: {}", e))?;
+    let cmap_bytes =
+        fs::read(&options.mapping_file_path).map_err(|e| format!("读取对照文件失败: {}", e))?;
     let (mappings, _version) = decode_cmap(&cmap_bytes, &options.passphrase)
         .map_err(|e| normalize_mapping_error(e.error_code()))?;
 
@@ -61,13 +61,13 @@ pub async fn unmask_file(options: UnmaskFileOptions) -> Result<UnmaskResult, Str
     })
 }
 
-fn restore_output_filename(
-    output_path: &str,
-    mappings: &[MappingEntry],
-) -> Result<String, String> {
+fn restore_output_filename(output_path: &str, mappings: &[MappingEntry]) -> Result<String, String> {
     let output_path_obj = Path::new(output_path);
     let parent_dir = output_path_obj.parent().unwrap_or_else(|| Path::new("."));
-    let filename = output_path_obj.file_name().unwrap_or_default().to_string_lossy();
+    let filename = output_path_obj
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
     let filename_str = filename.as_ref();
 
     let (name_part, ext_part) = if let Some(dot_pos) = filename_str.rfind('.') {
@@ -115,10 +115,7 @@ fn normalize_mapping_error(code: &str) -> String {
     }
 }
 
-fn restore_filename(
-    masked_filename: &str,
-    mappings: &[MappingEntry],
-) -> String {
+fn restore_filename(masked_filename: &str, mappings: &[MappingEntry]) -> String {
     let (restored, _) = restore_markdown(masked_filename, mappings);
     restored
 }

@@ -8,8 +8,8 @@ mod ocr;
 mod parser;
 pub use format::{FormatCatalog, FormatDefinition, InputFormat, LogicalFormat};
 pub use mapping::{
-    decode_cmap, decode_server_cmap, encode_server_cmap, encrypt_v2, restore_markdown,
-    CmapVersion, MappingError, RestoreResult, ServerCmap, SERVER_CMAP_MAGIC, SERVER_CMAP_VERSION,
+    decode_cmap, decode_server_cmap, encode_server_cmap, encrypt_v2, restore_markdown, CmapVersion,
+    MappingError, RestoreResult, ServerCmap, SERVER_CMAP_MAGIC, SERVER_CMAP_VERSION,
 };
 pub use ocr::{
     ocr_result_to_markdown, validate_ocr_result, OcrPage, OcrQualitySummary, OcrResult,
@@ -74,7 +74,8 @@ static BUILTIN_RULES: Lazy<Vec<MaskingRule>> = Lazy::new(|| {
         MaskingRule {
             id: "id_card".into(),
             name: "身份证号".into(),
-            pattern: r"[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]".into(),
+            pattern: r"[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]"
+                .into(),
             replacement_template: "***IDCARD***".into(),
             enabled: true,
             builtin: true,
@@ -110,7 +111,8 @@ static BUILTIN_RULES: Lazy<Vec<MaskingRule>> = Lazy::new(|| {
         MaskingRule {
             id: "ipv4".into(),
             name: "IPv4地址".into(),
-            pattern: r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)".into(),
+            pattern: r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
+                .into(),
             replacement_template: "***IP***".into(),
             enabled: true,
             builtin: true,
@@ -172,11 +174,7 @@ pub fn sensitive_term_rules(terms: &[SensitiveTermDefinition]) -> Vec<MaskingRul
         .filter(|term| term.enabled)
         .map(|term| {
             let escaped_term = regex::escape(&term.term);
-            let pattern = if term
-                .term
-                .chars()
-                .any(|c| c > '\u{4E00}' && c < '\u{9FA5}')
-            {
+            let pattern = if term.term.chars().any(|c| c > '\u{4E00}' && c < '\u{9FA5}') {
                 escaped_term
             } else {
                 format!(r"\b{}\b", escaped_term)
@@ -232,11 +230,7 @@ impl MaskingSession {
         }
     }
 
-    pub fn mask_fragment(
-        &mut self,
-        value: &str,
-        findings: &[DeterministicFinding],
-    ) -> String {
+    pub fn mask_fragment(&mut self, value: &str, findings: &[DeterministicFinding]) -> String {
         let mut result = value.to_string();
 
         for rule in self.rules.clone() {
@@ -294,52 +288,60 @@ impl MaskingSession {
     ) -> String {
         let mut result = value.to_string();
         for (regex, use_counter, template, rule_id) in compiled {
-            result = regex.replace_all(&result, |captures: &regex::Captures| {
-                let original = captures[0].to_string();
-                self.masked_entity_count += 1;
-                if let Some(entry) = self.mappings.iter().find(|entry| entry.original == original) {
-                    return entry.masked.clone();
-                }
-                let masked = if *use_counter {
-                    self.placeholder_counter += 1;
-                    format!("{}{}", template, self.placeholder_counter)
-                } else {
-                    template.clone()
-                };
-                self.mappings.push(MappingEntry {
-                    original,
-                    masked: masked.clone(),
-                    rule_id: rule_id.clone(),
-                });
-                masked
-            })
-            .into_owned();
+            result = regex
+                .replace_all(&result, |captures: &regex::Captures| {
+                    let original = captures[0].to_string();
+                    self.masked_entity_count += 1;
+                    if let Some(entry) = self
+                        .mappings
+                        .iter()
+                        .find(|entry| entry.original == original)
+                    {
+                        return entry.masked.clone();
+                    }
+                    let masked = if *use_counter {
+                        self.placeholder_counter += 1;
+                        format!("{}{}", template, self.placeholder_counter)
+                    } else {
+                        template.clone()
+                    };
+                    self.mappings.push(MappingEntry {
+                        original,
+                        masked: masked.clone(),
+                        rule_id: rule_id.clone(),
+                    });
+                    masked
+                })
+                .into_owned();
         }
         self.apply_findings(result, findings, true, false)
     }
 
     /// Process a document by line, pre-compiling regexes once for all lines.
-    pub fn mask_document(
-        &mut self,
-        content: &str,
-        findings: &[DeterministicFinding],
-    ) -> String {
+    pub fn mask_document(&mut self, content: &str, findings: &[DeterministicFinding]) -> String {
         // Pre-compile regexes + copy rule fields into owned data once, not per
         // line.  This avoids O(lines × rules) regex compilation – formerly the
         // dominant cost for large inputs (10 MB → ~230k lines × 2 regexes).
-        let compiled: Vec<(regex::Regex, bool, String, String)> = self.rules
+        let compiled: Vec<(regex::Regex, bool, String, String)> = self
+            .rules
             .iter()
             .filter(|r| r.enabled)
             .filter_map(|rule| {
                 regex::Regex::new(&rule.pattern).ok().map(|re| {
-                    (re, rule.use_counter, rule.replacement_template.clone(), rule.id.clone())
+                    (
+                        re,
+                        rule.use_counter,
+                        rule.replacement_template.clone(),
+                        rule.id.clone(),
+                    )
                 })
             })
             .collect();
         // Report compilation failures without holding a self.rules iterator.
         for rule in &self.rules {
             if rule.enabled && regex::Regex::new(&rule.pattern).is_err() {
-                self.warnings.push(format!("INVALID_RULE_PATTERN:{}", rule.id));
+                self.warnings
+                    .push(format!("INVALID_RULE_PATTERN:{}", rule.id));
             }
         }
         content
@@ -380,8 +382,9 @@ impl MaskingSession {
                 .collect();
             let (prefix, suffix, rule_id, requires_rule) =
                 finding_mask(&finding.entity_type, legacy_compatibility);
-            if enforce_rule_switches && requires_rule
-                .is_some_and(|required_rule| !enabled_rule_ids.contains(required_rule))
+            if enforce_rule_switches
+                && requires_rule
+                    .is_some_and(|required_rule| !enabled_rule_ids.contains(required_rule))
             {
                 continue;
             }
@@ -576,12 +579,19 @@ mod tests {
         use std::time::Instant;
 
         let text = "Call 13900000000 and email test@example.com\n".repeat(230_000);
-        assert!(text.len() > 9_500_000, "text size: {} bytes (<10 MB)", text.len());
+        assert!(
+            text.len() > 9_500_000,
+            "text size: {} bytes (<10 MB)",
+            text.len()
+        );
         let rules = get_builtin_rules()
             .iter()
             .filter(|r| ["phone", "email"].contains(&r.id.as_str()))
             .cloned()
-            .map(|mut r| { r.enabled = true; r })
+            .map(|mut r| {
+                r.enabled = true;
+                r
+            })
             .collect::<Vec<_>>();
         let mut times = Vec::with_capacity(20);
         for i in 0..20 {
@@ -595,7 +605,10 @@ mod tests {
             .unwrap();
             let elapsed = start.elapsed().as_secs_f64();
             times.push(elapsed);
-            assert!(result.masked_entity_count > 0, "sample {i}: no entities masked");
+            assert!(
+                result.masked_entity_count > 0,
+                "sample {i}: no entities masked"
+            );
             eprintln!("  sample {:2}: {:.3}s", i + 1, elapsed);
         }
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -613,7 +626,10 @@ mod tests {
         println!("PRD threshold (Windows 10/11 x64, 8C, 16 GB, SSD): P95 ≤ 5s");
         let os = std::env::consts::OS;
         if os == "windows" {
-            assert!(p95 <= 5.0, "FAIL: P95={p95:.3}s exceeds PRD threshold of 5s on Windows");
+            assert!(
+                p95 <= 5.0,
+                "FAIL: P95={p95:.3}s exceeds PRD threshold of 5s on Windows"
+            );
             println!("RESULT: **PASS** (on Windows baseline)");
         } else {
             println!("RESULT: **REFERENCE ONLY** (on {os}, not Windows baseline)");
@@ -623,7 +639,12 @@ mod tests {
         }
     }
 
-    fn sensitive_term(id: &str, term: &str, category: &str, enabled: bool) -> SensitiveTermDefinition {
+    fn sensitive_term(
+        id: &str,
+        term: &str,
+        category: &str,
+        enabled: bool,
+    ) -> SensitiveTermDefinition {
         SensitiveTermDefinition {
             id: id.into(),
             term: term.into(),

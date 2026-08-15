@@ -24,5 +24,7 @@ mod backend;
 mod rate_limit;
 
 pub use argon2_backend::Argon2FileBackend;
-pub use backend::{PinBackend, PinBackendError, PinController, SandboxError, MAX_PIN_LEN, MIN_PIN_LEN};
+pub use backend::{
+    PinBackend, PinBackendError, PinController, SandboxError, MAX_PIN_LEN, MIN_PIN_LEN,
+};
 pub use rate_limit::{Clock, RateLimited, RateLimiter, SystemClock};

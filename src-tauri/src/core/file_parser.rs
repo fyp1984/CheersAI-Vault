@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::fs;
 use std::io::Read;
 
@@ -46,32 +46,33 @@ pub fn parse_csv(path: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
             }
         }
     }
-    
+
     Err(anyhow::anyhow!("Failed to parse CSV file: {}", path))
 }
 
 // Excel parsing using calamine
 pub fn parse_excel(path: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
-    use calamine::{Reader, open_workbook_auto, Data};
-    
-    let mut workbook = open_workbook_auto(path)
-        .context("Failed to open Excel file")?;
-    
+    use calamine::{open_workbook_auto, Data, Reader};
+
+    let mut workbook = open_workbook_auto(path).context("Failed to open Excel file")?;
+
     // Get the first worksheet
     let sheet_names = workbook.sheet_names().to_owned();
     if sheet_names.is_empty() {
         return Err(anyhow::anyhow!("Excel file has no sheets"));
     }
-    
+
     let sheet_name = &sheet_names[0];
-    let range = workbook.worksheet_range(sheet_name)
+    let range = workbook
+        .worksheet_range(sheet_name)
         .map_err(|e| anyhow::anyhow!("Worksheet error: {}", e))?;
-    
+
     let mut headers = Vec::new();
     let mut rows = Vec::new();
-    
+
     for (idx, row) in range.rows().enumerate() {
-        let row_data: Vec<String> = row.iter()
+        let row_data: Vec<String> = row
+            .iter()
             .map(|cell| match cell {
                 Data::Int(i) => i.to_string(),
                 Data::Float(f) => f.to_string(),
@@ -84,14 +85,14 @@ pub fn parse_excel(path: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
                 Data::Empty => String::new(),
             })
             .collect();
-        
+
         if idx == 0 {
             headers = row_data;
         } else {
             rows.push(row_data);
         }
     }
-    
+
     Ok((headers, rows))
 }
 
@@ -155,11 +156,14 @@ pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> 
             .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message));
     }
 
-    let file = fs::File::open(path)
-        .with_context(|| format!("无法打开 Word 文件: {}", path))?;
-    
-    let mut archive = ZipArchive::new(file)
-        .with_context(|| format!("无法读取 DOCX 文件，可能文件已损坏或不是有效的 DOCX 格式: {}", path))?;
+    let file = fs::File::open(path).with_context(|| format!("无法打开 Word 文件: {}", path))?;
+
+    let mut archive = ZipArchive::new(file).with_context(|| {
+        format!(
+            "无法读取 DOCX 文件，可能文件已损坏或不是有效的 DOCX 格式: {}",
+            path
+        )
+    })?;
 
     let app_page_count = match archive.by_name("docProps/app.xml") {
         Ok(mut app_file) => {
@@ -174,11 +178,15 @@ pub fn parse_word_with_range(path: &str, page_range: Option<(usize, usize)>) -> 
     let mut content = String::new();
     match archive.by_name("word/document.xml") {
         Ok(mut doc_file) => {
-            doc_file.read_to_string(&mut content)
+            doc_file
+                .read_to_string(&mut content)
                 .context("无法读取文档内容")?;
         }
         Err(e) => {
-            return Err(anyhow::anyhow!("DOCX 文件结构异常，找不到 word/document.xml: {}", e));
+            return Err(anyhow::anyhow!(
+                "DOCX 文件结构异常，找不到 word/document.xml: {}",
+                e
+            ));
         }
     }
 
@@ -233,8 +241,8 @@ fn extract_docx_app_page_count(xml_content: &str) -> Result<Option<usize>> {
 
 // 简单提取 Word 文本（不考虑分页）
 fn extract_word_text_simple(xml_content: &str) -> Result<String> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
 
     let mut text = String::new();
     let mut reader = Reader::from_str(xml_content);
@@ -270,14 +278,14 @@ fn extract_word_text_by_pages(
     end_page: usize,
     expected_page_count: Option<usize>,
 ) -> Result<String> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
 
     // 验证页码范围
     if start_page < 1 {
         return Err(anyhow::anyhow!("起始页必须 >= 1"));
     }
-    
+
     if start_page > end_page {
         return Err(anyhow::anyhow!("起始页不能大于结束页"));
     }
@@ -354,10 +362,10 @@ fn extract_word_text_by_pages(
     }
 
     let total_pages = pages.len();
-    
+
     // 调整页码范围
     let actual_end = end_page.min(total_pages);
-    
+
     if start_page > total_pages {
         return Err(anyhow::anyhow!(
             "起始页 {} 超出文档总页数 {}",
@@ -418,10 +426,13 @@ pub fn parse_powerpoint(path: &str) -> Result<String> {
 }
 
 // PowerPoint parsing with page range support (slides)
-pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
-    use zip::ZipArchive;
-    use quick_xml::Reader;
+pub fn parse_powerpoint_with_range(
+    path: &str,
+    page_range: Option<(usize, usize)>,
+) -> Result<String> {
     use quick_xml::events::Event;
+    use quick_xml::Reader;
+    use zip::ZipArchive;
 
     // 检查文件是否存在
     if !std::path::Path::new(path).exists() {
@@ -434,15 +445,19 @@ pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)
         return Err(anyhow::anyhow!("旧版 .ppt 格式暂不支持，请使用 .pptx 格式"));
     }
 
-    let file = fs::File::open(path)
-        .with_context(|| format!("无法打开 PowerPoint 文件: {}", path))?;
-    
-    let mut archive = ZipArchive::new(file)
-        .with_context(|| format!("无法读取 PPTX 文件，可能文件已损坏或不是有效的 PPTX 格式: {}", path))?;
+    let file =
+        fs::File::open(path).with_context(|| format!("无法打开 PowerPoint 文件: {}", path))?;
+
+    let mut archive = ZipArchive::new(file).with_context(|| {
+        format!(
+            "无法读取 PPTX 文件，可能文件已损坏或不是有效的 PPTX 格式: {}",
+            path
+        )
+    })?;
 
     // 收集所有幻灯片
     let mut slides: Vec<(usize, String)> = Vec::new();
-    
+
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let name = file.name().to_string();
@@ -455,7 +470,7 @@ pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)
                 .trim_end_matches(".xml")
                 .parse::<usize>()
                 .unwrap_or(0);
-            
+
             let mut content = String::new();
             file.read_to_string(&mut content)?;
 
@@ -482,7 +497,7 @@ pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)
                 }
                 buf.clear();
             }
-            
+
             slides.push((slide_num, slide_text));
         }
     }
@@ -507,19 +522,19 @@ pub fn parse_powerpoint_with_range(path: &str, page_range: Option<(usize, usize)
 
     // 指定了页码范围，提取指定幻灯片
     let (start_page, end_page) = page_range.unwrap();
-    
+
     // 验证页码范围
     if start_page < 1 {
         return Err(anyhow::anyhow!("起始页必须 >= 1"));
     }
-    
+
     if start_page > end_page {
         return Err(anyhow::anyhow!("起始页不能大于结束页"));
     }
 
     let total_slides = slides.len();
     let actual_end = end_page.min(total_slides);
-    
+
     if start_page > total_slides {
         return Err(anyhow::anyhow!(
             "起始页 {} 超出演示文稿总页数 {}",
@@ -564,23 +579,23 @@ pub fn write_markdown(path: &str, content: &str) -> Result<()> {
 // 通用文本文件解析函数，支持多种编码
 fn parse_text_file(path: &str) -> Result<String> {
     use std::path::Path;
-    
+
     // 打印当前工作目录和文件路径信息
     let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     // 标准化路径处理
     let file_path = Path::new(path);
-    
+
     // 如果是绝对路径，直接使用
     let final_path = if file_path.is_absolute() {
         file_path.to_path_buf()
     } else {
         // 相对路径，尝试多种解析方式
         let possible_paths = vec![
-            current_dir.join(path),                                    // 相对于当前目录
-            current_dir.parent().unwrap_or(&current_dir).join(path),   // 相对于父目录（项目根目录）
+            current_dir.join(path),                                  // 相对于当前目录
+            current_dir.parent().unwrap_or(&current_dir).join(path), // 相对于父目录（项目根目录）
         ];
-        
+
         let mut found_path = None;
         for candidate in &possible_paths {
             if candidate.exists() && candidate.is_file() {
@@ -588,14 +603,15 @@ fn parse_text_file(path: &str) -> Result<String> {
                 break;
             }
         }
-        
+
         match found_path {
             Some(path) => path,
             None => {
                 let error_msg = format!(
                     "File not found: '{}'. Tried paths:\n{}",
                     path,
-                    possible_paths.iter()
+                    possible_paths
+                        .iter()
                         .map(|p| format!("  - {}", p.display()))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -605,43 +621,33 @@ fn parse_text_file(path: &str) -> Result<String> {
         }
     };
 
-
     // 尝试读取文件，提供更详细的错误信息
     match std::fs::read_to_string(&final_path) {
-        Ok(content) => {
-            Ok(content)
-        },
+        Ok(content) => Ok(content),
         Err(e) => {
-
             // 尝试以字节方式读取，然后转换为字符串
             match std::fs::read(&final_path) {
                 Ok(bytes) => {
                     // 尝试不同的编码
                     if let Ok(content) = String::from_utf8(bytes.clone()) {
-
                         Ok(content)
                     } else {
-
                         // 尝试 GBK 编码（中文 Windows 常用）
                         match encoding_rs::GBK.decode(&bytes) {
-                            (content, _, false) => {
-
-                                Ok(content.into_owned())
-                            },
+                            (content, _, false) => Ok(content.into_owned()),
                             _ => {
-
                                 // 如果都失败，使用 UTF-8 lossy 转换
                                 Ok(String::from_utf8_lossy(&bytes).into_owned())
                             }
                         }
                     }
                 }
-                Err(read_err) => {
-                    Err(anyhow::anyhow!(
-                        "Failed to read file '{}': {} (original UTF-8 error: {})", 
-                        final_path.display(), read_err, e
-                    ))
-                }
+                Err(read_err) => Err(anyhow::anyhow!(
+                    "Failed to read file '{}': {} (original UTF-8 error: {})",
+                    final_path.display(),
+                    read_err,
+                    e
+                )),
             }
         }
     }
@@ -655,11 +661,11 @@ pub fn parse_pdf(path: &str) -> Result<String> {
 // 获取文件的总页数
 pub fn get_page_count(path: &str) -> Result<usize> {
     let format = detect_format(path);
-    
+
     match format {
         FileFormat::Pdf => {
             use lopdf::Document;
-            
+
             match Document::load(path) {
                 Ok(doc) => {
                     let page_count = doc.get_pages().len();
@@ -672,15 +678,13 @@ pub fn get_page_count(path: &str) -> Result<usize> {
             }
         }
         FileFormat::Word => {
-            use zip::ZipArchive;
-            use quick_xml::Reader;
             use quick_xml::events::Event;
+            use quick_xml::Reader;
+            use zip::ZipArchive;
 
-            let file = fs::File::open(path)
-                .context("无法打开 Word 文件")?;
-            
-            let mut archive = ZipArchive::new(file)
-                .context("无法读取 DOCX 文件")?;
+            let file = fs::File::open(path).context("无法打开 Word 文件")?;
+
+            let mut archive = ZipArchive::new(file).context("无法读取 DOCX 文件")?;
 
             if let Ok(mut app_file) = archive.by_name("docProps/app.xml") {
                 let mut app_content = String::new();
@@ -694,7 +698,8 @@ pub fn get_page_count(path: &str) -> Result<usize> {
             let mut content = String::new();
             match archive.by_name("word/document.xml") {
                 Ok(mut doc_file) => {
-                    doc_file.read_to_string(&mut content)
+                    doc_file
+                        .read_to_string(&mut content)
                         .context("无法读取文档内容")?;
                 }
                 Err(e) => {
@@ -705,17 +710,19 @@ pub fn get_page_count(path: &str) -> Result<usize> {
             // 计算分页符数量
             let mut reader = Reader::from_str(&content);
             reader.trim_text(true);
-            
+
             let mut page_count = 1; // 至少有一页
             let mut buf = Vec::new();
-            
+
             loop {
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Start(e)) => {
                         if e.name().as_ref() == b"w:br" {
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {
-                                    if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                    if attr.key.as_ref() == b"w:type"
+                                        && attr.value.as_ref() == b"page"
+                                    {
                                         page_count += 1;
                                         break;
                                     }
@@ -727,7 +734,9 @@ pub fn get_page_count(path: &str) -> Result<usize> {
                         if e.name().as_ref() == b"w:br" {
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {
-                                    if attr.key.as_ref() == b"w:type" && attr.value.as_ref() == b"page" {
+                                    if attr.key.as_ref() == b"w:type"
+                                        && attr.value.as_ref() == b"page"
+                                    {
                                         page_count += 1;
                                         break;
                                     }
@@ -741,29 +750,27 @@ pub fn get_page_count(path: &str) -> Result<usize> {
                 }
                 buf.clear();
             }
-            
+
             Ok(page_count)
         }
         FileFormat::PowerPoint => {
             use zip::ZipArchive;
 
-            let file = fs::File::open(path)
-                .context("无法打开 PowerPoint 文件")?;
-            
-            let mut archive = ZipArchive::new(file)
-                .context("无法读取 PPTX 文件")?;
+            let file = fs::File::open(path).context("无法打开 PowerPoint 文件")?;
+
+            let mut archive = ZipArchive::new(file).context("无法读取 PPTX 文件")?;
 
             let mut slide_count = 0;
-            
+
             for i in 0..archive.len() {
                 let file = archive.by_index(i)?;
                 let name = file.name();
-                
+
                 if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                     slide_count += 1;
                 }
             }
-            
+
             Ok(slide_count)
         }
         _ => {
@@ -776,7 +783,10 @@ pub fn get_page_count(path: &str) -> Result<usize> {
 // PDF parsing with page range support
 pub fn parse_pdf_with_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
     // 调试日志
-    eprintln!("🔍 parse_pdf_with_range called with page_range: {:?}", page_range);
+    eprintln!(
+        "🔍 parse_pdf_with_range called with page_range: {:?}",
+        page_range
+    );
 
     // 如果指定了页码范围，优先使用 Python/PyMuPDF 提取。
     // lopdf 在部分中文 PDF 字体编码上可能触发原生访问违规，导致整个 Tauri 进程崩溃。
@@ -789,10 +799,13 @@ pub fn parse_pdf_with_range(path: &str, page_range: Option<(usize, usize)>) -> R
             return Err(anyhow::anyhow!("起始页不能大于结束页"));
         }
 
-        eprintln!("✅ Using PyMuPDF for page range: {}-{}", start_page, end_page);
+        eprintln!(
+            "✅ Using PyMuPDF for page range: {}-{}",
+            start_page, end_page
+        );
         return parse_pdf_with_python_ocr_range(path, Some((start_page, end_page)));
     }
-    
+
     eprintln!("⚠️ No page range specified, extracting full document");
     let bytes = fs::read(path).context("无法读取 PDF 文件")?;
     match engine_core::parse_document(&bytes, engine_core::DocumentFormat::Pdf) {
@@ -805,26 +818,25 @@ pub fn parse_pdf_with_range(path: &str, page_range: Option<(usize, usize)>) -> R
 // 使用 lopdf 按页提取 PDF 内容
 fn parse_pdf_pages_with_lopdf(path: &str, start_page: usize, end_page: usize) -> Result<String> {
     use lopdf::Document;
-    
+
     // 加载 PDF 文档
-    let doc = Document::load(path)
-        .context("无法加载 PDF 文档")?;
-    
+    let doc = Document::load(path).context("无法加载 PDF 文档")?;
+
     // 获取页数
     let page_count = doc.get_pages().len();
-    
+
     // 验证页码范围
     if start_page < 1 {
         return Err(anyhow::anyhow!("起始页必须 >= 1"));
     }
-    
+
     if start_page > end_page {
         return Err(anyhow::anyhow!("起始页不能大于结束页"));
     }
-    
+
     // 调整页码范围（如果超出实际页数）
     let actual_end = end_page.min(page_count);
-    
+
     if start_page > page_count {
         return Err(anyhow::anyhow!(
             "起始页 {} 超出文档总页数 {}",
@@ -832,12 +844,11 @@ fn parse_pdf_pages_with_lopdf(path: &str, start_page: usize, end_page: usize) ->
             page_count
         ));
     }
-    
-    
+
     // 提取指定页码范围的文本
     let mut content = String::new();
     let mut has_content = false;
-    
+
     for page_num in start_page..=actual_end {
         // lopdf 的页码从 1 开始
         match doc.extract_text(&[page_num as u32]) {
@@ -859,13 +870,15 @@ fn parse_pdf_pages_with_lopdf(path: &str, start_page: usize, end_page: usize) ->
             }
         }
     }
-    
+
     // 如果没有提取到有效内容，返回错误让系统尝试其他方法
     if !has_content {
         eprintln!("⚠️ lopdf 无法提取有效内容（可能是中文编码问题）");
-        return Err(anyhow::anyhow!("lopdf 无法提取有效内容，可能包含不支持的字体编码"));
+        return Err(anyhow::anyhow!(
+            "lopdf 无法提取有效内容，可能包含不支持的字体编码"
+        ));
     }
-    
+
     Ok(content)
 }
 
@@ -883,7 +896,10 @@ fn parse_pdf_with_python_ocr(path: &str) -> Result<String> {
 // `run_ocr_blocking` call, is reported to the caller as-is instead of being
 // retried against some other interpreter, so desktop and Runtime can never
 // disagree about which installation actually processed a file.
-fn parse_pdf_with_python_ocr_range(path: &str, page_range: Option<(usize, usize)>) -> Result<String> {
+fn parse_pdf_with_python_ocr_range(
+    path: &str,
+    page_range: Option<(usize, usize)>,
+) -> Result<String> {
     use std::fs;
 
     let Some(config) = crate::commands::ocr::ocr_config_from_env() else {
@@ -896,14 +912,16 @@ fn parse_pdf_with_python_ocr_range(path: &str, page_range: Option<(usize, usize)
 
     eprintln!("🔍 OCR using configured runtime");
 
-    let pdf_bytes = fs::read(path)
-        .map_err(|e| anyhow::anyhow!("无法读取 PDF 文件: {}", e))?;
+    let pdf_bytes = fs::read(path).map_err(|e| anyhow::anyhow!("无法读取 PDF 文件: {}", e))?;
 
     match component_runtime::run_ocr_blocking(&config, &pdf_bytes, page_range) {
         Ok(ocr_result) => {
             let markdown = engine_core::ocr_result_to_markdown(&ocr_result);
-            eprintln!("✅ OCR succeeded: {} chars, {} pages",
-                markdown.len(), ocr_result.pages.len());
+            eprintln!(
+                "✅ OCR succeeded: {} chars, {} pages",
+                markdown.len(),
+                ocr_result.pages.len()
+            );
             Ok(markdown)
         }
         Err(ocr_error) => {
@@ -912,8 +930,89 @@ fn parse_pdf_with_python_ocr_range(path: &str, page_range: Option<(usize, usize)
             eprintln!("❌ OCR failed [{}]: {}", code, msg);
             Err(anyhow::anyhow!(
                 "⚠️ 检测到扫描版 PDF，需要 OCR 功能。OCR 处理失败 [{}]: {}",
-                code, msg
+                code,
+                msg
             ))
         }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SheetDef {
+    pub name: String,
+    pub headers: Vec<String>,
+    pub data_hint: Vec<String>,
+    pub max_row: u32,
+    pub max_col: u32,
+}
+
+pub fn parse_excel_structure_detailed(path: &str) -> Result<Vec<SheetDef>, String> {
+    use calamine::{open_workbook_auto, Reader};
+
+    let mut workbook =
+        open_workbook_auto(path).map_err(|e| format!("Failed to open Excel file: {}", e))?;
+
+    let sheet_names = workbook.sheet_names().to_vec();
+    let mut result = Vec::with_capacity(sheet_names.len());
+
+    for sheet_name in sheet_names {
+        let range = workbook
+            .worksheet_range(&sheet_name)
+            .map_err(|e| format!("Worksheet '{}' error: {}", sheet_name, e))?;
+
+        let (height_usize, width_usize) = range.get_size();
+        let max_row = height_usize as u32;
+        let max_col = width_usize as u32;
+
+        let headers: Vec<String> = if height_usize > 0 {
+            (0..width_usize)
+                .map(|c| {
+                    range
+                        .get((0usize, c))
+                        .map(cell_to_string_calamine)
+                        .unwrap_or_default()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let preview_max = std::cmp::min(5usize, height_usize.saturating_sub(1));
+        let mut data_hint = Vec::with_capacity(preview_max);
+        for r in 1..=preview_max {
+            let row_cells: Vec<String> = (0..width_usize)
+                .map(|c| {
+                    range
+                        .get((r, c))
+                        .map(cell_to_string_calamine)
+                        .unwrap_or_default()
+                })
+                .collect();
+            data_hint.push(row_cells.join(" | "));
+        }
+
+        result.push(SheetDef {
+            name: sheet_name,
+            headers,
+            data_hint,
+            max_row,
+            max_col,
+        });
+    }
+
+    Ok(result)
+}
+
+fn cell_to_string_calamine(cell: &calamine::Data) -> String {
+    match cell {
+        calamine::Data::Int(i) => i.to_string(),
+        calamine::Data::Float(f) => f.to_string(),
+        calamine::Data::String(s) => s.clone(),
+        calamine::Data::Bool(b) => b.to_string(),
+        calamine::Data::DateTime(dt) => dt.to_string(),
+        calamine::Data::DateTimeIso(s) => s.clone(),
+        calamine::Data::DurationIso(s) => s.clone(),
+        calamine::Data::Error(e) => format!("Error: {:?}", e),
+        calamine::Data::Empty => String::new(),
     }
 }

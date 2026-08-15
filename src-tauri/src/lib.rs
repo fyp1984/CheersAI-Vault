@@ -1,7 +1,11 @@
 mod commands;
 mod core;
 
-use commands::{masking, crypto, sandbox, rules, batch, database, proxy, webview, gitea, file_manager, ocr, filebay_config, vault_api_server, vault, ai_model, platform, installer, sensitive_terms, sync_config, extract_config};
+use commands::{
+    ai_model, batch, crypto, database, excel_masking, extract_config, file_manager, filebay_config,
+    gitea, installer, masking, ocr, platform, proxy, rules, sandbox, sensitive_terms, sync_config,
+    vault, vault_api_server, webview,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,16 +15,22 @@ pub fn run() {
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("crash.log") 
+            .open("crash.log")
         {
             use std::io::Write;
             let _ = writeln!(file, "PANIC: {}", panic_info);
             if let Some(location) = panic_info.location() {
-                let _ = writeln!(file, "Location: {}:{}:{}", location.file(), location.line(), location.column());
+                let _ = writeln!(
+                    file,
+                    "Location: {}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                );
             }
         }
     }));
-    
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -157,6 +167,12 @@ pub fn run() {
             sync_config::sync_config_from_desktop,
             extract_config::extract_config_from_desktop_webview,
             extract_config::eval_js_in_desktop_webview,
+            excel_masking::excel_parse_structure,
+            excel_masking::excel_preview_masking,
+            excel_masking::excel_apply_masking,
+            excel_masking::excel_restore_from_ecmap,
+            excel_masking::excel_save_template,
+            excel_masking::excel_load_template,
         ])
         .setup(|app| {
             // 暂时禁用 Vault API 服务器自动启动以排查崩溃问题
@@ -166,7 +182,7 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
-    
+
     app.run(|_app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
             // 允许程序正常退出

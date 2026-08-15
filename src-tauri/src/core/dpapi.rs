@@ -1,7 +1,6 @@
 /// Windows DPAPI 加密模块
 /// 使用 Windows Data Protection API 将数据绑定到当前 Windows 用户账户
 /// 只有登录的同一用户才能解密数据
-
 use std::fs;
 use std::path::PathBuf;
 
@@ -67,10 +66,10 @@ pub fn save_pin(pin: &str) -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-    let encrypted = dpapi_encrypt(pin.as_bytes())?;
-    let path = get_pin_file_path()?;
-    fs::write(&path, &encrypted).map_err(|e| format!("保存 PIN 失败: {}", e))?;
-    Ok(())
+        let encrypted = dpapi_encrypt(pin.as_bytes())?;
+        let path = get_pin_file_path()?;
+        fs::write(&path, &encrypted).map_err(|e| format!("保存 PIN 失败: {}", e))?;
+        Ok(())
     }
 }
 
@@ -97,17 +96,16 @@ pub fn verify_pin(pin: &str) -> Result<bool, String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-    let path = get_pin_file_path()?;
-    if !path.exists() {
-        return Err("尚未设置 PIN".to_string());
-    }
+        let path = get_pin_file_path()?;
+        if !path.exists() {
+            return Err("尚未设置 PIN".to_string());
+        }
 
-    let encrypted = fs::read(&path).map_err(|e| format!("读取 PIN 文件失败: {}", e))?;
-    let decrypted = dpapi_decrypt(&encrypted)?;
-    let stored_pin = String::from_utf8(decrypted)
-        .map_err(|_| "PIN 数据损坏".to_string())?;
+        let encrypted = fs::read(&path).map_err(|e| format!("读取 PIN 文件失败: {}", e))?;
+        let decrypted = dpapi_decrypt(&encrypted)?;
+        let stored_pin = String::from_utf8(decrypted).map_err(|_| "PIN 数据损坏".to_string())?;
 
-    Ok(stored_pin == pin)
+        Ok(stored_pin == pin)
     }
 }
 
@@ -128,7 +126,9 @@ pub fn clear_pin() -> Result<(), String> {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("could not be found") || stderr.contains("The specified item could not be found") {
+        if stderr.contains("could not be found")
+            || stderr.contains("The specified item could not be found")
+        {
             return Ok(());
         }
 
@@ -137,11 +137,11 @@ pub fn clear_pin() -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-    let path = get_pin_file_path()?;
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("清除 PIN 失败: {}", e))?;
-    }
-    Ok(())
+        let path = get_pin_file_path()?;
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| format!("清除 PIN 失败: {}", e))?;
+        }
+        Ok(())
     }
 }
 
@@ -149,9 +149,7 @@ pub fn clear_pin() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn dpapi_encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPT_INTEGER_BLOB,
-    };
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
 
     let mut input_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
@@ -195,9 +193,7 @@ fn dpapi_encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(target_os = "windows")]
 fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPT_INTEGER_BLOB,
-    };
+    use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
 
     let mut input_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
@@ -247,8 +243,7 @@ fn dpapi_encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(not(target_os = "windows"))]
 fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
-    let encoded = String::from_utf8(data.to_vec())
-        .map_err(|_| "数据格式错误".to_string())?;
+    let encoded = String::from_utf8(data.to_vec()).map_err(|_| "数据格式错误".to_string())?;
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encoded)
         .map_err(|_| "解密失败".to_string())
 }

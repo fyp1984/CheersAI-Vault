@@ -188,7 +188,7 @@ impl Database {
     /// 搜索文件
     pub async fn search_managed_files(&self, query: &str, limit: i64) -> Result<Vec<ManagedFile>> {
         let search_pattern = format!("%{}%", query);
-        
+
         let files = sqlx::query_as::<_, ManagedFile>(
             r#"
             SELECT id, original_name, masked_name, file_path, file_size, 

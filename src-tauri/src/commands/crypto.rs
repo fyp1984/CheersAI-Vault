@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::core::crypto;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EncryptOptions {

@@ -3,7 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 
 use crate::backend::{PinBackend, PinBackendError};
@@ -60,7 +62,10 @@ impl PinBackend for Argon2FileBackend {
             .hash_password(new_pin.as_bytes(), &salt)
             .map_err(|_| PinBackendError("hash_failed".into()))?
             .to_string();
-        let _guard = self.write_lock.lock().expect("sandbox PIN write lock poisoned");
+        let _guard = self
+            .write_lock
+            .lock()
+            .expect("sandbox PIN write lock poisoned");
         atomic_write_0600(&self.path, phc.as_bytes())
     }
 
@@ -77,7 +82,10 @@ impl PinBackend for Argon2FileBackend {
     }
 
     fn clear_pin(&self) -> Result<(), PinBackendError> {
-        let _guard = self.write_lock.lock().expect("sandbox PIN write lock poisoned");
+        let _guard = self
+            .write_lock
+            .lock()
+            .expect("sandbox PIN write lock poisoned");
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -159,7 +167,10 @@ mod tests {
         let first = fs::read_to_string(dir.path().join("sandbox-pin.phc")).unwrap();
         backend.save_pin("1234").unwrap();
         let second = fs::read_to_string(dir.path().join("sandbox-pin.phc")).unwrap();
-        assert_ne!(first, second, "same PIN must hash to a different PHC string each time (random salt)");
+        assert_ne!(
+            first, second,
+            "same PIN must hash to a different PHC string each time (random salt)"
+        );
     }
 
     #[test]
@@ -247,7 +258,10 @@ mod tests {
         // Whichever write landed last, the file must be a single complete,
         // parseable PHC string — never a mix of two concurrent writers.
         let raw = fs::read_to_string(dir.path().join("sandbox-pin.phc")).unwrap();
-        assert!(PasswordHash::new(raw.trim()).is_ok(), "state file must remain a valid PHC string after concurrent writes");
+        assert!(
+            PasswordHash::new(raw.trim()).is_ok(),
+            "state file must remain a valid PHC string after concurrent writes"
+        );
     }
 
     #[test]

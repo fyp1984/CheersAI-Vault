@@ -39,3 +39,34 @@ test-results/
 .cleanup-archive/
 docs/.recycle-bin/
 .pnpm-store/
+
+# ============ CheersAI-Vault 本地运行期产物与临时文件 (IMP-SDLCVAULT001 Step-3 补齐) ============
+# 构建探针与 IDE 本地配置目录
+.build_probe.txt
+# .trae/ 细粒度 ignore: 仅忽略本地临时 documents/ 与占位 keep, 保留 .trae/skills/ 项目技能资产可追踪
+.trae/documents/
+.trae/.keep
+
+# Markdown 渲染中间产物 (marked/ 临时生成目录)
+marked/*
+
+# 运行期回归测试数据/映射/预览/中间 DB (企业级运行期产物)
+enterprise-data-regression/*
+
+# 本地个人/临时类文档 (需长期归档的正式文档请放入 CheersAI - docs/ 工作区)
+docs/*PERSONAL*
+docs/*_CANDIDATES_*
+docs/*_REPORT_*
+docs/manual-test-report-*.md
+docs/personal-manual-debug-plan-*.md
+docs/personal-test-fix-summary-*.md
+docs/VERSION_MANAGEMENT.md
+docs/edition-gap-plan-*.md
+docs/local-sim-lab.md
+
+# CheersAI-SDLC 子仓级目录: 审计链 / 产物 / 演示生成文档 = 运行期生成物, 禁止提交
+# 注意: 工装脚本 (bin/ harnesses/ gates/ policies/ templates/ README.md) 仍应提交, 仅忽略 3 个运行期子目录
+sdlc/audit/
+sdlc/artifacts/
+sdlc/docs/
+# SDLC manifest / harness / bin / gates / policies / templates 均为工程化脚本, 应提交; 如本地自定义 _override.yaml 需另行追加忽略
