@@ -1,9 +1,8 @@
+use component_runtime::{OcrComponentStatus, OcrConfig};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
-use tauri::{AppHandle, Manager, Emitter};
-use component_runtime::{OcrConfig, OcrComponentStatus};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -70,9 +69,7 @@ pub(crate) fn ocr_status_label(status: OcrComponentStatus) -> &'static str {
 
 fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
     let mut command = std::process::Command::new(python_cmd);
-    command
-        .arg("-c")
-        .arg("import fitz; print('OK')");
+    command.arg("-c").arg("import fitz; print('OK')");
 
     #[cfg(target_os = "windows")]
     {
@@ -82,7 +79,9 @@ fn python_supports_pdf_extraction(python_cmd: &PathBuf) -> bool {
 
     command
         .output()
-        .map(|output| output.status.success() && String::from_utf8_lossy(&output.stdout).contains("OK"))
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("OK")
+        })
         .unwrap_or(false)
 }
 
@@ -107,7 +106,6 @@ pub async fn download_ocr_package(
     window: tauri::Window,
     custom_path: Option<String>,
 ) -> Result<String, String> {
-
     // 获取安装目录
     let ocr_dir = if let Some(path) = custom_path {
         PathBuf::from(path)
@@ -116,11 +114,10 @@ pub async fn download_ocr_package(
     };
 
     let temp_dir = ocr_dir.join("temp");
-    
+
     // 创建目录
-    fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-    
+    fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
     #[cfg(target_os = "windows")]
     let python_dir = ocr_dir.join("python");
 
@@ -129,108 +126,138 @@ pub async fn download_ocr_package(
         fs::create_dir_all(&python_dir)
             .map_err(|e| format!("Failed to create python directory: {}", e))?;
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 0.0,
-            status: "正在下载 Python...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 0.0,
+                status: "正在下载 Python...".to_string(),
+            },
+        );
 
         let python_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
         let python_zip = temp_dir.join("python.zip");
 
         download_file(&window, python_url, &python_zip, "Python 运行时").await?;
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 20.0,
-            status: "正在安装 Python...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 20.0,
+                status: "正在安装 Python...".to_string(),
+            },
+        );
 
         extract_zip(&python_zip, &python_dir)?;
         let _ = fs::remove_file(&python_zip);
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 30.0,
-            status: "正在下载 pip...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 30.0,
+                status: "正在下载 pip...".to_string(),
+            },
+        );
 
         let get_pip_url = "https://bootstrap.pypa.io/get-pip.py";
         let get_pip_path = temp_dir.join("get-pip.py");
 
         download_file(&window, get_pip_url, &get_pip_path, "pip 安装器").await?;
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 35.0,
-            status: "正在配置 pip...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 35.0,
+                status: "正在配置 pip...".to_string(),
+            },
+        );
 
         enable_pip(&python_dir)?;
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 40.0,
-            status: "正在安装 pip...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 40.0,
+                status: "正在安装 pip...".to_string(),
+            },
+        );
 
         install_pip(&python_dir, &get_pip_path)?;
         let _ = fs::remove_file(&get_pip_path);
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 50.0,
-            status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 50.0,
+                status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
+            },
+        );
 
         install_ocr_dependencies(&python_dir).await?;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 10.0,
-            status: "正在创建 Python 虚拟环境...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 10.0,
+                status: "正在创建 Python 虚拟环境...".to_string(),
+            },
+        );
 
         create_python_venv(&ocr_dir)?;
 
-        let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percentage: 55.0,
-            status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
-        });
+        let _ = window.emit(
+            "ocr-download-progress",
+            OcrDownloadProgress {
+                downloaded: 0,
+                total: 0,
+                percentage: 55.0,
+                status: "正在安装 OCR 依赖（PyMuPDF + PaddleOCR）...".to_string(),
+            },
+        );
 
         install_ocr_dependencies(&ocr_dir.join("venv")).await?;
     }
-    
+
     // 4. 复制 OCR 脚本
-    let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-        downloaded: 0,
-        total: 0,
-        percentage: 95.0,
-        status: "正在配置 OCR 脚本...".to_string(),
-    });
-    
+    let _ = window.emit(
+        "ocr-download-progress",
+        OcrDownloadProgress {
+            downloaded: 0,
+            total: 0,
+            percentage: 95.0,
+            status: "正在配置 OCR 脚本...".to_string(),
+        },
+    );
+
     copy_ocr_script(&ocr_dir)?;
-    
+
     // 完成
-    let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-        downloaded: 0,
-        total: 0,
-        percentage: 100.0,
-        status: "安装完成！".to_string(),
-    });
-    
+    let _ = window.emit(
+        "ocr-download-progress",
+        OcrDownloadProgress {
+            downloaded: 0,
+            total: 0,
+            percentage: 100.0,
+            status: "安装完成！".to_string(),
+        },
+    );
+
     Ok(ocr_dir.to_string_lossy().to_string())
 }
 
@@ -242,94 +269,96 @@ async fn download_file(
     name: &str,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
-    
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
-    let response = client.get(url)
+
+    let response = client
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("下载 {} 失败: {}。请检查网络连接。", name, e))?;
-    
+
     if !response.status().is_success() {
         return Err(format!("下载 {} 失败，状态码: {}", name, response.status()));
     }
-    
+
     let total_size = response.content_length().unwrap_or(0);
-    let mut file = fs::File::create(dest)
-        .map_err(|e| format!("Failed to create file: {}", e))?;
-    
+    let mut file = fs::File::create(dest).map_err(|e| format!("Failed to create file: {}", e))?;
+
     let mut downloaded: u64 = 0;
     let mut stream = response.bytes_stream();
-    
+
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Failed to read chunk: {}", e))?;
         file.write_all(&chunk)
             .map_err(|e| format!("Failed to write chunk: {}", e))?;
-        
+
         downloaded += chunk.len() as u64;
-        
+
         if total_size > 0 && downloaded % (512 * 1024) == 0 {
-            let _ = window.emit("ocr-download-progress", OcrDownloadProgress {
-                downloaded,
-                total: total_size,
-                percentage: 0.0,
-                status: format!("正在下载 {}... {:.1} MB / {:.1} MB", 
-                    name,
-                    downloaded as f64 / 1024.0 / 1024.0,
-                    total_size as f64 / 1024.0 / 1024.0),
-            });
+            let _ = window.emit(
+                "ocr-download-progress",
+                OcrDownloadProgress {
+                    downloaded,
+                    total: total_size,
+                    percentage: 0.0,
+                    status: format!(
+                        "正在下载 {}... {:.1} MB / {:.1} MB",
+                        name,
+                        downloaded as f64 / 1024.0 / 1024.0,
+                        total_size as f64 / 1024.0 / 1024.0
+                    ),
+                },
+            );
         }
     }
-    
+
     Ok(())
 }
 
 /// 启用 pip（仅 Windows 嵌入式 Python 使用）
 fn enable_pip(python_dir: &PathBuf) -> Result<(), String> {
-
     let pth_file = python_dir.join("python311._pth");
 
     if !pth_file.exists() {
         return Err(format!("Python ._pth file not found at: {:?}", pth_file));
     }
-    
-    let content = fs::read_to_string(&pth_file)
-        .map_err(|e| format!("Failed to read _pth file: {}", e))?;
+
+    let content =
+        fs::read_to_string(&pth_file).map_err(|e| format!("Failed to read _pth file: {}", e))?;
 
     // 检查是否已经启用
     if content.lines().any(|line| {
         let trimmed = line.trim();
         trimmed == "import site" && !trimmed.starts_with('#')
     }) {
-
         return Ok(());
     }
-    
+
     // 重新构建内容：保留非注释行，移除 #import site，添加 import site
     let mut new_lines: Vec<String> = content
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
             // 保留非空行，但跳过 #import site 和 # Uncomment... 注释
-            !trimmed.is_empty() 
+            !trimmed.is_empty()
                 && !trimmed.starts_with("#import site")
                 && !trimmed.contains("Uncomment to run site.main()")
         })
         .map(|s| s.to_string())
         .collect();
-    
+
     // 添加 import site（如果还没有）
     if !new_lines.iter().any(|line| line.trim() == "import site") {
         new_lines.push("import site".to_string());
     }
-    
+
     let new_content = new_lines.join("\n") + "\n";
 
-    fs::write(&pth_file, new_content)
-        .map_err(|e| format!("Failed to write _pth file: {}", e))?;
+    fs::write(&pth_file, new_content).map_err(|e| format!("Failed to write _pth file: {}", e))?;
 
     Ok(())
 }
@@ -337,14 +366,11 @@ fn enable_pip(python_dir: &PathBuf) -> Result<(), String> {
 /// 安装 pip
 fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), String> {
     use std::process::Command;
-    
+
     #[cfg(target_os = "windows")]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
+
     let python_exe = resolve_python_executable(python_dir)?;
-
-
-
 
     // 验证文件存在
     if !python_exe.exists() {
@@ -353,7 +379,7 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
     if !get_pip_path.exists() {
         return Err(format!("get-pip.py not found: {:?}", get_pip_path));
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -362,16 +388,23 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
             .arg(get_pip_path)
             .current_dir(python_dir)
             .output()
-            .map_err(|e| format!("Failed to run get-pip.py: {} (path may contain unsupported characters)", e))?;
-        
+            .map_err(|e| {
+                format!(
+                    "Failed to run get-pip.py: {} (path may contain unsupported characters)",
+                    e
+                )
+            })?;
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(format!("pip 安装失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
+            return Err(format!(
+                "pip 安装失败:\nSTDERR: {}\nSTDOUT: {}",
+                stderr, stdout
+            ));
         }
-
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         let output = Command::new(&python_exe)
@@ -379,15 +412,17 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
             .current_dir(python_dir)
             .output()
             .map_err(|e| format!("Failed to run get-pip.py: {}", e))?;
-        
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(format!("pip 安装失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
+            return Err(format!(
+                "pip 安装失败:\nSTDERR: {}\nSTDOUT: {}",
+                stderr, stdout
+            ));
         }
-
     }
-    
+
     Ok(())
 }
 
@@ -395,55 +430,59 @@ fn install_pip(python_dir: &PathBuf, get_pip_path: &PathBuf) -> Result<(), Strin
 async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
-    let python_exe = resolve_python_executable(python_dir)?;
 
+    let python_exe = resolve_python_executable(python_dir)?;
 
     #[cfg(not(target_os = "windows"))]
     ensure_python_packaging_toolchain(&python_exe, python_dir)?;
-    
+
     // 安装完整版 OCR：PyMuPDF + EasyOCR
     // PyMuPDF 用于文本型 PDF，EasyOCR 用于扫描版 PDF
     let packages = vec![
-        "PyMuPDF",      // PDF 文本提取，约 20MB
-        "easyocr",      // OCR 引擎，约 100MB（包含依赖）
-        "Pillow",       // 图片处理
+        "PyMuPDF", // PDF 文本提取，约 20MB
+        "easyocr", // OCR 引擎，约 100MB（包含依赖）
+        "Pillow",  // 图片处理
     ];
-    
-    for package in packages {
 
+    for package in packages {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            
+
             // 添加超时机制
             let start = std::time::Instant::now();
             let timeout = std::time::Duration::from_secs(300); // 5分钟超时
-            
+
             let output = Command::new(&python_exe)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args(&["-m", "pip", "install", "--no-warn-script-location", package])
                 .current_dir(python_dir)
                 .output()
-                .map_err(|e| format!("Failed to install {}: {} (path may contain unsupported characters)", package, e))?;
-            
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to install {}: {} (path may contain unsupported characters)",
+                        package, e
+                    )
+                })?;
+
             let elapsed = start.elapsed();
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(format!("安装 {} 失败:\nSTDERR: {}\nSTDOUT: {}", package, stderr, stdout));
+                return Err(format!(
+                    "安装 {} 失败:\nSTDERR: {}\nSTDOUT: {}",
+                    package, stderr, stdout
+                ));
             }
-
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         {
             install_package_with_fallbacks(&python_exe, python_dir, package)?;
-
         }
     }
-
 
     // 验证安装
 
@@ -454,22 +493,18 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
             .creation_flags(CREATE_NO_WINDOW)
             .args(&["-c", "import fitz; print('OK')"])
             .current_dir(python_dir)
-            .output();
-        
-        match verify_output {
-            Ok(output) if output.status.success() => {
+            .output()
+            .await;
 
-            },
+        match verify_output {
+            Ok(output) if output.status.success() => {}
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-
-            },
-            Err(e) => {
-
             }
+            Err(e) => {}
         }
     }
-    
+
     Ok(())
 }
 
@@ -519,7 +554,10 @@ fn resolve_python_executable(python_dir: &PathBuf) -> Result<PathBuf, String> {
 #[cfg(not(target_os = "windows"))]
 fn get_python_version(python_exe: &PathBuf, python_dir: &PathBuf) -> Option<(u32, u32)> {
     let output = std::process::Command::new(python_exe)
-        .args(["-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"])
+        .args([
+            "-c",
+            "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+        ])
         .current_dir(python_dir)
         .output()
         .ok()?;
@@ -536,7 +574,10 @@ fn get_python_version(python_exe: &PathBuf, python_dir: &PathBuf) -> Option<(u32
 }
 
 #[cfg(not(target_os = "windows"))]
-fn ensure_python_packaging_toolchain(python_exe: &PathBuf, python_dir: &PathBuf) -> Result<(), String> {
+fn ensure_python_packaging_toolchain(
+    python_exe: &PathBuf,
+    python_dir: &PathBuf,
+) -> Result<(), String> {
     use std::process::Command;
 
     let ensurepip_output = Command::new(python_exe)
@@ -569,7 +610,10 @@ fn ensure_python_packaging_toolchain(python_exe: &PathBuf, python_dir: &PathBuf)
     if !upgrade_output.status.success() {
         let stderr = String::from_utf8_lossy(&upgrade_output.stderr);
         let stdout = String::from_utf8_lossy(&upgrade_output.stdout);
-        return Err(format!("升级 pip 工具链失败:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout));
+        return Err(format!(
+            "升级 pip 工具链失败:\nSTDERR: {}\nSTDOUT: {}",
+            stderr, stdout
+        ));
     }
 
     Ok(())
@@ -630,7 +674,6 @@ fn install_package_with_fallbacks(
     let mut failure_logs = Vec::new();
 
     for args in attempts {
-
         let output = Command::new(python_exe)
             .args(args.iter().map(|s| s.as_str()))
             .current_dir(python_dir)
@@ -661,8 +704,9 @@ fn install_package_with_fallbacks(
 fn create_python_venv(ocr_dir: &PathBuf) -> Result<(), String> {
     use std::process::Command;
 
-    let system_python = find_system_python()
-        .ok_or_else(|| "未找到可用的 python3，请先安装 Python 3 或 Command Line Tools".to_string())?;
+    let system_python = find_system_python().ok_or_else(|| {
+        "未找到可用的 python3，请先安装 Python 3 或 Command Line Tools".to_string()
+    })?;
 
     let venv_dir = ocr_dir.join("venv");
     fs::create_dir_all(ocr_dir).map_err(|e| format!("Failed to create OCR directory: {}", e))?;
@@ -686,26 +730,26 @@ fn create_python_venv(ocr_dir: &PathBuf) -> Result<(), String> {
 /// 解压 ZIP 文件
 fn extract_zip(zip_path: &PathBuf, extract_dir: &PathBuf) -> Result<(), String> {
     use zip::ZipArchive;
-    
-    let file = fs::File::open(zip_path)
-        .map_err(|e| format!("Failed to open zip file: {}", e))?;
-    
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip archive: {}", e))?;
-    
+
+    let file = fs::File::open(zip_path).map_err(|e| format!("Failed to open zip file: {}", e))?;
+
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
+
     // 创建目标目录
     fs::create_dir_all(extract_dir)
         .map_err(|e| format!("Failed to create extract directory: {}", e))?;
-    
+
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| format!("Failed to read file from archive: {}", e))?;
-        
+
         let outpath = match file.enclosed_name() {
             Some(path) => extract_dir.join(path),
             None => continue,
         };
-        
+
         if file.name().ends_with('/') {
             // 目录
             fs::create_dir_all(&outpath)
@@ -716,14 +760,14 @@ fn extract_zip(zip_path: &PathBuf, extract_dir: &PathBuf) -> Result<(), String> 
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent directory: {}", e))?;
             }
-            
-            let mut outfile = fs::File::create(&outpath)
-                .map_err(|e| format!("Failed to create file: {}", e))?;
-            
+
+            let mut outfile =
+                fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+
             std::io::copy(&mut file, &mut outfile)
                 .map_err(|e| format!("Failed to extract file: {}", e))?;
         }
-        
+
         // 设置文件权限（Unix）
         #[cfg(unix)]
         {
@@ -734,37 +778,34 @@ fn extract_zip(zip_path: &PathBuf, extract_dir: &PathBuf) -> Result<(), String> 
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// 删除 OCR 包
 #[tauri::command]
 pub async fn uninstall_ocr_package(app: AppHandle) -> Result<(), String> {
-    let app_data_dir = app.path().app_data_dir()
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
+
     let ocr_dir = app_data_dir.join("ocr-package");
 
     if ocr_dir.exists() {
-
         // 列出要删除的内容
         if let Ok(entries) = fs::read_dir(&ocr_dir) {
-            for entry in entries.flatten() {
-            }
+            for entry in entries.flatten() {}
         }
-        
-        fs::remove_dir_all(&ocr_dir)
-            .map_err(|e| format!("Failed to remove OCR package: {}", e))?;
-        
+
+        fs::remove_dir_all(&ocr_dir).map_err(|e| format!("Failed to remove OCR package: {}", e))?;
+
         // 验证删除
         if ocr_dir.exists() {
             return Err("OCR directory still exists after removal".to_string());
         }
-
     } else {
-
     }
-    
+
     Ok(())
 }

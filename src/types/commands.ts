@@ -235,3 +235,94 @@ export interface SyncConfigRequest {
   token?: string;
   user_id?: string;
 }
+
+export type MaskingStrategyId =
+  | 'FULL_MASK'
+  | 'PHONE_MID4'
+  | 'IDCARD_MID10'
+  | 'BANKCARD_LAST4'
+  | 'EMAIL_USER_MASK'
+  | 'DEFAULT_VALUE'
+  | 'CLEAR_COL'
+  | 'BANK_CARD'
+  | 'EMAIL'
+  | 'ADDRESS'
+  | 'COMPLIANCE_ID';
+
+export interface CellOverrideRule {
+  sheet: string;
+  row: number;
+  col: number;
+  strategy: MaskingStrategyId;
+  replacement?: string;
+}
+
+export interface ColumnMaskRule {
+  sheet: string;
+  colIndex: number;
+  headerText: string;
+  strategy: MaskingStrategyId;
+  replacement?: string;
+}
+
+export type EncSourceKeyMode = 'SANDBOX_REUSED' | 'SECONDARY_PASSPHRASE' | 'DEVICE_KEY';
+
+export interface ExcelParseStructureOptions {
+  file_path: string;
+}
+
+export interface SheetDef {
+  name: string;
+  headers: string[];
+  data_hint: string[];
+  max_row: number;
+  max_col: number;
+}
+
+export interface ExcelMaskingConfig {
+  file_path: string;
+  sheet_policies: {
+    sheet: string;
+    column_rules: ColumnMaskRule[];
+    cell_overrides: CellOverrideRule[];
+  }[];
+  retain_encrypted_source: boolean;
+  key_mode: EncSourceKeyMode;
+  secondary_passphrase?: string;
+  processing_time_ms?: number;
+  excel_config_sha256?: string;
+}
+
+export interface ExcelMaskPreview {
+  preview_rows: {
+    original_preview: (string | null)[];
+    masked: string[];
+    row_index: number;
+    sheet: string;
+  }[];
+  conflicts: string[];
+}
+
+export interface ExcelApplyResult {
+  masked_path: string;
+  ecmap_path: string | null;
+  encrypted_source_path: string | null;
+  report_md: string;
+  status: 'APPLIED' | 'DOWNGRADE_APPLIED' | 'ERROR';
+}
+
+export interface ExcelRestoreReq {
+  restore_mode: 'A' | 'B';
+  masked_file_path: string;
+  ecmap_file_path: string;
+  encrypted_source_path?: string;
+  user_original_file_path?: string;
+  passphrase?: string;
+  output_path: string;
+}
+
+export interface ExcelRestoreResult {
+  restored_path: string;
+  matched: boolean;
+  restored_count: number;
+}

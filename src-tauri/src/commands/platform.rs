@@ -30,21 +30,29 @@ fn app_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         dirs_next::data_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())))
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string()))
+            })
             .join("CheersAI-Vault")
     }
 
     #[cfg(target_os = "macos")]
     {
         dirs_next::data_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join("Library/Application Support"))
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                    .join("Library/Application Support")
+            })
             .join("CheersAI-Vault")
     }
 
     #[cfg(target_os = "linux")]
     {
         dirs_next::config_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".config"))
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                    .join(".config")
+            })
             .join("CheersAI-Vault")
     }
 

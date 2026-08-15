@@ -146,10 +146,7 @@ pub fn validate_ocr_result(result: &OcrResult) -> Option<String> {
         }
         if let Some(prev) = prev_page {
             if pn <= prev {
-                return Some(format!(
-                    "pages out of order: {} after {}",
-                    pn, prev
-                ));
+                return Some(format!("pages out of order: {} after {}", pn, prev));
             }
         }
         prev_page = Some(pn);
@@ -238,10 +235,7 @@ pub fn ocr_result_to_markdown(result: &OcrResult) -> String {
         // Every page was empty — return something rather than silence.
         // The empty-page count in the quality summary already captures this.
         if md.is_empty() {
-            md.push_str(&format!(
-                "## Page {}\n\n",
-                result.pages[0].page_number
-            ));
+            md.push_str(&format!("## Page {}\n\n", result.pages[0].page_number));
         }
     }
 
@@ -281,14 +275,12 @@ mod tests {
                 },
                 OcrPage {
                     page_number: 2,
-                    blocks: vec![
-                        OcrTextBlock {
-                            text: "Contact: 13900000000".into(),
-                            bbox: [10.0, 10.0, 250.0, 30.0],
-                            confidence: 0.92,
-                            language: "en".into(),
-                        },
-                    ],
+                    blocks: vec![OcrTextBlock {
+                        text: "Contact: 13900000000".into(),
+                        bbox: [10.0, 10.0, 250.0, 30.0],
+                        confidence: 0.92,
+                        language: "en".into(),
+                    }],
                     width: 612.0,
                     height: 792.0,
                 },

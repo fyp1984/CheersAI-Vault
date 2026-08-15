@@ -30,6 +30,7 @@ import {
   type RuntimeFetchResult,
 } from "@/lib/runtime/client";
 import type { RuntimeSandboxStatusResponse } from "@/types/runtime";
+import SettingsPrivacySection from "@/components/settings/SettingsPrivacySection";
 
 type LoadState = "loading" | "ready" | "error";
 type ToastMessage = { message: string; type: "success" | "error" | "warning" };
@@ -403,6 +404,12 @@ export default function SandboxManagerBrowser() {
                   </Message>
                 </CardContent>
               </Card>
+
+              <Separator className="my-6" />
+              <div>
+                <Label className="text-sm font-semibold">隐私与 Excel 自动脱敏设置</Label>
+                <div className="mt-2"><SettingsPrivacySection /></div>
+              </div>
             </>
           )}
         </div>

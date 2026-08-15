@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::commands::batch::BatchJobOptions;
+use crate::commands::masking::{mask_file, MaskFileOptions};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use crate::commands::batch::BatchJobOptions;
-use crate::commands::masking::{MaskFileOptions, mask_file};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BatchJobStatus {
@@ -59,8 +59,8 @@ pub fn cancel_job(id: &str) -> bool {
     }
 }
 
-fn update_job<F>(id: &str, updater: F) 
-where 
+fn update_job<F>(id: &str, updater: F)
+where
     F: FnOnce(&mut BatchJob),
 {
     let mut jobs = JOBS.lock().unwrap();
@@ -71,7 +71,7 @@ where
 
 pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
     use crate::core::database::Database;
-    
+
     // 更新状态为运行中
     update_job(&job_id, |job| {
         job.status = BatchJobStatus::Running;
@@ -98,7 +98,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             job.status = BatchJobStatus::Failed;
             job.error = Some(format!("无法创建输出目录: {}", e));
         });
-        
+
         // 记录错误日志
         if let Ok(db) = Database::new().await {
             let log_entry = crate::core::database::LogEntry {
@@ -141,11 +141,11 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        
+
         // 不再在这里确定最终文件名，让 mask_file 函数根据脱敏规则决定
         // 这里只生成一个临时的输出路径，mask_file 会根据脱敏后的文件名重新生成
         let temp_output_path = Path::new(&options.output_dir)
-            .join(file_name)  // 使用原始文件名作为临时路径
+            .join(file_name) // 使用原始文件名作为临时路径
             .to_string_lossy()
             .to_string();
 
@@ -157,7 +157,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
         // 处理单个文件
         let mask_options = MaskFileOptions {
             file_path: file_path.clone(),
-            output_path: temp_output_path.clone(),  // 使用临时路径，mask_file 会根据脱敏规则重新生成最终路径
+            output_path: temp_output_path.clone(), // 使用临时路径，mask_file 会根据脱敏规则重新生成最终路径
             rule_ids: options.rule_ids.clone(),
             passphrase: options.passphrase.clone(),
             custom_rules: options.custom_rules.clone(),
@@ -165,14 +165,11 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             page_range: None, // 批处理暂不支持页码范围
         };
 
-
-
-
         match mask_file(mask_options).await {
             Ok(result) => {
                 let processing_time = file_start_time.elapsed().as_millis() as i64;
                 successful_files += 1;
-                
+
                 update_job(&job_id, |job| {
                     job.completed += 1;
                 });
@@ -191,7 +188,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
                         user_id: None,
                     };
                     let _ = db.add_log(&log_entry).await;
-                    
+
                     // 添加处理历史
                     let history = crate::core::database::ProcessingHistory {
                         id: uuid::Uuid::new_v4().to_string(),
@@ -211,7 +208,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
             Err(e) => {
                 let processing_time = file_start_time.elapsed().as_millis() as i64;
                 failed_files += 1;
-                
+
                 update_job(&job_id, |job| {
                     job.failed += 1;
                     job.error = Some(format!("处理文件 {} 失败: {}", file_path, e));
@@ -231,7 +228,7 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
                         user_id: None,
                     };
                     let _ = db.add_log(&log_entry).await;
-                    
+
                     // 添加处理历史
                     let history = crate::core::database::ProcessingHistory {
                         id: uuid::Uuid::new_v4().to_string(),
@@ -268,9 +265,14 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
         let log_entry = crate::core::database::LogEntry {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: chrono::Utc::now(),
-            level: if failed_files > 0 { "warning" } else { "success" }.to_string(),
+            level: if failed_files > 0 {
+                "warning"
+            } else {
+                "success"
+            }
+            .to_string(),
             message: format!(
-                "批处理任务完成，成功 {} 个，失败 {} 个", 
+                "批处理任务完成，成功 {} 个，失败 {} 个",
                 successful_files, failed_files
             ),
             details: Some(format!("总处理时间: {}ms", total_time)),
@@ -285,31 +287,30 @@ pub async fn process_batch_job(job_id: String, options: BatchJobOptions) {
 // 跨平台文件名清理函数
 fn sanitize_filename(filename: &str) -> String {
     let mut sanitized = filename.to_string();
-    
+
     // 移除或替换非法字符
     sanitized = sanitized
         .replace(['<', '>', ':', '"', '|', '?', '*'], "_")
         .replace(['/', '\\'], "_");
-    
+
     // Windows 保留名称检查
     let reserved_names = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5",
-        "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
-        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    
+
     let base_name = sanitized.split('.').next().unwrap_or("").to_uppercase();
     if reserved_names.contains(&base_name.as_str()) {
         sanitized = format!("_{}", sanitized);
     }
-    
+
     // 移除开头和结尾的空格和点
     sanitized = sanitized.trim_matches([' ', '.']).to_string();
-    
+
     // 确保不为空
     if sanitized.is_empty() {
         sanitized = "untitled".to_string();
     }
-    
+
     sanitized
 }

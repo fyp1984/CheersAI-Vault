@@ -46,7 +46,12 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub fn new(clock: Arc<dyn Clock>, window: Duration, max_failures: u32, block: Duration) -> Self {
+    pub fn new(
+        clock: Arc<dyn Clock>,
+        window: Duration,
+        max_failures: u32,
+        block: Duration,
+    ) -> Self {
         Self {
             clock,
             window,
@@ -151,12 +156,7 @@ mod tests {
     }
 
     fn limiter(clock: Arc<FakeClock>) -> RateLimiter {
-        RateLimiter::new(
-            clock,
-            Duration::from_secs(300),
-            5,
-            Duration::from_secs(300),
-        )
+        RateLimiter::new(clock, Duration::from_secs(300), 5, Duration::from_secs(300))
     }
 
     #[test]
@@ -167,7 +167,10 @@ mod tests {
             assert!(rl.check().is_ok());
             rl.record_failure();
         }
-        assert!(rl.check().is_ok(), "4 failures inside the window must not block yet");
+        assert!(
+            rl.check().is_ok(),
+            "4 failures inside the window must not block yet"
+        );
     }
 
     #[test]
@@ -191,9 +194,15 @@ mod tests {
         }
         assert!(rl.check().is_err());
         clock.advance(Duration::from_secs(299));
-        assert!(rl.check().is_err(), "must still be blocked 1 second before the block elapses");
+        assert!(
+            rl.check().is_err(),
+            "must still be blocked 1 second before the block elapses"
+        );
         clock.advance(Duration::from_secs(2));
-        assert!(rl.check().is_ok(), "must be unblocked once the full duration has elapsed");
+        assert!(
+            rl.check().is_ok(),
+            "must be unblocked once the full duration has elapsed"
+        );
     }
 
     #[test]

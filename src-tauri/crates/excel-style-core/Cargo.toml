@@ -1,0 +1,25 @@
+[package]
+name = "excel-style-core"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Excel style-preserving cell injection and chart cache patching"
+
+[dependencies]
+calamine = "0.26"
+zip = "2.1"
+quick-xml = { version = "0.36", features = ["serialize"] }
+rust_xlsxwriter = "0.82"
+hkdf = "0.12"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+rand = "0.8"
+aes-gcm = "0.10"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"

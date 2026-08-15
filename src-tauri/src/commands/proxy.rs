@@ -24,7 +24,10 @@ pub async fn fetch_webpage(url: String) -> Result<ProxyResponse, String> {
 
     let response = client
         .get(&url)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        )
         .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .header("Cache-Control", "no-cache")
         .header("Pragma", "no-cache")
@@ -59,27 +62,30 @@ pub async fn fetch_webpage(url: String) -> Result<ProxyResponse, String> {
 fn modify_html_content(mut content: String, base_url: &str) -> String {
     // 移除 X-Frame-Options 相关的 meta 标签
     content = content.replace(r#"<meta http-equiv="X-Frame-Options" content="DENY">"#, "");
-    content = content.replace(r#"<meta http-equiv="X-Frame-Options" content="SAMEORIGIN">"#, "");
-    
+    content = content.replace(
+        r#"<meta http-equiv="X-Frame-Options" content="SAMEORIGIN">"#,
+        "",
+    );
+
     // 移除可能阻止嵌入的 JavaScript
     content = content.replace("top !== self", "false");
     content = content.replace("window.top !== window.self", "false");
     content = content.replace("parent !== window", "false");
-    
+
     // 修复相对路径
     let base_domain = extract_base_domain(base_url);
     content = content.replace("src=\"/", &format!("src=\"{}/", base_domain));
     content = content.replace("href=\"/", &format!("href=\"{}/", base_domain));
     content = content.replace("url(/", &format!("url({}/", base_domain));
-    
+
     // 添加 base 标签
     if !content.contains("<base") {
         content = content.replace(
             "<head>",
-            &format!("<head>\n<base href=\"{}/\">", base_domain)
+            &format!("<head>\n<base href=\"{}/\">", base_domain),
         );
     }
-    
+
     content
 }
 

@@ -18,7 +18,12 @@ import type {
   AddSensitiveTermRequest,
   UpdateSensitiveTermRequest,
   SensitiveTermsStats,
-  UpdateBackupSummary,
+  SheetDef,
+  ExcelMaskingConfig,
+  ExcelMaskPreview,
+  ExcelApplyResult,
+  ExcelRestoreReq,
+  ExcelRestoreResult,
 } from "@/types/commands";
 import type { LogEntry, ProcessingHistory, UserSetting, DatabaseStatistics } from "@/types/log";
 
@@ -359,4 +364,23 @@ export const tauriCommands = {
   // 返回值只包含发起查询的路径自身映射到的正式历史 ID，不返回其他历史的路径信息。
   confirmFilebayUploadCandidates: (filePaths: string[]) =>
     invoke<Record<string, string>>("confirm_filebay_upload_candidates", { filePaths }),
+
+  // Excel Masking
+  excelParseStructure: (filePath: string) =>
+    invoke<SheetDef[]>("excel_parse_structure", { filePath }),
+
+  excelPreviewMasking: (config: ExcelMaskingConfig, maxRows?: number) =>
+    invoke<ExcelMaskPreview>("excel_preview_masking", { config, maxRows }),
+
+  excelApplyMasking: (config: ExcelMaskingConfig, outputDir: string) =>
+    invoke<ExcelApplyResult>("excel_apply_masking", { config, outputDir }),
+
+  excelRestoreFromEcmap: (req: ExcelRestoreReq) =>
+    invoke<ExcelRestoreResult>("excel_restore_from_ecmap", { req }),
+
+  excelSaveTemplate: (name: string, config: ExcelMaskingConfig) =>
+    invoke<string>("excel_save_template", { name, config }),
+
+  excelLoadTemplate: (path: string) =>
+    invoke<ExcelMaskingConfig>("excel_load_template", { path }),
 };
