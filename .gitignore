@@ -40,7 +40,7 @@ test-results/
 docs/.recycle-bin/
 docs/*_REPORT*.md
 docs/*_CANDIDATES*.md
-.pnpm-store/*
+.pnpm-store/
 marked/*
 .build_probe.txt
 .trae/
