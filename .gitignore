@@ -38,9 +38,22 @@ src-tauri/gen/
 test-results/
 .cleanup-archive/
 docs/.recycle-bin/
-.pnpm-store/
 docs/*_REPORT*.md
 docs/*_CANDIDATES*.md
+.pnpm-store/
 marked/*
 .build_probe.txt
 .trae/
+enterprise-data-regression/*
+docs/manual-test-report-2026-08-10.md
+docs/personal-manual-debug-plan-2026-08-10.md
+docs/personal-test-fix-summary-2026-08-10.md
+docs/local-sim-lab.md
+docs/VERSION_MANAGEMENT.md
+docs/edition-gap-plan-2026-08-10.md
+
+# CheersAI-SDLC 子仓级目录：审计链/产物/演示生成文档 = 运行期生成物，禁止提交
+sdlc/audit/
+sdlc/artifacts/
+sdlc/docs/
+# SDLC manifest/harness/bin/gates/policies/templates 均为工程化脚本，应提交；如本地自定义 _override.yaml 需另行追加忽略
