@@ -54,6 +54,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { PassphraseBox } from "@/components/common/PassphraseBox";
 import { tauriCommands } from "@/lib/tauri";
+import { normalizeCaughtRuntimeErrorMessage } from "@/lib/runtime/errorClassification";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import type {
   CellOverrideRule,
@@ -106,14 +107,21 @@ const ACTIVE_STRATEGIES: MaskingStrategyId[] = [
 interface ExcelMaskingDialogProps {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  filePaths: string[];
+  filePaths?: string[];
+  files?: File[];
   onCancel: () => void;
   onConfirm: (
     configs: ExcelMaskingConfig[],
     outputDirOverride?: string
-  ) => void;
+  ) => void | Promise<void>;
   defaultPassphrase?: string;
   defaultOutputDir?: string;
+  onParseStructure?: (file: File) => Promise<SheetDef[]>;
+  onPreviewMasking?: (
+    file: File,
+    config: ExcelMaskingConfig,
+    maxRows?: number
+  ) => Promise<ExcelMaskPreview>;
 }
 
 function isExcelFile(p: string): boolean {
@@ -129,17 +137,32 @@ function isExcelFile(p: string): boolean {
 export default function ExcelMaskingDialog({
   open,
   onOpenChange,
-  filePaths,
+  filePaths = [],
+  files,
   onCancel,
   onConfirm,
   defaultPassphrase = "",
   defaultOutputDir,
+  onParseStructure,
+  onPreviewMasking,
 }: ExcelMaskingDialogProps) {
+  const excelFiles = useMemo(
+    () => (files ?? []).filter((file) => isExcelFile(file.name)),
+    [files]
+  );
   const excelPaths = useMemo(
     () => filePaths.filter(isExcelFile),
     [filePaths]
   );
 
+  const excelIdentifiers = useMemo(
+    () =>
+      excelFiles.length > 0
+        ? excelFiles.map((file) => file.name)
+        : excelPaths,
+    [excelFiles, excelPaths]
+  );
+  const primaryFile = excelFiles[0] ?? null;
   const primaryPath = excelPaths[0] ?? "";
   const { privacy } = useExcelMaskingStore();
 
@@ -167,16 +190,24 @@ export default function ExcelMaskingDialog({
 
   const [preview, setPreview] = useState<ExcelMaskPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const [confirmSecondCheck, setConfirmSecondCheck] = useState(false);
 
   useEffect(() => {
-    if (!open || !primaryPath) return;
+    if (!open) return;
     let cancelled = false;
     setLoading(true);
     setLoadingProgress(10);
-    tauriCommands
-      .excelParseStructure(primaryPath)
+    const load = primaryFile
+      ? (onParseStructure
+          ? onParseStructure(primaryFile)
+          : Promise.reject(new Error("Browser parse adapter missing")))
+      : primaryPath
+        ? tauriCommands.excelParseStructure(primaryPath)
+        : Promise.resolve([]);
+    load
       .then((defs) => {
         if (cancelled) return;
         setSheets(defs);
@@ -194,17 +225,47 @@ export default function ExcelMaskingDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, primaryPath]);
+  }, [open, primaryFile, primaryPath, onParseStructure]);
 
   useEffect(() => {
-    if (!privacy.excelDefaultRetainEncryptedSource) return;
-    setRetainChecked(false);
+    if (!open) return;
+    setRetainChecked(Boolean(privacy.excelDefaultRetainEncryptedSource));
   }, [open, privacy.excelDefaultRetainEncryptedSource]);
 
   const currentSheetDef = useMemo(
     () => sheets.find((s) => s.name === selectedSheet),
     [sheets, selectedSheet]
   );
+
+  const resolvedColumnSamples = useMemo<(string[] | undefined)[]>(() => {
+    if (!currentSheetDef) return [];
+    const { headers, column_samples, data_hint } = currentSheetDef;
+    const width = headers.length;
+    if (
+      Array.isArray(column_samples) &&
+      column_samples.length === width &&
+      column_samples.every(Array.isArray)
+    ) {
+      return column_samples;
+    }
+    if (Array.isArray(data_hint) && data_hint.length > 0) {
+      const perCol: string[][] = [];
+      for (let c = 0; c < width; c += 1) {
+        const values: string[] = [];
+        for (const rowBlob of data_hint.slice(0, 5)) {
+          const cells: string[] =
+            typeof rowBlob === "string" && rowBlob.includes(" | ")
+              ? rowBlob.split(" | ")
+              : [typeof rowBlob === "string" ? rowBlob : ""];
+          const v = cells[c] ?? "";
+          if (typeof v === "string" && v.trim().length > 0) values.push(v);
+        }
+        perCol.push(values);
+      }
+      return perCol;
+    }
+    return new Array(width).fill(undefined);
+  }, [currentSheetDef]);
 
   const checkedColIndices = useMemo(() => {
     return new Set(
@@ -355,25 +416,36 @@ export default function ExcelMaskingDialog({
   }, [columnRules, cellOverrides]);
 
   const loadPreview = useCallback(async () => {
-    if (!primaryPath) return;
+    if (!primaryFile && !primaryPath) return;
     setPreviewLoading(true);
     try {
       const config: ExcelMaskingConfig = buildConfigs()[0] ?? {
-        file_path: primaryPath,
+        file_path: primaryFile?.name ?? primaryPath,
         sheet_policies: [],
         retain_encrypted_source: retainChecked,
         key_mode: keyMode,
         secondary_passphrase:
           keyMode === "SECONDARY_PASSPHRASE" ? secondaryPassphrase : undefined,
       };
-      const res = await tauriCommands.excelPreviewMasking(config, 20);
+      const res = primaryFile
+        ? onPreviewMasking
+          ? await onPreviewMasking(primaryFile, config, 20)
+          : null
+        : await tauriCommands.excelPreviewMasking(config, 20);
       setPreview(res);
     } catch {
       setPreview(null);
     } finally {
       setPreviewLoading(false);
     }
-  }, [primaryPath, retainChecked, keyMode, secondaryPassphrase]);
+  }, [
+    primaryFile,
+    primaryPath,
+    retainChecked,
+    keyMode,
+    secondaryPassphrase,
+    onPreviewMasking,
+  ]);
 
   const buildConfigs = useCallback((): ExcelMaskingConfig[] => {
     const policies = sheets.map((s) => {
@@ -384,7 +456,7 @@ export default function ExcelMaskingDialog({
       };
     });
 
-    return excelPaths.map((fp) => ({
+    return excelIdentifiers.map((fp) => ({
       file_path: fp,
       sheet_policies: policies,
       retain_encrypted_source: retainChecked,
@@ -396,7 +468,7 @@ export default function ExcelMaskingDialog({
     sheets,
     columnRules,
     cellOverrides,
-    excelPaths,
+    excelIdentifiers,
     retainChecked,
     keyMode,
     secondaryPassphrase,
@@ -404,10 +476,19 @@ export default function ExcelMaskingDialog({
 
   const handleConfirm = useCallback(async () => {
     if (!canConfirm) return;
-    const configs = buildConfigs();
-    onConfirm(configs, defaultOutputDir);
-    onOpenChange(false);
-  }, [canConfirm, buildConfigs, onConfirm, defaultOutputDir, onOpenChange]);
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const configs = buildConfigs();
+      await onConfirm(configs, defaultOutputDir);
+    } catch (error) {
+      setSubmitError(
+        normalizeCaughtRuntimeErrorMessage(error, "Excel 脱敏执行失败，请稍后重试。")
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [canConfirm, buildConfigs, onConfirm, defaultOutputDir]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -416,9 +497,9 @@ export default function ExcelMaskingDialog({
           <DialogTitle className="flex items-center gap-2">
             <Shield className="w-5 h-5 text-blue-500" />
             Excel 脱敏配置
-            {excelPaths.length > 1 && (
+            {excelIdentifiers.length > 1 && (
               <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
-                批量 {excelPaths.length} 个文件
+                批量 {excelIdentifiers.length} 个文件
               </span>
             )}
           </DialogTitle>
@@ -465,6 +546,7 @@ export default function ExcelMaskingDialog({
                   selectedSheet={selectedSheet}
                   onSelectedSheetChange={setSelectedSheet}
                   currentSheetDef={currentSheetDef}
+                  resolvedColumnSamples={resolvedColumnSamples}
                   checkedColIndices={checkedColIndices}
                   onToggleColumnChecked={toggleColumnChecked}
                   columnRules={columnRules.filter(
@@ -504,18 +586,30 @@ export default function ExcelMaskingDialog({
           </Tabs>
         )}
 
+        {submitError && (
+          <div className="px-6">
+            <Alert variant="default" className="border-red-200 bg-red-50">
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+              <AlertTitle className="text-red-800">执行失败</AlertTitle>
+              <AlertDescription className="text-red-700 text-sm">
+                {submitError}
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
         <DialogFooter className="shrink-0 gap-2">
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" onClick={onCancel} disabled={submitting}>
             取消
           </Button>
           <Button
             onClick={() => {
               void handleConfirm();
             }}
-            disabled={!canConfirm || loading}
+            disabled={!canConfirm || loading || submitting}
           >
             <Check className="w-4 h-4 mr-1" />
-            应用并脱敏
+            {submitting ? "处理中..." : "应用并脱敏"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -668,6 +762,7 @@ interface ColumnMaskTabProps {
   selectedSheet: string;
   onSelectedSheetChange: (n: string) => void;
   currentSheetDef: SheetDef | undefined;
+  resolvedColumnSamples: (string[] | undefined)[];
   checkedColIndices: Set<number>;
   onToggleColumnChecked: (colIndex: number, headerText: string) => void;
   columnRules: ColumnMaskRule[];
@@ -682,6 +777,7 @@ function ColumnMaskTab({
   selectedSheet,
   onSelectedSheetChange,
   currentSheetDef,
+  resolvedColumnSamples,
   checkedColIndices,
   onToggleColumnChecked,
   columnRules,
@@ -749,8 +845,26 @@ function ColumnMaskTab({
                     <TableCell className="font-medium text-sm">
                       {header || <span className="text-gray-400">(空)</span>}
                     </TableCell>
-                    <TableCell className="text-xs text-gray-500 truncate max-w-xs">
-                      {currentSheetDef.data_hint[idx] ?? "—"}
+                    <TableCell className="text-xs text-gray-500 max-w-xs">
+                      {(() => {
+                        const samples = resolvedColumnSamples[idx] ?? [];
+                        const nonEmpty = samples.filter((s) => s && s.trim().length > 0);
+                        if (nonEmpty.length === 0) return "—";
+                        const displayed = nonEmpty.slice(0, 3);
+                        const suffix = nonEmpty.length > 3 ? ` 等 ${nonEmpty.length} 个` : "";
+                        return (
+                          <div className="space-y-0.5 leading-tight">
+                            {displayed.map((sample, i) => (
+                              <div key={i} className="truncate">
+                                {sample}
+                              </div>
+                            ))}
+                            {suffix && (
+                              <div className="text-[10px] text-gray-400">{suffix}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Select

@@ -21,6 +21,9 @@ import type {
   RuntimeCreateBatchResponse,
   RuntimeCreatePreviewResponse,
   RuntimeCreateSensitiveTermRequest,
+  RuntimeExcelArtifactMembersResponse,
+  RuntimeExcelArtifactMemberKind,
+  RuntimeExcelPersistArtifactsResponse,
   RuntimeHealthResponse,
   RuntimeOcrStatusResponse,
   RuntimeOperationLogListResponse,
@@ -46,6 +49,7 @@ import type {
   RuntimeUnlockSandboxRequest,
   RuntimeUpdateSensitiveTermRequest,
 } from "@/types/runtime";
+import type { ExcelMaskingConfig } from "@/types/commands";
 import {
   classifyRuntimeFetchError,
   classifyRuntimeHttpResponse,
@@ -284,6 +288,68 @@ export async function downloadRuntimeArtifact(
       displayName,
       response.headers.get("content-disposition")
     );
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  return { ok: true };
+}
+
+export function persistRuntimeExcelArtifacts(
+  file: File,
+  config: ExcelMaskingConfig,
+  ruleIds: string[]
+): Promise<RuntimeFetchResult<RuntimeExcelPersistArtifactsResponse>> {
+  const form = new FormData();
+  form.set("file", file, file.name);
+  form.set("config", JSON.stringify(config));
+  form.set("rule_ids", JSON.stringify(ruleIds));
+  return fetchRuntimeJson<RuntimeExcelPersistArtifactsResponse>("/api/v1/excel/jobs", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function fetchRuntimeExcelArtifactMembers(
+  artifactId: string
+): Promise<RuntimeFetchResult<RuntimeExcelArtifactMembersResponse>> {
+  return fetchRuntimeJson<RuntimeExcelArtifactMembersResponse>(
+    `/api/v1/artifacts/${encodeURIComponent(artifactId)}/members`
+  );
+}
+
+export async function downloadRuntimeExcelArtifactMember(
+  artifactId: string,
+  memberKind: RuntimeExcelArtifactMemberKind
+): Promise<RuntimeActionResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${runtimeBaseUrl}/api/v1/artifacts/${encodeURIComponent(artifactId)}/members/${encodeURIComponent(memberKind)}`,
+      {
+        credentials: "omit",
+        cache: "no-store",
+      }
+    );
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
+  }
+
+  if (!response.ok) {
+    return classifyRuntimeHttpResponse(response);
+  }
+
+  const contentDisposition = response.headers.get("content-disposition");
+  const filenameMatch = contentDisposition?.match(/filename="?([^";]+)"?/i);
+  const filename = filenameMatch?.[1] ?? `${memberKind}`;
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
     document.body.append(anchor);
     anchor.click();
     anchor.remove();

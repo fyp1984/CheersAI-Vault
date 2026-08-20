@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAppStore } from "@/store/appStore";
@@ -15,11 +15,13 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button, Message, Badge, Card, Loading } from "@/components/ui/cheersai-ui";
 import { BrowserMaskingPreviewDialog } from "@/components/file/BrowserMaskingPreviewDialog";
+import ExcelMaskingDialog from "@/components/file/ExcelMaskingDialog";
 import {
   cancelRuntimePreview,
   confirmRuntimePreview,
   createRuntimePreview,
   downloadRuntimeArtifact,
+  downloadRuntimeExcelArtifactMember as downloadRuntimeExcelArtifactMemberRequest,
   fetchRuntimeBatch,
   fetchRuntimePreview,
   fetchRuntimeRules,
@@ -32,9 +34,18 @@ import {
   runtimeFormatLabel,
   runtimeInputFormatFromFilename,
 } from "@/lib/runtime/formatCatalog";
+import {
+  parseRuntimeExcelStructure,
+  persistRuntimeExcelArtifacts,
+  previewRuntimeExcelMasking,
+} from "@/lib/runtime/excelClient";
+import { normalizeCaughtRuntimeErrorMessage, normalizeRuntimeUserMessage } from "@/lib/runtime/errorClassification";
+import { useExcelMaskingStore } from "@/store/excelMaskingStore";
+import type { ExcelMaskingConfig } from "@/types/commands";
 import type {
   RuntimeBatchDetail,
   RuntimeBatchFile,
+  RuntimeExcelArtifactMemberKind,
   RuntimePreviewDetail,
   RuntimeRuleMetadata,
 } from "@/types/runtime";
@@ -60,6 +71,10 @@ function fileKey(file: File): string {
   return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
 }
 
+function isExcelRuntimeFile(file: File): boolean {
+  return runtimeInputFormatFromFilename(file.name) === "excel";
+}
+
 function readableSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -72,6 +87,16 @@ function safeDisplayName(name: string): string {
   // eslint-disable-next-line no-control-regex
   return name.replace(/[\x00-\x1f\x7f]/g, "");
 }
+
+const EXCEL_ARTIFACT_ACTIONS: ReadonlyArray<{
+  kind: RuntimeExcelArtifactMemberKind;
+  label: string;
+}> = [
+  { kind: "masked_workbook", label: "下载工作簿" },
+  { kind: "report", label: "下载报告" },
+  { kind: "ecmap", label: "下载 ECMAP" },
+  { kind: "encrypted_source", label: "下载加密源" },
+];
 
 type RulesState =
   | { kind: "loading" }
@@ -150,6 +175,7 @@ export default function FileProcessBrowser() {
   const batchId = searchParams.get("batch");
   const urlPreviewId = searchParams.get("preview");
   const { activePreviewId, setActivePreviewId } = useAppStore();
+  const { privacy } = useExcelMaskingStore();
 
 
   // URL 与全局 store/sessionStorage 的同步：
@@ -203,6 +229,10 @@ export default function FileProcessBrowser() {
         : null;
 
   const [queue, setQueue] = useState<QueuedFile[]>([]);
+  const [excelDialogOpen, setExcelDialogOpen] = useState(false);
+  const [excelDialogFiles, setExcelDialogFiles] = useState<File[]>([]);
+  const [pendingQueuedFiles, setPendingQueuedFiles] = useState<File[]>([]);
+  const [excelDialogSource, setExcelDialogSource] = useState<"incoming" | "queue" | null>(null);
   const [addWarning, setAddWarning] = useState<string | null>(null);
   const [rulesState, setRulesState] = useState<RulesState>({ kind: "loading" });
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
@@ -443,10 +473,22 @@ export default function FileProcessBrowser() {
     };
   }, [previewId]);
 
+  const appendFilesToQueue = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return;
+    setQueue((current) => {
+      const existingKeys = new Set(current.map((item) => item.key));
+      const appended = acceptedFiles
+        .filter((file) => !existingKeys.has(fileKey(file)))
+        .map((file) => ({ key: fileKey(file), file }));
+      return [...current, ...appended];
+    });
+  }, []);
+
   const addFiles = (incoming: File[]) => {
     if (incoming.length === 0) return;
 
     const existingKeys = new Set(queue.map((item) => item.key));
+    const acceptedFiles: File[] = [];
     const nextQueue = [...queue];
     let runningBytes = queue.reduce((sum, item) => sum + item.file.size, 0);
 
@@ -479,11 +521,10 @@ export default function FileProcessBrowser() {
         continue;
       }
       existingKeys.add(key);
+      acceptedFiles.push(file);
       nextQueue.push({ key, file });
       runningBytes += file.size;
     }
-
-    setQueue(nextQueue);
 
     const notes: string[] = [];
     if (rejectedUnsupported.length > 0) {
@@ -502,6 +543,17 @@ export default function FileProcessBrowser() {
       notes.push(`已跳过 ${duplicateCount} 个重复文件（文件名、大小与修改时间均相同）`);
     }
     setAddWarning(notes.length > 0 ? notes.join("；") : null);
+
+    const acceptedExcelFiles = acceptedFiles.filter(isExcelRuntimeFile);
+    if (privacy.excelAutoMaskDialog && acceptedExcelFiles.length > 0) {
+      setPendingQueuedFiles(acceptedFiles);
+      setExcelDialogFiles(acceptedExcelFiles);
+      setExcelDialogSource("incoming");
+      setExcelDialogOpen(true);
+      return;
+    }
+
+    setQueue(nextQueue);
   };
 
   const handleFileInput = (event: ChangeEvent<HTMLInputElement>) => {
@@ -524,6 +576,84 @@ export default function FileProcessBrowser() {
   const removeFile = (key: string) => {
     if (submitting) return;
     setQueue((current) => current.filter((item) => item.key !== key));
+  };
+
+  const queuedExcelFiles = useMemo(
+    () => queue.map((item) => item.file).filter(isExcelRuntimeFile),
+    [queue]
+  );
+
+  const openQueuedExcelDialog = () => {
+    if (queuedExcelFiles.length === 0) return;
+    setPendingQueuedFiles([]);
+    setExcelDialogFiles(queuedExcelFiles);
+    setExcelDialogSource("queue");
+    setExcelDialogOpen(true);
+  };
+
+  const handleExcelDialogCancel = () => {
+    if (excelDialogSource === "incoming" && pendingQueuedFiles.length > 0) {
+      appendFilesToQueue(pendingQueuedFiles);
+    }
+    setExcelDialogOpen(false);
+    setExcelDialogFiles([]);
+    setPendingQueuedFiles([]);
+    setExcelDialogSource(null);
+  };
+
+  const handleExcelDialogOpenChange = (open: boolean) => {
+    if (!open && excelDialogOpen) {
+      handleExcelDialogCancel();
+      return;
+    }
+    setExcelDialogOpen(open);
+  };
+
+  const handleExcelDialogConfirm = async (configs: ExcelMaskingConfig[]) => {
+    const targetFiles = excelDialogFiles;
+    const persistedResults: Array<{ batch_id: string }> = [];
+    for (let index = 0; index < targetFiles.length; index += 1) {
+      const file = targetFiles[index];
+      const config = configs[index];
+      if (!file || !config) continue;
+      const result = await persistRuntimeExcelArtifacts(
+        file,
+        config,
+        Array.from(selectedRuleIds)
+      );
+      if (!result.ok) {
+        const userMsg =
+          result.reason === "network"
+            ? "无法连接本机 Runtime，请确认服务已启动后重试。"
+            : normalizeRuntimeUserMessage(result, "Excel 增强脱敏执行失败，请稍后重试。");
+        throw new Error(
+          normalizeCaughtRuntimeErrorMessage(userMsg, "Excel 增强脱敏执行失败，请稍后重试。")
+        );
+      }
+      persistedResults.push(result.data);
+    }
+
+    if (excelDialogSource === "incoming") {
+      appendFilesToQueue(pendingQueuedFiles.filter((file) => !isExcelRuntimeFile(file)));
+    } else if (excelDialogSource === "queue") {
+      const processedKeys = new Set(targetFiles.map((file) => fileKey(file)));
+      setQueue((current) => current.filter((item) => !processedKeys.has(item.key)));
+    }
+
+    const lastBatchId =
+      persistedResults.length > 0
+        ? persistedResults[persistedResults.length - 1]?.batch_id ?? null
+        : null;
+    setAddWarning(
+      `Excel 增强脱敏结果已自动保存到受控沙箱目录，共 ${persistedResults.length} 个批次。`
+    );
+    setExcelDialogOpen(false);
+    setExcelDialogFiles([]);
+    setPendingQueuedFiles([]);
+    setExcelDialogSource(null);
+    if (lastBatchId) {
+      setSearchParams({ batch: lastBatchId });
+    }
   };
 
   const toggleRule = (ruleId: string) => {
@@ -724,6 +854,24 @@ export default function FileProcessBrowser() {
     }
   };
 
+  const downloadExcelArtifactMember = async (
+    artifactId: string,
+    memberKind: RuntimeExcelArtifactMemberKind
+  ) => {
+    if (downloadingArtifactId) return;
+    setDownloadingArtifactId(artifactId);
+    setDownloadError(null);
+    const result = await downloadRuntimeExcelArtifactMemberRequest(artifactId, memberKind);
+    setDownloadingArtifactId(null);
+    if (!result.ok) {
+      setDownloadError(
+        result.reason === "network"
+          ? "当前连不上本地服务，请确认服务已启动后再试。"
+          : result.message ?? "Excel 产物下载失败，请稍后再试。"
+      );
+    }
+  };
+
   if (batchId) {
     return (
       <div className="flex flex-col h-full">
@@ -826,7 +974,7 @@ export default function FileProcessBrowser() {
                                 {retryingFileId === file.file_id ? "重试中…" : "重新处理"}
                               </Button>
                             )}
-                            {file.artifact_id && (
+                            {file.artifact_id && file.artifact_kind !== "excel_bundle_manifest" && (
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -836,6 +984,29 @@ export default function FileProcessBrowser() {
                               >
                                 {downloadingArtifactId === file.artifact_id ? "下载中…" : "下载 Markdown"}
                               </Button>
+                            )}
+                            {file.artifact_id && file.artifact_kind === "excel_bundle_manifest" && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {EXCEL_ARTIFACT_ACTIONS.map((action) => (
+                                  <Button
+                                    key={action.kind}
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={Download}
+                                    disabled={downloadingArtifactId === file.artifact_id}
+                                    onClick={() =>
+                                      void downloadExcelArtifactMember(
+                                        file.artifact_id as string,
+                                        action.kind
+                                      )
+                                    }
+                                  >
+                                    {downloadingArtifactId === file.artifact_id
+                                      ? "下载中…"
+                                      : action.label}
+                                  </Button>
+                                ))}
+                              </div>
                             )}
                           </div>
                         </td>
@@ -969,9 +1140,21 @@ export default function FileProcessBrowser() {
 
             {queue.length > 0 && (
               <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-700">
-                  文件队列（{queue.length}，合计 {readableSize(totalBytes)}）
-                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-gray-700">
+                    文件队列（{queue.length}，合计 {readableSize(totalBytes)}）
+                  </p>
+                  {queuedExcelFiles.length > 0 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={openQueuedExcelDialog}
+                      disabled={submitting}
+                    >
+                      打开 Excel 增强弹窗（{queuedExcelFiles.length}）
+                    </Button>
+                  )}
+                </div>
                 {queue.map((item) => (
                   <div
                     key={item.key}
@@ -1109,6 +1292,35 @@ export default function FileProcessBrowser() {
           </div>
         </div>
       </div>
+      <ExcelMaskingDialog
+        open={excelDialogOpen}
+        onOpenChange={handleExcelDialogOpenChange}
+        files={excelDialogFiles}
+        onCancel={handleExcelDialogCancel}
+        onConfirm={handleExcelDialogConfirm}
+        onParseStructure={async (file) => {
+          const result = await parseRuntimeExcelStructure(file);
+          if (!result.ok) {
+            throw new Error(
+              result.reason === "http"
+                ? result.message ?? "Excel 结构解析失败，请稍后重试。"
+                : "无法连接本机 Runtime，请确认服务已启动后重试。"
+            );
+          }
+          return result.data;
+        }}
+        onPreviewMasking={async (file, config, maxRows) => {
+          const result = await previewRuntimeExcelMasking(file, config, maxRows);
+          if (!result.ok) {
+            throw new Error(
+              result.reason === "http"
+                ? result.message ?? "Excel 预览失败，请稍后重试。"
+                : "无法连接本机 Runtime，请确认服务已启动后重试。"
+            );
+          }
+          return result.data;
+        }}
+      />
     </div>
   );
 }
