@@ -70,3 +70,9 @@ sdlc/audit/
 sdlc/artifacts/
 sdlc/docs/
 # SDLC manifest / harness / bin / gates / policies / templates 均为工程化脚本, 应提交; 如本地自定义 _override.yaml 需另行追加忽略
+
+# ============ IMP-SDLCVAULT002 新增本地忽略项 (HE-2 可复现性: 本机器特定缓存/临时产物禁止进仓) ============
+# 本地 pnpm 零依赖安装缓存 (内含 npm registry 锁定, 非项目资产)
+pnpm-local-install/
+# 本地 IDE / 脚本运行时临时 WIP snapshot / 过程性产物
+artifacts/
