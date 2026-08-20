@@ -7,3 +7,30 @@ src-tauri/gen
 .trae
 .vscode
 crash.log
+
+# Rust target dirs (the big ones - avoid multi-GB context transfers)
+target/
+apps/vault-runtime-api/target
+apps/*/target
+src-tauri/target
+src-tauri/target-*
+src-tauri/crates/*/target
+src-tauri/crates/engine-core/target
+src-tauri/crates/excel-style-core/target
+
+# Tauri generated
+src-tauri/gen
+
+# Local dev / release helpers (never ship inside containers)
+pnpm-local-install
+start-vault-runtime.sh
+stop-vault-runtime.sh
+.vault-runtime-started
+artifacts
+*.log
+
+# DB / local state backups (not part of release image)
+*.db.backup
+*.sqlite
+*.sqlite3
+.vscode/
