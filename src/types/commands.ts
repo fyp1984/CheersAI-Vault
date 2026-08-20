@@ -274,7 +274,9 @@ export interface ExcelParseStructureOptions {
 export interface SheetDef {
   name: string;
   headers: string[];
-  data_hint: string[];
+  column_samples: string[][];
+  /** @deprecated 保留以兼容旧 Runtime/旧桌面端解析结果；新代码一律优先使用 column_samples。 */
+  data_hint?: string[];
   max_row: number;
   max_col: number;
 }

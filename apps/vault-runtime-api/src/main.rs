@@ -1,4 +1,7 @@
-use std::{net::{IpAddr, Ipv4Addr}, path::PathBuf};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+};
 
 use vault_runtime_api::{routes, Limits, Runtime};
 use warp::Filter;
@@ -10,8 +13,8 @@ async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm = signal(SignalKind::terminate())
-            .expect("failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 println!("vault-runtime-api received SIGINT, shutting down");

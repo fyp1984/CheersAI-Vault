@@ -1,3 +1,4 @@
+mod excel;
 mod filebay;
 mod legacy_powerpoint;
 mod operation_logs;
@@ -405,6 +406,7 @@ pub fn routes(
         .or(retry)
         .or(artifact_restore)
         .or(artifact)
+        .or(excel::routes(runtime_filter.clone()))
         .or(preview::routes(runtime_filter.clone()))
         .or(sensitive_terms::routes(runtime_filter.clone()))
         .or(operation_logs::routes(runtime_filter.clone()))
@@ -717,6 +719,14 @@ async fn download_artifact(artifact_id: String, runtime: Runtime) -> Result<impl
         .artifact(&artifact_id)
         .await
         .map_err(store_rejection)?;
+    if record.artifact_kind != service_contracts::ArtifactKind::Markdown {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "ARTIFACT_KIND_UNSUPPORTED",
+            "Use the Excel artifact member endpoint for non-Markdown artifacts",
+            false,
+        ));
+    }
     let download_name = artifact_download_name(&record.display_name);
     Ok(warp::http::Response::builder()
         .status(StatusCode::OK)
@@ -957,6 +967,11 @@ async fn handle_rejection(rejection: Rejection) -> Result<Box<dyn Reply>, Infall
 mod tests {
     use super::*;
 
+    use crate::excel::{
+        ColumnMaskRule, EncSourceKeyMode, ExcelMaskingConfig, SheetDef, SheetPolicy,
+    };
+    use calamine::{open_workbook_auto, Reader};
+
     #[test]
     fn enterprise_uploads_use_the_shared_catalog_and_storage_values() {
         for (filename, expected) in [
@@ -986,9 +1001,10 @@ mod tests {
         }
     }
     use service_contracts::{
-        BatchDetail, BatchListResponse, BatchStatus, ClearOperationLogsResponse,
-        CreateBatchResponse, FileStatus, OperationLogListResponse, OperationLogStatistics,
-        OperationLogStorageStatus, RetryResponse,
+        ArtifactKind, BatchDetail, BatchListResponse, BatchStatus, ClearOperationLogsResponse,
+        CreateBatchResponse, ExcelArtifactMemberKind, ExcelArtifactMembersResponse,
+        ExcelPersistArtifactsResponse, FileStatus, OperationLogListResponse,
+        OperationLogStatistics, OperationLogStorageStatus, RetryResponse,
     };
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
@@ -1041,6 +1057,121 @@ mod tests {
         }
         body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"rule_ids\"\r\n\r\n{rules}\r\n--{boundary}--\r\n").as_bytes());
         (format!("multipart/form-data; boundary={boundary}"), body)
+    }
+
+    fn excel_parse_multipart(filename: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+        let boundary = "vault-runtime-excel-parse-boundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        (format!("multipart/form-data; boundary={boundary}"), body)
+    }
+
+    fn excel_jobs_multipart(
+        filename: &str,
+        bytes: &[u8],
+        config: &ExcelMaskingConfig,
+        rule_ids: &str,
+    ) -> (String, Vec<u8>) {
+        let boundary = "vault-runtime-excel-jobs-boundary";
+        let mut body = Vec::new();
+        let config_json = serde_json::to_string(config).expect("serialize excel config");
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"config\"\r\nContent-Type: application/json\r\n\r\n{config_json}\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"rule_ids\"\r\n\r\n{rule_ids}\r\n--{boundary}--\r\n"
+            )
+            .as_bytes(),
+        );
+        (format!("multipart/form-data; boundary={boundary}"), body)
+    }
+
+    fn normalize_excel_header_for_test(value: &str) -> String {
+        value
+            .trim()
+            .to_lowercase()
+            .chars()
+            .filter(|ch| ch.is_alphanumeric())
+            .collect()
+    }
+
+    fn build_excel_browser_config(structures: &[SheetDef]) -> ExcelMaskingConfig {
+        let mut sheet_policies = Vec::new();
+        for structure in structures {
+            let mut column_rules = Vec::new();
+            for (col_index, header) in structure.headers.iter().enumerate() {
+                let strategy = match normalize_excel_header_for_test(header).as_str() {
+                    "phone" => Some("PHONE_MID4"),
+                    "email" => Some("EMAIL_USER_MASK"),
+                    _ => None,
+                };
+                if let Some(strategy) = strategy {
+                    column_rules.push(ColumnMaskRule {
+                        sheet: structure.name.clone(),
+                        col_index,
+                        header_text: header.clone(),
+                        strategy: strategy.to_string(),
+                        replacement: None,
+                    });
+                }
+            }
+            if !column_rules.is_empty() {
+                sheet_policies.push(SheetPolicy {
+                    sheet: structure.name.clone(),
+                    column_rules,
+                    cell_overrides: Vec::new(),
+                });
+            }
+        }
+        assert!(
+            !sheet_policies.is_empty(),
+            "sample workbook must expose at least one mappable column"
+        );
+        ExcelMaskingConfig {
+            file_path: "contacts.xlsx".to_string(),
+            sheet_policies,
+            retain_encrypted_source: true,
+            key_mode: EncSourceKeyMode::SecondaryPassphrase,
+            secondary_passphrase: Some("excel-browser-test-passphrase".to_string()),
+            processing_time_ms: None,
+            excel_config_sha256: None,
+        }
+    }
+
+    async fn parse_excel_structures(
+        runtime: &Runtime,
+        filename: &str,
+        bytes: &[u8],
+    ) -> Vec<SheetDef> {
+        let (content_type, body) = excel_parse_multipart(filename, bytes);
+        let response = request()
+            .method("POST")
+            .path("/api/v1/excel/parse-structure")
+            .header("content-type", content_type)
+            .body(body)
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(response.body()).expect("parse excel structures")
     }
 
     async fn submit(runtime: &Runtime, files: &[(&str, &[u8])]) -> CreateBatchResponse {
@@ -1504,6 +1635,205 @@ mod tests {
         assert!(downloaded.headers()["content-disposition"]
             .as_bytes()
             .ends_with(".md\"".as_bytes()));
+    }
+
+    #[tokio::test]
+    async fn excel_browser_jobs_persist_manifest_members_and_capture_sensitive_term_snapshot() {
+        let (temp, runtime) = test_runtime().await;
+        create_term(&runtime, "Alice", "person", None).await;
+        let sample = sample_xlsx();
+        let structures = parse_excel_structures(&runtime, "contacts.xlsx", &sample).await;
+        let config = build_excel_browser_config(&structures);
+        let (content_type, body) = excel_jobs_multipart(
+            "contacts.xlsx",
+            &sample,
+            &config,
+            r#"["phone","email","use_sensitive_terms"]"#,
+        );
+
+        let response = request()
+            .method("POST")
+            .path("/api/v1/excel/jobs")
+            .header("content-type", content_type)
+            .body(body)
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{:?}",
+            std::str::from_utf8(response.body())
+        );
+        let persisted: ExcelPersistArtifactsResponse =
+            serde_json::from_slice(response.body()).expect("excel persist response");
+        assert_eq!(persisted.persisted_files.len(), 4);
+        assert_eq!(
+            persisted
+                .persisted_files
+                .iter()
+                .map(|file| file.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ExcelArtifactMemberKind::MaskedWorkbook,
+                ExcelArtifactMemberKind::Ecmap,
+                ExcelArtifactMemberKind::Report,
+                ExcelArtifactMemberKind::EncryptedSource,
+            ]
+        );
+        assert!(
+            persisted.saved_directory_hint.contains(&persisted.batch_id),
+            "saved_directory_hint must be namespaced by batch id"
+        );
+        assert!(
+            persisted
+                .saved_directory_hint
+                .contains(&persisted.artifact_id),
+            "saved_directory_hint must include artifact id"
+        );
+
+        let detail = runtime
+            .store
+            .batch_detail(&persisted.batch_id)
+            .await
+            .expect("batch detail");
+        assert_eq!(detail.batch.status, BatchStatus::Completed);
+        assert_eq!(detail.files.len(), 1);
+        assert_eq!(detail.files[0].status, FileStatus::Completed);
+        assert_eq!(detail.files[0].masked_entity_count, Some(5));
+        assert_eq!(
+            detail.files[0].artifact_kind,
+            Some(ArtifactKind::ExcelBundleManifest)
+        );
+        assert!(!detail.files[0].restore_available);
+        assert_eq!(
+            runtime
+                .store
+                .event_count(&persisted.file_id, "ArtifactPersisted")
+                .await
+                .expect("artifact persisted event count"),
+            1
+        );
+
+        let snapshot_json = runtime
+            .store
+            .sensitive_terms_snapshot_json_for_batch(&persisted.batch_id)
+            .await
+            .expect("batch snapshot")
+            .expect("snapshot json must exist");
+        assert!(
+            snapshot_json.contains("Alice"),
+            "use_sensitive_terms request must freeze the sensitive-term snapshot"
+        );
+
+        let unsupported_download = request()
+            .method("GET")
+            .path(&format!("/api/v1/artifacts/{}", persisted.artifact_id))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(unsupported_download.status(), StatusCode::BAD_REQUEST);
+        let unsupported_error: ErrorResponse =
+            serde_json::from_slice(unsupported_download.body()).expect("unsupported error");
+        assert_eq!(unsupported_error.code, "ARTIFACT_KIND_UNSUPPORTED");
+
+        let members_response = request()
+            .method("GET")
+            .path(&format!(
+                "/api/v1/artifacts/{}/members",
+                persisted.artifact_id
+            ))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(members_response.status(), StatusCode::OK);
+        let members: ExcelArtifactMembersResponse =
+            serde_json::from_slice(members_response.body()).expect("artifact members response");
+        assert_eq!(members.artifact_id, persisted.artifact_id);
+        assert_eq!(members.batch_id, persisted.batch_id);
+        assert_eq!(members.persisted_files, persisted.persisted_files);
+
+        let report_response = request()
+            .method("GET")
+            .path(&format!(
+                "/api/v1/artifacts/{}/members/report",
+                persisted.artifact_id
+            ))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(report_response.status(), StatusCode::OK);
+        assert_eq!(
+            report_response.headers()["content-type"],
+            "text/markdown; charset=utf-8"
+        );
+        let report_body = std::str::from_utf8(report_response.body()).expect("report body");
+        assert!(report_body.contains("# Excel 脱敏处理报告"));
+        assert!(report_body.contains("**命中单元格数:** 5"));
+
+        let ecmap_response = request()
+            .method("GET")
+            .path(&format!(
+                "/api/v1/artifacts/{}/members/ecmap",
+                persisted.artifact_id
+            ))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(ecmap_response.status(), StatusCode::OK);
+        assert_eq!(
+            ecmap_response.headers()["content-type"],
+            "application/octet-stream"
+        );
+        assert!(ecmap_response.body().starts_with(b"ECMAP\x02"));
+
+        let encrypted_source_response = request()
+            .method("GET")
+            .path(&format!(
+                "/api/v1/artifacts/{}/members/encrypted_source",
+                persisted.artifact_id
+            ))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(encrypted_source_response.status(), StatusCode::OK);
+        assert_eq!(
+            encrypted_source_response.headers()["content-type"],
+            "application/octet-stream"
+        );
+        assert!(encrypted_source_response
+            .body()
+            .starts_with(b"VAULT_ENCSRC\x01"));
+
+        let masked_workbook_response = request()
+            .method("GET")
+            .path(&format!(
+                "/api/v1/artifacts/{}/members/masked_workbook",
+                persisted.artifact_id
+            ))
+            .reply(&routes(runtime.clone()))
+            .await;
+        assert_eq!(masked_workbook_response.status(), StatusCode::OK);
+        assert_eq!(
+            masked_workbook_response.headers()["content-type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        let workbook_path = temp.path().join("masked-from-browser.xlsx");
+        tokio::fs::write(&workbook_path, masked_workbook_response.body())
+            .await
+            .expect("write masked workbook");
+        let mut workbook =
+            open_workbook_auto(&workbook_path).expect("open masked workbook from member download");
+        let mut all_cells = Vec::new();
+        for sheet_name in workbook.sheet_names().to_vec() {
+            let range = workbook
+                .worksheet_range(&sheet_name)
+                .expect("worksheet range from masked workbook");
+            for row in range.rows() {
+                for cell in row {
+                    all_cells.push(cell.to_string());
+                }
+            }
+        }
+        let workbook_text = all_cells.join("\n");
+        assert!(!workbook_text.contains("alice@example.invalid"));
+        assert!(!workbook_text.contains("13900000000"));
+        assert!(workbook_text.contains("a***e@example.invalid"));
+        assert!(workbook_text.contains("139****0000"));
     }
 
     #[tokio::test]
@@ -1996,14 +2326,6 @@ mod tests {
         available
     }
 
-    fn ppt_sample() -> Vec<u8> {
-        include_bytes!("../tests/fixtures/sample_powerpoint.ppt").to_vec()
-    }
-
-    fn pptx_sample() -> Vec<u8> {
-        include_bytes!("../tests/fixtures/sample_powerpoint.pptx").to_vec()
-    }
-
     fn ppt_demo() -> Vec<u8> {
         include_bytes!("../tests/fixtures/ppt_normal_demo.ppt").to_vec()
     }
@@ -2018,10 +2340,6 @@ mod tests {
 
     fn ppt_corrupt() -> Vec<u8> {
         include_bytes!("../tests/fixtures/ppt_corrupt.ppt").to_vec()
-    }
-
-    fn ppt_corrupt_fast() -> Vec<u8> {
-        include_bytes!("../tests/fixtures/ppt_corrupt_fast.ppt").to_vec()
     }
 
     /// Build a minimal OLE2/CFB blob of at least 512 bytes.

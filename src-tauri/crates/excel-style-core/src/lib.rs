@@ -189,11 +189,10 @@ fn process_sheet_xml(
 
     let mut buf = Vec::new();
     let mut in_c_element = false;
-    let mut current_cell_r: Option<String> = None;
-    let mut cell_was_shared: bool = false;
-    let mut cell_needs_inline: bool = false;
+    let mut cell_rewrites_as_inline: bool = false;
     let mut in_v_element = false;
     let mut skip_v_text = false;
+    let mut skip_inline_depth = 0usize;
     let mut pending_v_replacement: Option<String> = None;
 
     loop {
@@ -203,9 +202,10 @@ fn process_sheet_xml(
                 let name_bytes = qname.as_ref();
                 if name_bytes == b"c" {
                     in_c_element = true;
-                    current_cell_r = attr_value(&e, b"r");
+                    let current_cell_r = attr_value(&e, b"r");
                     let t_attr = attr_value(&e, b"t");
-                    cell_was_shared = t_attr.as_deref() == Some("s");
+                    let cell_was_shared = t_attr.as_deref() == Some("s");
+                    let cell_was_inline = t_attr.as_deref() == Some("inlineStr");
                     let mut key_match: Option<String> = None;
                     if let Some(ref r_val) = current_cell_r {
                         if let Some((row, col)) = parse_cell_ref_a1(sheet_name, r_val) {
@@ -221,8 +221,10 @@ fn process_sheet_xml(
                             }
                         }
                     }
-                    cell_needs_inline = key_match.is_some() && cell_was_shared;
-                    if cell_needs_inline {
+                    cell_rewrites_as_inline =
+                        key_match.is_some() && (cell_was_shared || cell_was_inline);
+                    skip_inline_depth = 0;
+                    if cell_rewrites_as_inline && cell_was_shared {
                         let mut attrs_vec: Vec<Vec<u8>> = Vec::new();
                         for attr in e.attributes().flatten() {
                             let key_bytes = attr.key.as_ref();
@@ -230,7 +232,8 @@ fn process_sheet_xml(
                             if key_bytes == b"t" {
                                 attrs_vec.push(b"t=\"inlineStr\"".to_vec());
                             } else {
-                                let mut pair = Vec::with_capacity(key_bytes.len() + val_bytes.len() + 3);
+                                let mut pair =
+                                    Vec::with_capacity(key_bytes.len() + val_bytes.len() + 3);
                                 pair.extend_from_slice(key_bytes);
                                 pair.extend_from_slice(b"=\"");
                                 pair.extend_from_slice(val_bytes);
@@ -256,15 +259,19 @@ fn process_sheet_xml(
                         writer.write_event(Event::Start(e))?;
                     }
                     pending_v_replacement = key_match;
+                } else if in_c_element && cell_rewrites_as_inline && name_bytes == b"is" {
+                    skip_inline_depth = 1;
                 } else if name_bytes == b"v" && in_c_element {
                     in_v_element = true;
                     skip_v_text = false;
                     if pending_v_replacement.is_some() {
                         skip_v_text = true;
                     }
-                    if !cell_needs_inline {
+                    if !cell_rewrites_as_inline {
                         writer.write_event(Event::Start(e))?;
                     }
+                } else if skip_inline_depth > 0 {
+                    skip_inline_depth += 1;
                 } else {
                     writer.write_event(Event::Start(e))?;
                 }
@@ -273,7 +280,7 @@ fn process_sheet_xml(
                 let qname = e.name();
                 let name_bytes = qname.as_ref();
                 if name_bytes == b"c" {
-                    if cell_needs_inline {
+                    if cell_rewrites_as_inline {
                         if let Some(ref new_val) = pending_v_replacement {
                             let escaped = escape_xml_text(new_val);
                             writer.write_event(Event::Start(
@@ -282,30 +289,29 @@ fn process_sheet_xml(
                             writer.write_event(Event::Start(
                                 quick_xml::events::BytesStart::new("t"),
                             ))?;
-                            writer.write_event(Event::Text(
-                                quick_xml::events::BytesText::new(&escaped),
-                            ))?;
-                            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-                                "t",
+                            writer.write_event(Event::Text(quick_xml::events::BytesText::new(
+                                &escaped,
                             )))?;
-                            writer.write_event(Event::End(quick_xml::events::BytesEnd::new(
-                                "is",
-                            )))?;
+                            writer
+                                .write_event(Event::End(quick_xml::events::BytesEnd::new("t")))?;
+                            writer
+                                .write_event(Event::End(quick_xml::events::BytesEnd::new("is")))?;
                         }
                     }
                     in_c_element = false;
-                    current_cell_r = None;
-                    cell_was_shared = false;
-                    cell_needs_inline = false;
+                    cell_rewrites_as_inline = false;
                     pending_v_replacement = None;
+                    skip_inline_depth = 0;
                     writer.write_event(Event::End(e))?;
+                } else if skip_inline_depth > 0 {
+                    skip_inline_depth = skip_inline_depth.saturating_sub(1);
                 } else if name_bytes == b"v" && in_v_element {
-                    if !cell_needs_inline {
+                    if !cell_rewrites_as_inline {
                         if let Some(ref new_val) = pending_v_replacement {
                             let escaped = escape_xml_text(new_val);
-                            writer.write_event(Event::Text(
-                                quick_xml::events::BytesText::new(&escaped),
-                            ))?;
+                            writer.write_event(Event::Text(quick_xml::events::BytesText::new(
+                                &escaped,
+                            )))?;
                         }
                         writer.write_event(Event::End(e))?;
                     }
@@ -316,10 +322,12 @@ fn process_sheet_xml(
                 }
             }
             Ok(Event::Empty(e)) => {
-                writer.write_event(Event::Empty(e))?;
+                if skip_inline_depth == 0 {
+                    writer.write_event(Event::Empty(e))?;
+                }
             }
             Ok(Event::Text(e)) => {
-                if in_v_element && skip_v_text {
+                if (in_v_element && skip_v_text) || skip_inline_depth > 0 {
                     // skip
                 } else {
                     writer.write_event(Event::Text(e))?;
@@ -329,7 +337,7 @@ fn process_sheet_xml(
                 writer.write_event(Event::Comment(e))?;
             }
             Ok(Event::CData(e)) => {
-                if in_v_element && skip_v_text {
+                if (in_v_element && skip_v_text) || skip_inline_depth > 0 {
                     // skip
                 } else {
                     writer.write_event(Event::CData(e))?;

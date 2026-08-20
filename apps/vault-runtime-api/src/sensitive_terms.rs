@@ -316,15 +316,15 @@ fn import_invalid(message: impl Into<String>) -> Rejection {
     )
 }
 
+type ImportedSensitiveTermRow = (String, String, Option<String>, bool);
+
 /// Parse and fully validate a CSV upload into `(category, term, description,
 /// enabled)` rows, ready for `Store::import_sensitive_terms`. Every check
 /// here fails the request outright — there is no partial-parse fallback
 /// (8.5): non-UTF-8 bytes, a missing/incorrect header, wrong column count,
 /// or an illegal status value all reject the whole file before any row
 /// reaches storage.
-fn parse_sensitive_terms_csv(
-    bytes: &[u8],
-) -> Result<Vec<(String, String, Option<String>, bool)>, Rejection> {
+fn parse_sensitive_terms_csv(bytes: &[u8]) -> Result<Vec<ImportedSensitiveTermRow>, Rejection> {
     let bytes = strip_utf8_bom(bytes);
     let text = std::str::from_utf8(bytes)
         .map_err(|_| import_invalid("CSV 文件必须是合法的 UTF-8 编码"))?;

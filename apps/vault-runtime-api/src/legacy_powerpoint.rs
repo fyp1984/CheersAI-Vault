@@ -23,13 +23,13 @@
 //!
 //! Error classification (callers see only safe codes, never paths or stderr):
 //! - `InputCorrupted`        – input is provably corrupt: empty, cannot be
-//!                            opened as a valid OLE2/CFB compound file, or
-//!                            has zero streams.
+//!   opened as a valid OLE2/CFB compound file, or has zero streams.
 //! - `Internal`              – converter ran but its process failed (non-zero
-//!                            exit, missing output, or output not valid PPTX).
+//!   exit, missing output, or output not valid PPTX).
 //! - `ConverterUnavailable`  – no candidate found or spawn failed.
 //! - `ProcessingTimeout`     – conversion exceeded the deadline.
 //! - `ResourceLimitExceeded` – input or output exceeds size limits.
+//!
 //! Safe messages never expose command lines, absolute paths, or temp dirs.
 
 use std::path::{Path, PathBuf};
@@ -610,7 +610,7 @@ mod tests {
         // A valid ZIP that is not a PPTX
         let plain_zip = minimal_valid_zip();
         assert!(
-            !validate_pptx_output(&plain_zip),
+            !validate_pptx_output(plain_zip),
             "plain ZIP must be rejected by engine_core parser"
         );
     }
@@ -887,7 +887,7 @@ mod tests {
 
     /// Write a valid PPTX to `dest` from the fictional.pptx fixture.
     fn copy_valid_pptx_to(dest: &Path) {
-        std::fs::write(dest, &valid_pptx_bytes()).unwrap();
+        std::fs::write(dest, valid_pptx_bytes()).unwrap();
     }
 
     #[tokio::test]

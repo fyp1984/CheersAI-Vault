@@ -32,6 +32,14 @@ export type RuntimeFileStatus = "Pending" | "Processing" | "Completed" | "Failed
 
 export type RuntimeBatchStatus = "Running" | "Completed" | "CompletedWithErrors" | "Failed";
 
+export type RuntimeArtifactKind = "markdown" | "excel_bundle_manifest";
+
+export type RuntimeExcelArtifactMemberKind =
+  | "masked_workbook"
+  | "ecmap"
+  | "encrypted_source"
+  | "report";
+
 export interface RuntimeRuleMetadata {
   id: string;
   name: string;
@@ -71,6 +79,7 @@ export interface RuntimeBatchFile {
   attempt: number;
   masked_entity_count: number | null;
   artifact_id: string | null;
+  artifact_kind: RuntimeArtifactKind | null;
   error_code: string | null;
   error_message: string | null;
   restore_available: boolean;
@@ -90,6 +99,27 @@ export interface RuntimeRetryResponse {
   file_id: string;
   status: RuntimeFileStatus;
   attempt: number;
+}
+
+export interface RuntimeExcelPersistedFile {
+  kind: RuntimeExcelArtifactMemberKind;
+  display_name: string;
+  size_bytes: number;
+}
+
+export interface RuntimeExcelPersistArtifactsResponse {
+  batch_id: string;
+  file_id: string;
+  artifact_id: string;
+  persisted_files: RuntimeExcelPersistedFile[];
+  saved_directory_hint: string;
+}
+
+export interface RuntimeExcelArtifactMembersResponse {
+  artifact_id: string;
+  batch_id: string;
+  saved_directory_hint: string;
+  persisted_files: RuntimeExcelPersistedFile[];
 }
 
 /** 服务端结构化错误体，仅承载 `code`/`message`/`retryable` 三个安全字段。 */
