@@ -941,7 +941,9 @@ fn parse_pdf_with_python_ocr_range(
 pub struct SheetDef {
     pub name: String,
     pub headers: Vec<String>,
-    pub data_hint: Vec<String>,
+    pub column_samples: Vec<Vec<String>>,
+    #[serde(rename = "data_hint", skip_serializing_if = "Option::is_none")]
+    pub deprecated_data_hint: Option<Vec<String>>,
     pub max_row: u32,
     pub max_col: u32,
 }
@@ -977,24 +979,24 @@ pub fn parse_excel_structure_detailed(path: &str) -> Result<Vec<SheetDef>, Strin
             Vec::new()
         };
 
-        let preview_max = std::cmp::min(5usize, height_usize.saturating_sub(1));
-        let mut data_hint = Vec::with_capacity(preview_max);
-        for r in 1..=preview_max {
-            let row_cells: Vec<String> = (0..width_usize)
-                .map(|c| {
-                    range
-                        .get((r, c))
-                        .map(cell_to_string_calamine)
-                        .unwrap_or_default()
-                })
-                .collect();
-            data_hint.push(row_cells.join(" | "));
+        let sample_rows = std::cmp::min(5usize, height_usize.saturating_sub(1));
+        let mut column_samples: Vec<Vec<String>> =
+            (0..width_usize).map(|_| Vec::with_capacity(sample_rows)).collect();
+        for r in 1..=sample_rows {
+            for c in 0..width_usize {
+                let value = range
+                    .get((r, c))
+                    .map(cell_to_string_calamine)
+                    .unwrap_or_default();
+                column_samples[c].push(value);
+            }
         }
 
         result.push(SheetDef {
             name: sheet_name,
             headers,
-            data_hint,
+            column_samples,
+            deprecated_data_hint: None,
             max_row,
             max_col,
         });

@@ -172,7 +172,11 @@ fn mask_value(value: &str, rule: &ColumnMaskingRule) -> String {
     }
     let middle = len.saturating_sub(keep_prefix + keep_suffix);
     out.extend(std::iter::repeat_n(mask_char, middle));
-    for ch in chars.iter().skip(len.saturating_sub(keep_suffix)).take(keep_suffix) {
+    for ch in chars
+        .iter()
+        .skip(len.saturating_sub(keep_suffix))
+        .take(keep_suffix)
+    {
         out.push(*ch);
     }
     out

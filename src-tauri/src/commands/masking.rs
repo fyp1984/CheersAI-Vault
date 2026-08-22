@@ -902,6 +902,16 @@ pub async fn preview_masking(options: PreviewOptions) -> Result<PreviewResult, S
         masked_file_stem,
         output_extension_for_format(&format)
     );
+    let original_file_stem = std::path::Path::new(&options.file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文件")
+        .to_string();
+    let original_file_name = std::path::Path::new(&options.file_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文件")
+        .to_string();
 
     match format {
         file_parser::FileFormat::Csv => {
@@ -1357,19 +1367,20 @@ pub async fn save_preview_result(options: SavePreviewOptions) -> Result<MaskResu
         // 对文件名应用脱敏规则
         let mut temp_mapping = std::collections::HashMap::new();
         let mut temp_counter = 0usize;
-        build_masked_file_stem(
+        let masked = build_masked_file_stem(
             &options.file_path,
             &active_rules,
             &ner_detector,
             &mut temp_mapping,
             &mut temp_counter,
+            options.page_range,
         );
 
         // 添加页码标识（如果有）
         if let Some((start, end)) = options.page_range {
-            format!("{}_脱敏_p{}-{}", masked, start, end)
+            format!("{}_p{}-{}", masked, start, end)
         } else {
-            format!("{}_脱敏", masked)
+            masked
         }
     } else {
         // 没有提供 rule_ids，只添加后缀

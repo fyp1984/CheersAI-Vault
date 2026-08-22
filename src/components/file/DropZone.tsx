@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
+import { normalizeCaughtRuntimeErrorMessage } from "@/lib/runtime/errorClassification";
 import ExcelMaskingDialog from "@/components/file/ExcelMaskingDialog";
 import type { ExcelApplyResult, ExcelMaskingConfig } from "@/types/commands";
 
@@ -95,8 +96,11 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
     ) => {
       const outDir = outputDirOverride || outputDir;
       const nonExcel = pendingPaths.filter((p) => !isExcelFile(p));
+      const originalExcel = pendingPaths.filter(isExcelFile);
 
       let producedPaths: string[] = [];
+      let lastCaught: unknown = null;
+      let successCount = 0;
       for (const cfg of configs) {
         try {
           const res: ExcelApplyResult = await tauriCommands.excelApplyMasking(
@@ -108,14 +112,27 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
             res.ecmap_path,
             res.encrypted_source_path,
           ].filter((s): s is string => Boolean(s));
-          producedPaths = producedPaths.concat(candidates);
+          if (candidates.length > 0) {
+            producedPaths = producedPaths.concat(candidates);
+            successCount += 1;
+          } else {
+            producedPaths.push(cfg.file_path);
+          }
         } catch (err) {
+          lastCaught = err;
           console.error("excelApplyMasking failed:", cfg.file_path, err);
           producedPaths.push(cfg.file_path);
         }
       }
 
-      const originalExcel = pendingPaths.filter(isExcelFile);
+      if (successCount === 0 && originalExcel.length > 0 && lastCaught !== null) {
+        const userMsg = normalizeCaughtRuntimeErrorMessage(
+          lastCaught,
+          "Excel 脱敏执行失败，请检查 Runtime 或本地文件权限后重试。"
+        );
+        throw new Error(userMsg);
+      }
+
       const fallbackExcel = producedPaths.length > 0 ? [] : originalExcel;
       const finalPaths = [
         ...nonExcel,

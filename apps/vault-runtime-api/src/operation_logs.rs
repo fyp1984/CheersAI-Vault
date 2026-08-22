@@ -124,7 +124,7 @@ async fn list_handler(query: ListQuery, runtime: Runtime) -> Result<impl Reply, 
     let total_pages = if total_count == 0 {
         0
     } else {
-        (total_count + page_size - 1) / page_size
+        total_count.div_ceil(page_size)
     };
     Ok(warp::reply::json(&OperationLogListResponse {
         entries,

@@ -174,9 +174,7 @@ impl FileBaySession {
     /// 取得已构造的生产 client；未配置/无效会话不持有 client，返回既有
     /// not-ready 错误，绝不为占位 client 触发网络/系统代理访问。
     fn client(&self) -> Result<&FileBayClient<SessionTransport>, FileBayOpError> {
-        self.client
-            .as_ref()
-            .ok_or_else(|| self.not_ready_error())
+        self.client.as_ref().ok_or_else(|| self.not_ready_error())
     }
 
     fn not_ready_error(&self) -> FileBayOpError {
