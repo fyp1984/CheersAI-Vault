@@ -156,6 +156,87 @@ export function canConfirmExcelMasking(
   return hasAnyExcelMaskingRule(rulesCount) && confirmSecondCheck;
 }
 
+export const MAX_CELL_OVERRIDE_CELLS = 10_000;
+export const CELL_RANGE_LIMIT_ERROR =
+  "单次单元格覆盖最多 10,000 个单元格，请缩小范围后重试";
+const CELL_RANGE_FORMAT_ERROR =
+  "单元格引用格式不正确，请使用如 A1、B3:D5 或 Sheet1!A2:B3 的格式";
+
+export interface ParsedCellRange {
+  sheet: string;
+  cells: { row: number; col: number }[];
+}
+
+type CellRangeParseResult =
+  | { status: "valid"; value: ParsedCellRange }
+  | { status: "invalid" }
+  | { status: "too-large" };
+
+function inspectCellRange(input: string, defaultSheet: string): CellRangeParseResult {
+  const trimmed = input.trim();
+  if (!trimmed) return { status: "invalid" };
+
+  const colLetterToIndex = (letters: string): number | null => {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+      result = result * 26 + (letters.charCodeAt(i) - 64);
+      if (!Number.isSafeInteger(result)) return null;
+    }
+    return result - 1;
+  };
+
+  const parseRef = (ref: string): { col: number; row: number } | null => {
+    const match = ref.match(/^([A-Za-z]+)(\d+)$/);
+    if (!match) return null;
+    const oneBasedRow = Number(match[2]);
+    const col = colLetterToIndex(match[1].toUpperCase());
+    if (!Number.isSafeInteger(oneBasedRow) || oneBasedRow < 1 || col === null) {
+      return null;
+    }
+    return { col, row: oneBasedRow - 1 };
+  };
+
+  const separatorIndex = trimmed.indexOf("!");
+  let sheetName = defaultSheet;
+  let refPart = trimmed;
+  if (separatorIndex >= 0) {
+    sheetName = trimmed.slice(0, separatorIndex);
+    refPart = trimmed.slice(separatorIndex + 1);
+  }
+  if (!sheetName.trim()) return { status: "invalid" };
+
+  const colonIndex = refPart.indexOf(":");
+  if (colonIndex >= 0) {
+    const start = parseRef(refPart.slice(0, colonIndex));
+    const end = parseRef(refPart.slice(colonIndex + 1));
+    if (!start || !end || start.row > end.row || start.col > end.col) {
+      return { status: "invalid" };
+    }
+
+    const rowCount = end.row - start.row + 1;
+    const colCount = end.col - start.col + 1;
+    if (
+      rowCount > MAX_CELL_OVERRIDE_CELLS ||
+      colCount > MAX_CELL_OVERRIDE_CELLS ||
+      rowCount > Math.floor(MAX_CELL_OVERRIDE_CELLS / colCount)
+    ) {
+      return { status: "too-large" };
+    }
+
+    const cells: ParsedCellRange["cells"] = [];
+    for (let row = start.row; row <= end.row; row++) {
+      for (let col = start.col; col <= end.col; col++) {
+        cells.push({ row, col });
+      }
+    }
+    return { status: "valid", value: { sheet: sheetName, cells } };
+  }
+
+  const single = parseRef(refPart);
+  if (!single) return { status: "invalid" };
+  return { status: "valid", value: { sheet: sheetName, cells: [single] } };
+}
+
 /**
  * Parses a cell-override reference: a single cell (`A1`), a rectangle
  * (`B3:D5`), optionally prefixed with an explicit sheet (`Sheet1!A2:B3`,
@@ -165,62 +246,31 @@ export function canConfirmExcelMasking(
 export function parseCellRange(
   input: string,
   defaultSheet: string
-): { sheet: string; cells: { row: number; col: number }[] } | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
+): ParsedCellRange | null {
+  const result = inspectCellRange(input, defaultSheet);
+  return result.status === "valid" ? result.value : null;
+}
 
-  const colLetterToIndex = (letters: string): number => {
-    let result = 0;
-    for (let i = 0; i < letters.length; i++) {
-      result = result * 26 + (letters.charCodeAt(i) - 64);
-    }
-    return result - 1;
-  };
-
-  const parseRef = (ref: string): { col: number; row: number } | null => {
-    const m = ref.match(/^([A-Za-z]+)(\d+)$/);
-    if (!m) return null;
-    const oneBasedRow = parseInt(m[2], 10);
-    // A 1-based row number of 0 (`A0`) or with leading zeros that parse to 0
-    // (`A00`) is not a valid Excel reference; row 1 is the first row.
-    if (!Number.isFinite(oneBasedRow) || oneBasedRow < 1) return null;
-    return {
-      col: colLetterToIndex(m[1].toUpperCase()),
-      row: oneBasedRow - 1,
-    };
-  };
-
-  const sepIdx = trimmed.indexOf("!");
-  let sheetName = defaultSheet;
-  let refPart = trimmed;
-  if (sepIdx >= 0) {
-    sheetName = trimmed.slice(0, sepIdx);
-    refPart = trimmed.slice(sepIdx + 1);
-  }
-  // An explicit sheet prefix must not be empty/whitespace-only (`!A1`); the
-  // implicit default-sheet case can't produce this, since `defaultSheet` is
-  // never assigned here when there is no `!`.
-  if (!sheetName.trim()) return null;
-
-  const colonIdx = refPart.indexOf(":");
-  if (colonIdx >= 0) {
-    const start = parseRef(refPart.slice(0, colonIdx));
-    const end = parseRef(refPart.slice(colonIdx + 1));
-    if (!start || !end) return null;
-    // A reversed range (start after end on either axis) is not a valid
-    // rectangle — reject it instead of silently producing zero cells.
-    if (start.row > end.row || start.col > end.col) return null;
-    const cells: { row: number; col: number }[] = [];
-    for (let r = start.row; r <= end.row; r++) {
-      for (let c = start.col; c <= end.col; c++) {
-        cells.push({ row: r, col: c });
-      }
-    }
-    return { sheet: sheetName, cells };
-  }
-  const single = parseRef(refPart);
-  if (!single) return null;
-  return { sheet: sheetName, cells: [single] };
+export function mergeCellOverrides(
+  existing: CellOverrideRule[],
+  parsed: ParsedCellRange,
+  strategy: MaskingStrategyId,
+  replacement: string
+): CellOverrideRule[] {
+  const targetKeys = new Set(
+    parsed.cells.map((cell) => `${parsed.sheet}\0${cell.row}\0${cell.col}`)
+  );
+  const retained = existing.filter(
+    (rule) => !targetKeys.has(`${rule.sheet}\0${rule.row}\0${rule.col}`)
+  );
+  const additions = parsed.cells.map((cell) => ({
+    sheet: parsed.sheet,
+    row: cell.row,
+    col: cell.col,
+    strategy,
+    replacement: replacement || undefined,
+  }));
+  return retained.concat(additions);
 }
 
 /**
@@ -234,9 +284,11 @@ export function cellRangeValidationError(
   defaultSheet: string
 ): string | null {
   if (!input.trim()) return null;
-  return parseCellRange(input, defaultSheet)
-    ? null
-    : "单元格引用格式不正确，请使用如 A1、B3:D5 或 Sheet1!A2:B3 的格式";
+  const result = inspectCellRange(input, defaultSheet);
+  if (result.status === "valid") return null;
+  return result.status === "too-large"
+    ? CELL_RANGE_LIMIT_ERROR
+    : CELL_RANGE_FORMAT_ERROR;
 }
 
 /**
@@ -482,27 +534,9 @@ export default function ExcelMaskingDialog({
   const addCellOverride = useCallback(() => {
     const parsed = parseCellRange(overrideCellInput, selectedSheet);
     if (!parsed) return;
-    setCellOverrides((prev) => {
-      let next = [...prev];
-      for (const cell of parsed.cells) {
-        next = next.filter(
-          (o) =>
-            !(
-              o.sheet === parsed.sheet &&
-              o.row === cell.row &&
-              o.col === cell.col
-            )
-        );
-        next.push({
-          sheet: parsed.sheet,
-          row: cell.row,
-          col: cell.col,
-          strategy: overrideStrategy,
-          replacement: overrideReplacement || undefined,
-        });
-      }
-      return next;
-    });
+    setCellOverrides((prev) =>
+      mergeCellOverrides(prev, parsed, overrideStrategy, overrideReplacement)
+    );
     setOverrideCellInput("");
     setOverrideReplacement("");
   }, [overrideCellInput, overrideStrategy, overrideReplacement, selectedSheet]);

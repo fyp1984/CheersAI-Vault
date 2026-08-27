@@ -315,7 +315,12 @@ fn passphrase_from_mode(
     fallback_sandbox: &str,
 ) -> Result<String, String> {
     match mode {
-        EncSourcePassMode::SandboxReused => Ok(fallback_sandbox.to_string()),
+        EncSourcePassMode::SandboxReused => {
+            if fallback_sandbox.trim().is_empty() {
+                return Err("Sandbox passphrase must not be empty".to_string());
+            }
+            Ok(fallback_sandbox.to_string())
+        }
         EncSourcePassMode::SecondaryPhrase { phrase } => Ok(phrase.clone()),
         EncSourcePassMode::DeviceKey => {
             let entry = keyring::Entry::new("cheersai-vault-device-master", "device")
@@ -506,4 +511,38 @@ pub fn decrypt_encsrc(data: &[u8], pass: &str) -> Result<Vec<u8>, String> {
         }
     }
     Err("ENCSRC decryption failed — wrong passphrase/device?".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{encrypt_ecmap, encrypt_encsrc, passphrase_from_mode, EncSourcePassMode};
+
+    #[test]
+    fn sandbox_reused_rejects_empty_and_whitespace_only_fallbacks() {
+        for fallback in ["", "   ", "\t\n"] {
+            let result = passphrase_from_mode(&EncSourcePassMode::SandboxReused, fallback);
+            assert_eq!(result.unwrap_err(), "Sandbox passphrase must not be empty");
+        }
+    }
+
+    #[test]
+    fn sandbox_reused_preserves_non_empty_fallback_bytes() {
+        let fallback = "  fixture sandbox passphrase  ";
+        let result = passphrase_from_mode(&EncSourcePassMode::SandboxReused, fallback);
+        assert_eq!(result.as_deref(), Ok(fallback));
+    }
+
+    #[test]
+    fn encryption_boundaries_fail_closed_for_empty_sandbox_fallbacks() {
+        for fallback in ["", "   ", "\t\n"] {
+            assert_eq!(
+                encrypt_ecmap(b"{}", fallback, EncSourcePassMode::SandboxReused).unwrap_err(),
+                "Sandbox passphrase must not be empty"
+            );
+            assert_eq!(
+                encrypt_encsrc(b"fixture", fallback, EncSourcePassMode::SandboxReused).unwrap_err(),
+                "Sandbox passphrase must not be empty"
+            );
+        }
+    }
 }

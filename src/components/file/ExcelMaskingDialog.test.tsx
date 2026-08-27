@@ -3,6 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CELL_RANGE_LIMIT_ERROR,
+  MAX_CELL_OVERRIDE_CELLS,
   getMaskingStrategyOptionState,
   isSelectableMaskingStrategy,
   PLACEHOLDER_STRATEGIES,
@@ -11,6 +13,7 @@ import {
   cellRangeValidationError,
   hasAnyExcelMaskingRule,
   isStalePreviewResponse,
+  mergeCellOverrides,
   nextSecondaryPassphraseForKeyMode,
   parseCellRange,
 } from "./ExcelMaskingDialog";
@@ -184,6 +187,51 @@ test("parseCellRange keeps accepting every legal single-cell/range/multi-region 
   assert.notEqual(parseCellRange("B3:D5", "Sheet1"), null);
   assert.notEqual(parseCellRange("Sheet1!A2:B3", "OtherSheet"), null);
   assert.notEqual(parseCellRange("Sheet2!B3", "Sheet1"), null);
+});
+
+test("parseCellRange accepts exactly 10,000 cells and rejects 10,001 before expansion", () => {
+  const boundary = parseCellRange("Sheet1!A1:A10000", "OtherSheet");
+  assert.notEqual(boundary, null);
+  assert.equal(boundary?.cells.length, MAX_CELL_OVERRIDE_CELLS);
+  assert.equal(parseCellRange("A1:A10001", "Sheet1"), null);
+  assert.equal(parseCellRange("A1:Z1000000", "Sheet1"), null);
+});
+
+test("oversized CellRef uses the fixed 10,000 limit message", () => {
+  assert.equal(
+    cellRangeValidationError("A1:A10001", "Sheet1"),
+    CELL_RANGE_LIMIT_ERROR
+  );
+  assert.match(CELL_RANGE_LIMIT_ERROR, /10,000/);
+  assert.doesNotMatch(CELL_RANGE_LIMIT_ERROR, /stack|Error|\//i);
+});
+
+test("mergeCellOverrides replaces a 10,000-cell range without duplicates", () => {
+  const parsed = parseCellRange("A1:CV100", "Sheet1");
+  assert.notEqual(parsed, null);
+  assert.equal(parsed?.cells.length, MAX_CELL_OVERRIDE_CELLS);
+
+  const existing = (parsed?.cells ?? []).map((cell) => ({
+    sheet: "Sheet1",
+    row: cell.row,
+    col: cell.col,
+    strategy: "FULL_MASK" as const,
+    replacement: undefined,
+  }));
+  const merged = mergeCellOverrides(
+    existing,
+    parsed!,
+    "PHONE_MID4",
+    "fixture-replacement"
+  );
+
+  assert.equal(merged.length, MAX_CELL_OVERRIDE_CELLS);
+  assert.equal(
+    new Set(merged.map((rule) => `${rule.sheet}:${rule.row}:${rule.col}`)).size,
+    MAX_CELL_OVERRIDE_CELLS
+  );
+  assert.equal(merged[0].strategy, "PHONE_MID4");
+  assert.equal(merged[merged.length - 1]?.replacement, "fixture-replacement");
 });
 
 test("cellRangeValidationError rejects every R2 illegal form with the fixed safe message and no leaked detail", () => {

@@ -114,6 +114,29 @@ test("rejects SECONDARY_PASSPHRASE mode with an empty or missing secondary passp
   );
 });
 
+test("rejects SANDBOX_REUSED mode when the sandbox passphrase is missing, empty, or whitespace-only", () => {
+  for (const sandboxPassphrase of [undefined, "", "   \t\n"]) {
+    assert.throws(
+      () =>
+        toTauriExcelMaskingConfig(baseConfig({ key_mode: "SANDBOX_REUSED" }), {
+          sandboxPassphrase,
+        }),
+      (error: unknown) =>
+        error instanceof ExcelMaskingContractError &&
+        error.message === "沙箱口令不能为空"
+    );
+  }
+});
+
+test("preserves every byte of a non-empty SANDBOX_REUSED passphrase", () => {
+  const sandboxPassphrase = "  fixture sandbox passphrase  ";
+  const native = toTauriExcelMaskingConfig(
+    baseConfig({ key_mode: "SANDBOX_REUSED" }),
+    { sandboxPassphrase }
+  );
+  assert.equal(native.passphrase, sandboxPassphrase);
+});
+
 test("rejects an unknown key mode instead of silently downgrading", () => {
   assert.throws(
     () =>

@@ -371,6 +371,12 @@ export function toTauriExcelMaskingConfig(
   });
 
   const source_pass_mode = toSourcePassMode(config.key_mode, config.secondary_passphrase);
+  if (
+    config.key_mode === "SANDBOX_REUSED" &&
+    !options.sandboxPassphrase?.trim()
+  ) {
+    throw new ExcelMaskingContractError("沙箱口令不能为空");
+  }
 
   return {
     input_file_path: config.file_path,
