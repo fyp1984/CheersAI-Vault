@@ -325,6 +325,5 @@ export interface ExcelRestoreReq {
 
 export interface ExcelRestoreResult {
   restored_path: string;
-  matched: boolean;
-  restored_count: number;
+  sha256_verified: boolean;
 }

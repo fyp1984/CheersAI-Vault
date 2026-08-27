@@ -15,6 +15,8 @@ use thiserror::Error;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+pub mod table_reader;
+
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct CellKey {
     pub sheet: String,
@@ -563,6 +565,174 @@ pub fn fallback_xlsxwriter_full(
         .map_err(|e: XlsxError| EsError::Engine(format!("Save workbook error: {}", e)))?;
 
     Ok(outcome)
+}
+
+/// One legacy `.xls` worksheet read in full via calamine: a dense,
+/// row-major matrix (row 0 is always the header row, matching the
+/// `row_idx`/`col_idx` convention used everywhere else in this crate and
+/// its host callers), preserving every coordinate including empty cells
+/// (as `""`).
+struct LegacySheet {
+    name: String,
+    rows: Vec<Vec<String>>,
+}
+
+fn legacy_cell_to_string(cell: &calamine::Data) -> String {
+    use calamine::Data;
+    match cell {
+        Data::Int(i) => i.to_string(),
+        Data::Float(f) => f.to_string(),
+        Data::String(s) => s.clone(),
+        Data::Bool(b) => b.to_string(),
+        Data::DateTime(dt) => dt.to_string(),
+        Data::DateTimeIso(s) => s.clone(),
+        Data::DurationIso(s) => s.clone(),
+        Data::Error(e) => format!("Error: {:?}", e),
+        Data::Empty => String::new(),
+    }
+}
+
+fn read_legacy_xls_workbook(path: &Path) -> Result<Vec<LegacySheet>, EsError> {
+    use calamine::{open_workbook_auto, Reader};
+
+    let mut workbook = open_workbook_auto(path)
+        .map_err(|e| EsError::Engine(format!("Failed to open legacy workbook: {e}")))?;
+    let sheet_names = workbook.sheet_names().to_vec();
+    let mut sheets = Vec::with_capacity(sheet_names.len());
+
+    for name in sheet_names {
+        let range = workbook
+            .worksheet_range(&name)
+            .map_err(|e| EsError::Engine(format!("Worksheet '{name}' error: {e}")))?;
+        let (height, width) = range.get_size();
+        let mut rows = Vec::with_capacity(height);
+        for r in 0..height {
+            let mut row = Vec::with_capacity(width);
+            for c in 0..width {
+                row.push(
+                    range
+                        .get((r, c))
+                        .map(legacy_cell_to_string)
+                        .unwrap_or_default(),
+                );
+            }
+            rows.push(row);
+        }
+        sheets.push(LegacySheet { name, rows });
+    }
+
+    Ok(sheets)
+}
+
+/// One cell actually changed by [`rewrite_legacy_xls_with_mask`] — the
+/// single source of truth a caller should build `.ecmap` entries from,
+/// instead of a second independent traversal of the file that could drift
+/// from what was actually written to the output workbook.
+#[derive(Debug, Clone)]
+pub struct LegacyCellChange {
+    pub sheet: String,
+    /// 0-based row index within the sheet's dense matrix; row 0 is always
+    /// the header and never appears here (the header is copied through
+    /// unmasked, matching every other masking path in this codebase).
+    pub row_idx: usize,
+    pub col_idx: usize,
+    pub original: String,
+    pub masked: String,
+}
+
+/// The legacy OLE `.xls` masking path (R3). `.xls` is not an OOXML ZIP
+/// archive, so [`rewrite_clone_inject`] can never clone-inject into it —
+/// this instead reads every sheet in full via calamine, calls the host's
+/// `mask_cell` callback for every data cell (row 0, the header, is always
+/// copied through verbatim and never passed to the callback), and writes a
+/// brand-new multi-sheet `.xlsx` via `rust_xlsxwriter` that preserves sheet
+/// order, sheet names, every row/column coordinate — including untouched
+/// and empty cells — and changes only the cells the callback actually
+/// masked. The returned [`LegacyCellChange`] list is exactly what was
+/// written to `output`, so a caller building `.ecmap` entries from it
+/// cannot drift from the produced artifact.
+///
+/// The result always reports `downgrade_used = true`: `.xls` carries no
+/// OOXML style/formula/chart data to preserve, so the output is explicitly
+/// a pure-data `.xlsx`, never a style-preservation claim. Any failure to
+/// read a sheet, set a sheet name, write a cell, or save the workbook
+/// returns `Err` — this function never falls back to a partial/empty-rows
+/// "success".
+pub fn rewrite_legacy_xls_with_mask<F>(
+    input: &Path,
+    output: &Path,
+    mut mask_cell: F,
+) -> Result<(RewriteOutcome, Vec<LegacyCellChange>), EsError>
+where
+    F: FnMut(&str, usize, usize, &str) -> String,
+{
+    use rust_xlsxwriter::{Workbook, XlsxError};
+
+    let sheets = read_legacy_xls_workbook(input)?;
+    if sheets.is_empty() {
+        return Err(EsError::Engine(
+            "legacy workbook has no worksheets".to_string(),
+        ));
+    }
+
+    let mut workbook = Workbook::new();
+    let mut changes = Vec::new();
+    let mut covered_cells: u64 = 0;
+
+    for sheet in &sheets {
+        let worksheet = workbook
+            .add_worksheet()
+            .set_name(&sheet.name)
+            .map_err(|e: XlsxError| EsError::Engine(format!("Worksheet name error: {e}")))?;
+
+        for (row_idx, row) in sheet.rows.iter().enumerate() {
+            for (col_idx, original) in row.iter().enumerate() {
+                let value = if row_idx == 0 {
+                    original.clone()
+                } else {
+                    let masked = mask_cell(&sheet.name, row_idx, col_idx, original);
+                    if !original.is_empty() && masked != *original {
+                        changes.push(LegacyCellChange {
+                            sheet: sheet.name.clone(),
+                            row_idx,
+                            col_idx,
+                            original: original.clone(),
+                            masked: masked.clone(),
+                        });
+                    }
+                    masked
+                };
+                if !value.is_empty() {
+                    worksheet
+                        .write_string(row_idx as u32, col_idx as u16, value.as_str())
+                        .map_err(|e: XlsxError| {
+                            EsError::Engine(format!("Write cell error: {e}"))
+                        })?;
+                }
+                covered_cells += 1;
+            }
+        }
+    }
+
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    workbook
+        .save(output)
+        .map_err(|e: XlsxError| EsError::Engine(format!("Save workbook error: {e}")))?;
+
+    let outcome = RewriteOutcome {
+        hits: changes.len() as u64,
+        conflicts: 0,
+        downgrade_used: true,
+        covered_cells,
+        warnings: vec![
+            "旧 .xls 已转换为 .xlsx 纯数据输出：样式、公式、图表不保证保留。".to_string(),
+        ],
+    };
+    Ok((outcome, changes))
 }
 
 pub fn build_report_md(outcome: &RewriteOutcome) -> String {

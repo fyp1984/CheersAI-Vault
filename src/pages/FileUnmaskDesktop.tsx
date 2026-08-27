@@ -25,6 +25,24 @@ import { Message } from "@/components/ui/cheersai-ui";
 import { RETAIN_MESSAGES } from "@/components/file/ExcelMaskingDialog";
 import type { ExcelRestoreResult } from "@/types/commands";
 
+// The Rust command `excel_restore_from_ecmap` returns
+// `ExcelRestoreResult { restored_path: String, sha256_verified: bool }` — it
+// never had a `restored_count` or `matched` field. The success card
+// previously read those nonexistent fields anyway, so it always showed an
+// empty restored count and, since `!undefined` is `true`, always claimed
+// "SHA 未匹配" even on a fully verified restore. This is the single place
+// that turns a real `ExcelRestoreResult` into display text, so a targeted
+// test can pin the exact fields consumed and catch either regression.
+export function describeExcelRestoreSuccess(result: ExcelRestoreResult): {
+  statusText: string;
+  outputPath: string;
+} {
+  return {
+    statusText: result.sha256_verified ? "SHA-256 校验通过" : "SHA-256 未通过校验",
+    outputPath: result.restored_path,
+  };
+}
+
 export default function FileUnmaskDesktop() {
   const { maskedFile, mappingFile, setMaskedFile, setMappingFile } =
     useUnmaskStore();
@@ -41,6 +59,11 @@ export default function FileUnmaskDesktop() {
 
   const [encryptedSource, setEncryptedSource] = useState<string>("");
   const [userOriginalFile, setUserOriginalFile] = useState<string>("");
+
+  const excelRestoreDisplay = useMemo(
+    () => (result ? describeExcelRestoreSuccess(result) : null),
+    [result]
+  );
 
   const missingA = useMemo(() => {
     return !maskedFile || !mappingFile || !encryptedSource;
@@ -383,7 +406,7 @@ export default function FileUnmaskDesktop() {
             </div>
           )}
 
-          {result && (
+          {excelRestoreDisplay && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6 flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -391,11 +414,10 @@ export default function FileUnmaskDesktop() {
                   反脱敏成功
                 </p>
                 <p className="text-sm text-emerald-700 mt-1">
-                  已还原 {result.restored_count} 处敏感信息
-                  {!result.matched && "（原件 sha 未匹配，降级样式已输出）"}
+                  {excelRestoreDisplay.statusText}
                 </p>
                 <p className="text-xs text-emerald-600 mt-2 break-all">
-                  输出文件：{result.restored_path}
+                  输出文件：{excelRestoreDisplay.outputPath}
                 </p>
               </div>
             </div>

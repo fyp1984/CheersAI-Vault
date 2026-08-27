@@ -9,7 +9,7 @@ use aes_gcm::{
 };
 use bytes::{BufMut, BytesMut};
 use calamine::{open_workbook_auto, Data, Reader};
-use excel_style_core::{CellKey, RewriteOutcome};
+use excel_style_core::{table_reader, CellKey, RewriteOutcome};
 use futures_util::TryStreamExt;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
@@ -114,12 +114,49 @@ struct EcmapEntryV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct EcmapHeaderV1 {
-    version: String,
-    original_sha256: String,
-    masked_sha256: String,
-    source_encryption_key_source: String,
-    passphrase_domain_hint8: String,
+pub(crate) struct EcmapHeaderV1 {
+    pub(crate) version: String,
+    #[serde(rename = "originalSha256", alias = "original_sha256")]
+    pub(crate) original_sha256: String,
+    #[serde(rename = "maskedSha256", alias = "masked_sha256")]
+    pub(crate) masked_sha256: String,
+    #[serde(rename = "sourceEncryptionKeySource", alias = "source_encryption_key_source")]
+    pub(crate) source_encryption_key_source: String,
+    #[serde(rename = "passphraseDomainHint8", alias = "passphrase_domain_hint8")]
+    pub(crate) passphrase_domain_hint8: String,
+    #[serde(rename = "sourceRetained", alias = "source_retained", default)]
+    pub(crate) source_retained: bool,
+}
+
+pub(crate) const KEY_SOURCE_SANDBOX: &str = "SANDBOX_PASSPHRASE_REUSED";
+pub(crate) const KEY_SOURCE_SEPARATE: &str = "SEPARATE_PASSPHRASE";
+pub(crate) const KEY_SOURCE_DEVICE: &str = "DEVICE_KEY";
+
+pub(crate) fn canonical_key_source(mode: &EncSourceKeyMode) -> &'static str {
+    match mode {
+        EncSourceKeyMode::SandboxReused => KEY_SOURCE_SANDBOX,
+        EncSourceKeyMode::SecondaryPassphrase => KEY_SOURCE_SEPARATE,
+        EncSourceKeyMode::DeviceKey => KEY_SOURCE_DEVICE,
+    }
+}
+
+/// Accepts both the current canonical enum values and the pre-fix values
+/// written by older Runtime/Tauri builds, so existing `.ecmap` artifacts
+/// stay readable. Rejects anything else instead of guessing.
+///
+/// Not yet wired into a live Runtime restore endpoint (Runtime does not
+/// expose one), but shared with the Tauri host's equivalent validation and
+/// exercised directly by tests.
+#[allow(dead_code)]
+pub(crate) fn normalize_key_source(raw: &str) -> Result<&'static str, String> {
+    match raw {
+        "SANDBOX_PASSPHRASE_REUSED" | "SandboxReused" => Ok(KEY_SOURCE_SANDBOX),
+        "SEPARATE_PASSPHRASE" | "SecondaryPassphrase" | "SecondaryPhrase" => {
+            Ok(KEY_SOURCE_SEPARATE)
+        }
+        "DEVICE_KEY" | "DeviceKey" => Ok(KEY_SOURCE_DEVICE),
+        other => Err(format!("未知的密钥来源枚举值: {other}")),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -493,7 +530,84 @@ fn build_failure(
     }
 }
 
+fn is_csv_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false)
+}
+
+/// True for a legacy OLE `.xls` path (case-insensitive). `.xls` is a
+/// completely different binary container (OLE/CFB, not a ZIP archive) from
+/// `.xlsx`, so it must never be routed to `table_reader`'s ZIP-based reader
+/// (see R1: that misrouting made every valid `.xls` fail as "not a valid
+/// ZIP/XLSX archive"). It keeps using calamine's `open_workbook_auto`, which
+/// still validates the actual bytes rather than trusting the extension —
+/// routing by extension only decides *which* reader to try, not whether the
+/// content is accepted.
+fn is_xls_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("xls"))
+        .unwrap_or(false)
+}
+
+const TABLE_READ_SAMPLE_ROWS: usize = 5;
+
 fn parse_excel_structure_detailed(path: &Path) -> Result<Vec<SheetDef>, ExcelBuildFailure> {
+    if is_csv_path(path) {
+        let structure = table_reader::read_csv_structure(path, TABLE_READ_SAMPLE_ROWS).map_err(
+            |e| {
+                build_failure(
+                    StatusCode::BAD_REQUEST,
+                    "INPUT_CORRUPTED",
+                    format!("Failed to read CSV file: {e}"),
+                    false,
+                )
+            },
+        )?;
+        return Ok(vec![SheetDef {
+            name: structure.name,
+            headers: structure.headers,
+            column_samples: structure.column_samples,
+            deprecated_data_hint: None,
+            max_row: structure.max_row,
+            max_col: structure.max_col,
+        }]);
+    }
+
+    if is_xls_path(path) {
+        return parse_xls_structure_legacy(path);
+    }
+
+    let structures = table_reader::read_xlsx_all_sheets_structure(path, TABLE_READ_SAMPLE_ROWS)
+        .map_err(|e| {
+            build_failure(
+                StatusCode::BAD_REQUEST,
+                "INPUT_CORRUPTED",
+                format!("Failed to open Excel file: {e}"),
+                false,
+            )
+        })?;
+
+    Ok(structures
+        .into_iter()
+        .map(|s| SheetDef {
+            name: s.name,
+            headers: s.headers,
+            column_samples: s.column_samples,
+            deprecated_data_hint: None,
+            max_row: s.max_row,
+            max_col: s.max_col,
+        })
+        .collect())
+}
+
+/// The pre-`table_reader` calamine-based structure reader, restored
+/// verbatim for `.xls` only (R1). `.xls` is not affected by the `.xlsx`
+/// performance work (calamine already reads the whole legacy binary format
+/// regardless), so this keeps its original, already-correct behavior.
+fn parse_xls_structure_legacy(path: &Path) -> Result<Vec<SheetDef>, ExcelBuildFailure> {
     let mut workbook = open_workbook_auto(path).map_err(|e| {
         build_failure(
             StatusCode::BAD_REQUEST,
@@ -560,6 +674,81 @@ fn build_preview(
 ) -> Result<ExcelMaskPreview, ExcelBuildFailure> {
     let structures = parse_excel_structure_detailed(input_path)?;
     let compiled = compile_workbook_policy(&structures, config);
+
+    if is_xls_path(input_path) {
+        let preview_rows =
+            build_xls_preview_rows_legacy(input_path, &structures, &compiled, max_rows)?;
+        return Ok(ExcelMaskPreview {
+            preview_rows,
+            conflicts: compiled.conflicts,
+        });
+    }
+
+    let is_csv = is_csv_path(input_path);
+
+    let mut preview_rows = Vec::new();
+
+    for structure in &structures {
+        let table_preview = if is_csv {
+            table_reader::read_csv_preview(input_path, max_rows)
+        } else {
+            table_reader::read_xlsx_preview(input_path, &structure.name, max_rows)
+        }
+        .map_err(|e| {
+            build_failure(
+                StatusCode::BAD_REQUEST,
+                "INPUT_CORRUPTED",
+                format!("Worksheet '{}' error: {e}", structure.name),
+                false,
+            )
+        })?;
+
+        let width = structure.max_col as usize;
+        for row in table_preview.rows {
+            // `row_number` is the 1-based file row (row 1 = header), matching
+            // the calamine-range convention this replaces where row_idx=1
+            // was the first data row within a 0-based, header-inclusive range.
+            let row_idx = (row.row_number - 1) as usize;
+            let mut original_preview = Vec::with_capacity(width);
+            let mut masked = Vec::with_capacity(width);
+            for (col_idx, original) in row.values.iter().enumerate().take(width) {
+                original_preview.push(if original.is_empty() {
+                    None
+                } else {
+                    Some(original.clone())
+                });
+                masked.push(mask_for_position(
+                    original,
+                    &compiled,
+                    &structure.name,
+                    row_idx,
+                    col_idx,
+                ));
+            }
+            preview_rows.push(PreviewRow {
+                original_preview,
+                masked,
+                row_index: row.row_number,
+                sheet: structure.name.clone(),
+            });
+        }
+    }
+
+    Ok(ExcelMaskPreview {
+        preview_rows,
+        conflicts: compiled.conflicts,
+    })
+}
+
+/// The pre-`table_reader` calamine-based preview reader, restored verbatim
+/// for `.xls` only (R1), opening the workbook once and reusing it across
+/// sheets exactly as the original code did.
+fn build_xls_preview_rows_legacy(
+    input_path: &Path,
+    structures: &[SheetDef],
+    compiled: &CompiledWorkbookPolicy,
+    max_rows: usize,
+) -> Result<Vec<PreviewRow>, ExcelBuildFailure> {
     let mut workbook = open_workbook_auto(input_path).map_err(|e| {
         build_failure(
             StatusCode::BAD_REQUEST,
@@ -571,7 +760,7 @@ fn build_preview(
 
     let mut preview_rows = Vec::new();
 
-    for structure in &structures {
+    for structure in structures {
         let range = workbook.worksheet_range(&structure.name).map_err(|e| {
             build_failure(
                 StatusCode::BAD_REQUEST,
@@ -597,7 +786,7 @@ fn build_preview(
                 });
                 masked.push(mask_for_position(
                     &original,
-                    &compiled,
+                    compiled,
                     &structure.name,
                     row_idx,
                     col_idx,
@@ -612,10 +801,7 @@ fn build_preview(
         }
     }
 
-    Ok(ExcelMaskPreview {
-        preview_rows,
-        conflicts: compiled.conflicts,
-    })
+    Ok(preview_rows)
 }
 
 fn build_excel_artifacts(
@@ -635,15 +821,6 @@ fn build_excel_artifacts(
             false,
         ));
     }
-    let mut workbook = open_workbook_auto(input_path).map_err(|e| {
-        build_failure(
-            StatusCode::BAD_REQUEST,
-            "INPUT_CORRUPTED",
-            format!("Failed to open Excel file: {e}"),
-            false,
-        )
-    })?;
-
     let temp = tempdir().map_err(|e| {
         build_failure(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -658,74 +835,13 @@ fn build_excel_artifacts(
     let masked_filename = format!("{ascii_stem}{DEFAULT_SUFFIX}.xlsx");
     let masked_path = temp.path().join(&masked_filename);
 
-    let mut replacements: HashMap<CellKey, String> = HashMap::new();
-    let mut entries = Vec::new();
-
-    for structure in &structures {
-        let range = workbook.worksheet_range(&structure.name).map_err(|e| {
-            build_failure(
-                StatusCode::BAD_REQUEST,
-                "INPUT_CORRUPTED",
-                format!("Worksheet '{}' error: {e}", structure.name),
-                false,
-            )
-        })?;
-        let (height, width) = range.get_size();
-        for row_idx in 1..height {
-            for col_idx in 0..width {
-                let original = range
-                    .get((row_idx, col_idx))
-                    .map(cell_to_string)
-                    .unwrap_or_default();
-                if original.is_empty() {
-                    continue;
-                }
-                let masked =
-                    mask_for_position(&original, &compiled, &structure.name, row_idx, col_idx);
-                if masked == original {
-                    continue;
-                }
-                let row_number = (row_idx + 1) as u32;
-                let col_number = (col_idx + 1) as u32;
-                replacements.insert(
-                    CellKey {
-                        sheet: structure.name.clone(),
-                        row: row_number,
-                        col: col_number,
-                    },
-                    masked.clone(),
-                );
-                let strategy =
-                    compiled_strategy_for_position(&compiled, &structure.name, row_idx, col_idx)
-                        .map(|(strategy, _)| strategy)
-                        .unwrap_or_else(|| "FULL_MASK".to_string());
-                entries.push(EcmapEntryV1 {
-                    cell_ref: cell_ref_a1(row_number, col_number),
-                    original_sha256: sha256_hex(original.as_bytes()),
-                    original_preview: preview_preview(&original, 8),
-                    masked,
-                    strategy_id: strategy,
-                    col_index: col_number,
-                    row_index: row_number,
-                    sheet: structure.name.clone(),
-                });
-            }
-        }
-    }
-
-    let outcome: RewriteOutcome =
-        excel_style_core::rewrite_clone_inject(input_path, &masked_path, &replacements)
-            .unwrap_or_else(|e| {
-                let headers = structures
-                    .first()
-                    .map(|s| s.headers.clone())
-                    .unwrap_or_default();
-                let mut fallback =
-                    excel_style_core::fallback_xlsxwriter_full(&headers, &Vec::new(), &masked_path)
-                        .unwrap_or_default();
-                fallback.warnings.push(format!("克隆注入失败，已回退: {e}"));
-                fallback
-            });
+    let (outcome, entries) = if is_csv_path(input_path) {
+        build_csv_masked_artifact(input_path, &structures, &compiled, &masked_path)?
+    } else if is_xls_path(input_path) {
+        build_xls_masked_artifact(input_path, &compiled, &masked_path)?
+    } else {
+        build_xlsx_masked_artifact(input_path, &structures, &compiled, &masked_path)?
+    };
 
     let masked_bytes = fs::read(&masked_path).map_err(|e| {
         build_failure(
@@ -745,12 +861,9 @@ fn build_excel_artifacts(
         version: "1.2".to_string(),
         original_sha256: sha256_hex(original_bytes),
         masked_sha256: sha256_hex(&masked_bytes),
-        source_encryption_key_source: match config.key_mode {
-            EncSourceKeyMode::SandboxReused => "SandboxReused".to_string(),
-            EncSourceKeyMode::SecondaryPassphrase => "SecondaryPassphrase".to_string(),
-            EncSourceKeyMode::DeviceKey => "DeviceKey".to_string(),
-        },
+        source_encryption_key_source: canonical_key_source(&config.key_mode).to_string(),
         passphrase_domain_hint8: domain_hint8(&passphrase, b"ECMAP_V1\0"),
+        source_retained: config.retain_encrypted_source,
     };
     let masked_entity_count = entries.len();
     let ecmap_doc = EcmapDocumentV1 {
@@ -837,6 +950,220 @@ fn build_excel_artifacts(
         masked_entity_count,
         members,
     })
+}
+
+/// R3 (TASK-EXCEL-P0-DYNAMIC-FAILURES-CLOSEOUT-001): `.xls` is legacy OLE,
+/// not an OOXML ZIP, so it can never go through `rewrite_clone_inject`
+/// (that path is `.xlsx`-only and silently produced a headers-only,
+/// single-sheet fallback for `.xls` before this fix). This instead uses the
+/// shared `excel_style_core::rewrite_legacy_xls_with_mask`, which reads
+/// every sheet in full, masks every data cell via the same
+/// `mask_for_position`/`compiled_strategy_for_position` used by `.xlsx`,
+/// and returns the exact list of changed cells the output workbook was
+/// built from — `.ecmap` entries below are built from that same list, not
+/// a second independent pass over the file.
+fn build_xls_masked_artifact(
+    input_path: &Path,
+    compiled: &CompiledWorkbookPolicy,
+    masked_path: &Path,
+) -> Result<(RewriteOutcome, Vec<EcmapEntryV1>), ExcelBuildFailure> {
+    let (outcome, changes) = excel_style_core::rewrite_legacy_xls_with_mask(
+        input_path,
+        masked_path,
+        |sheet_name, row_idx, col_idx, original| {
+            mask_for_position(original, compiled, sheet_name, row_idx, col_idx)
+        },
+    )
+    .map_err(|e| {
+        build_failure(
+            StatusCode::BAD_REQUEST,
+            "INPUT_CORRUPTED",
+            format!("Failed to process legacy xls file: {e}"),
+            false,
+        )
+    })?;
+
+    let entries = changes
+        .into_iter()
+        .map(|change| {
+            let row_number = (change.row_idx + 1) as u32;
+            let col_number = (change.col_idx + 1) as u32;
+            let strategy = compiled_strategy_for_position(
+                compiled,
+                &change.sheet,
+                change.row_idx,
+                change.col_idx,
+            )
+            .map(|(strategy, _)| strategy)
+            .unwrap_or_else(|| "FULL_MASK".to_string());
+            EcmapEntryV1 {
+                cell_ref: cell_ref_a1(row_number, col_number),
+                original_sha256: sha256_hex(change.original.as_bytes()),
+                original_preview: preview_preview(&change.original, 8),
+                masked: change.masked,
+                strategy_id: strategy,
+                col_index: col_number,
+                row_index: row_number,
+                sheet: change.sheet,
+            }
+        })
+        .collect();
+
+    Ok((outcome, entries))
+}
+
+fn build_xlsx_masked_artifact(
+    input_path: &Path,
+    structures: &[SheetDef],
+    compiled: &CompiledWorkbookPolicy,
+    masked_path: &Path,
+) -> Result<(RewriteOutcome, Vec<EcmapEntryV1>), ExcelBuildFailure> {
+    let mut workbook = open_workbook_auto(input_path).map_err(|e| {
+        build_failure(
+            StatusCode::BAD_REQUEST,
+            "INPUT_CORRUPTED",
+            format!("Failed to open Excel file: {e}"),
+            false,
+        )
+    })?;
+
+    let mut replacements: HashMap<CellKey, String> = HashMap::new();
+    let mut entries = Vec::new();
+
+    for structure in structures {
+        let range = workbook.worksheet_range(&structure.name).map_err(|e| {
+            build_failure(
+                StatusCode::BAD_REQUEST,
+                "INPUT_CORRUPTED",
+                format!("Worksheet '{}' error: {e}", structure.name),
+                false,
+            )
+        })?;
+        let (height, width) = range.get_size();
+        for row_idx in 1..height {
+            for col_idx in 0..width {
+                let original = range
+                    .get((row_idx, col_idx))
+                    .map(cell_to_string)
+                    .unwrap_or_default();
+                if original.is_empty() {
+                    continue;
+                }
+                let masked =
+                    mask_for_position(&original, compiled, &structure.name, row_idx, col_idx);
+                if masked == original {
+                    continue;
+                }
+                let row_number = (row_idx + 1) as u32;
+                let col_number = (col_idx + 1) as u32;
+                replacements.insert(
+                    CellKey {
+                        sheet: structure.name.clone(),
+                        row: row_number,
+                        col: col_number,
+                    },
+                    masked.clone(),
+                );
+                let strategy =
+                    compiled_strategy_for_position(compiled, &structure.name, row_idx, col_idx)
+                        .map(|(strategy, _)| strategy)
+                        .unwrap_or_else(|| "FULL_MASK".to_string());
+                entries.push(EcmapEntryV1 {
+                    cell_ref: cell_ref_a1(row_number, col_number),
+                    original_sha256: sha256_hex(original.as_bytes()),
+                    original_preview: preview_preview(&original, 8),
+                    masked,
+                    strategy_id: strategy,
+                    col_index: col_number,
+                    row_index: row_number,
+                    sheet: structure.name.clone(),
+                });
+            }
+        }
+    }
+
+    let outcome: RewriteOutcome =
+        excel_style_core::rewrite_clone_inject(input_path, masked_path, &replacements)
+            .unwrap_or_else(|e| {
+                let headers = structures
+                    .first()
+                    .map(|s| s.headers.clone())
+                    .unwrap_or_default();
+                let mut fallback =
+                    excel_style_core::fallback_xlsxwriter_full(&headers, &Vec::new(), masked_path)
+                        .unwrap_or_default();
+                fallback.warnings.push(format!("克隆注入失败，已回退: {e}"));
+                fallback
+            });
+
+    Ok((outcome, entries))
+}
+
+/// CSV has no OOXML to clone-inject into, so the masked output is always
+/// built via `fallback_xlsxwriter_full` (never `rewrite_clone_inject`),
+/// reusing the same column-rule/cell-override masking logic as `.xlsx`.
+fn build_csv_masked_artifact(
+    input_path: &Path,
+    structures: &[SheetDef],
+    compiled: &CompiledWorkbookPolicy,
+    masked_path: &Path,
+) -> Result<(RewriteOutcome, Vec<EcmapEntryV1>), ExcelBuildFailure> {
+    let sheet_name = structures
+        .first()
+        .map(|s| s.name.as_str())
+        .unwrap_or("Sheet1");
+
+    let (header, rows) = table_reader::read_csv_all_rows(input_path).map_err(|e| {
+        build_failure(
+            StatusCode::BAD_REQUEST,
+            "INPUT_CORRUPTED",
+            format!("Failed to read CSV file: {e}"),
+            false,
+        )
+    })?;
+
+    let mut entries = Vec::new();
+    let mut masked_rows: Vec<Vec<String>> = Vec::with_capacity(rows.len());
+    for (i, row) in rows.iter().enumerate() {
+        // row_idx=1 for the first data row mirrors the calamine-range
+        // convention (row_idx=0 is the header) used by the xlsx path above.
+        let row_idx = i + 1;
+        let row_number = (row_idx + 1) as u32;
+        let mut masked_row = Vec::with_capacity(row.len());
+        for (col_idx, original) in row.iter().enumerate() {
+            let masked = mask_for_position(original, compiled, sheet_name, row_idx, col_idx);
+            if !original.is_empty() && masked != *original {
+                let col_number = (col_idx + 1) as u32;
+                let strategy = compiled_strategy_for_position(compiled, sheet_name, row_idx, col_idx)
+                    .map(|(strategy, _)| strategy)
+                    .unwrap_or_else(|| "FULL_MASK".to_string());
+                entries.push(EcmapEntryV1 {
+                    cell_ref: cell_ref_a1(row_number, col_number),
+                    original_sha256: sha256_hex(original.as_bytes()),
+                    original_preview: preview_preview(original, 8),
+                    masked: masked.clone(),
+                    strategy_id: strategy,
+                    col_index: col_number,
+                    row_index: row_number,
+                    sheet: sheet_name.to_string(),
+                });
+            }
+            masked_row.push(masked);
+        }
+        masked_rows.push(masked_row);
+    }
+
+    let outcome = excel_style_core::fallback_xlsxwriter_full(&header, &masked_rows, masked_path)
+        .map_err(|e| {
+            build_failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RUNTIME_STORAGE_FAILED",
+                format!("Failed to write masked CSV output: {e}"),
+                true,
+            )
+        })?;
+
+    Ok((outcome, entries))
 }
 
 fn compile_workbook_policy(
@@ -1006,8 +1333,8 @@ fn apply_strategy(value: &str, strategy: &str, replacement: Option<&str>) -> Str
         "FULL_MASK" | "BANK_CARD" | "EMAIL" | "ADDRESS" | "COMPLIANCE_ID" => replacement
             .map(str::to_string)
             .unwrap_or_else(|| mask_middle(value, 0, 0)),
-        "PHONE_MID4" => mask_middle(value, 3, 4),
-        "IDCARD_MID10" => mask_middle(value, 4, 4),
+        "PHONE_MID4" => mask_phone(value),
+        "IDCARD_MID10" => mask_idcard(value),
         "BANKCARD_LAST4" => mask_middle(value, 0, 4),
         "EMAIL_USER_MASK" => mask_email(value),
         "DEFAULT_VALUE" => replacement.unwrap_or("[MASKED]").to_string(),
@@ -1015,6 +1342,27 @@ fn apply_strategy(value: &str, strategy: &str, replacement: Option<&str>) -> Str
         _ => replacement
             .map(str::to_string)
             .unwrap_or_else(|| mask_middle(value, 0, 0)),
+    }
+}
+
+/// 仅当值恰好是 11 位 ASCII 数字时才脱敏（保留前 3、后 4）；其他任何情况
+/// （空值、长度不符、含字母/符号等）一律保持原值不变。
+fn mask_phone(value: &str) -> String {
+    let is_11_ascii_digits =
+        value.len() == 11 && value.chars().all(|c| c.is_ascii_digit());
+    if is_11_ascii_digits {
+        mask_middle(value, 3, 4)
+    } else {
+        value.to_string()
+    }
+}
+
+/// 18 位保留前 6、后 4；15 位保留前 3、后 4；其他长度（含空值）保持原值不变。
+pub(crate) fn mask_idcard(value: &str) -> String {
+    match value.chars().count() {
+        18 => mask_middle(value, 6, 4),
+        15 => mask_middle(value, 3, 4),
+        _ => value.to_string(),
     }
 }
 
@@ -1261,4 +1609,55 @@ fn cell_to_string(cell: &Data) -> String {
         Data::Error(e) => format!("Error: {e:?}"),
         Data::Empty => String::new(),
     }
+}
+
+#[cfg(test)]
+fn decrypt_scoped_for_test(
+    data: &[u8],
+    magic: &[u8],
+    passphrase: &str,
+    domain: &[u8],
+) -> Result<Vec<u8>, String> {
+    let min_len = magic.len() + SALT_LEN + NONCE_LEN + 16;
+    if data.len() < min_len || !data.starts_with(magic) {
+        return Err("scoped data too short or magic mismatch".to_string());
+    }
+    let offset = magic.len();
+    let salt = &data[offset..offset + SALT_LEN];
+    let nonce_bytes = &data[offset + SALT_LEN..offset + SALT_LEN + NONCE_LEN];
+    let ciphertext = &data[offset + SALT_LEN + NONCE_LEN..];
+    let key = derive_key_scoped(passphrase, salt, domain)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Cipher init error: {e}"))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "scoped decrypt failed".to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn decrypt_ecmap_header_for_test(
+    ecmap_bytes: &[u8],
+    passphrase: &str,
+) -> Result<EcmapHeaderV1, String> {
+    let plain = decrypt_scoped_for_test(ecmap_bytes, ECMAP_MAGIC, passphrase, b"ECMAP_V1\0")?;
+    let doc: EcmapDocumentV1 = serde_json::from_slice(&plain).map_err(|e| e.to_string())?;
+    Ok(doc.header)
+}
+
+/// (sheet, row_index, col_index, masked) for every `.ecmap` entry — used by
+/// R3 tests to cross-check that every mapped coordinate/masked value is
+/// actually present in the downloaded masked workbook, from the same
+/// decrypted document, not a second independent assumption about its shape.
+#[cfg(test)]
+pub(crate) fn decrypt_ecmap_entries_for_test(
+    ecmap_bytes: &[u8],
+    passphrase: &str,
+) -> Result<Vec<(String, u32, u32, String)>, String> {
+    let plain = decrypt_scoped_for_test(ecmap_bytes, ECMAP_MAGIC, passphrase, b"ECMAP_V1\0")?;
+    let doc: EcmapDocumentV1 = serde_json::from_slice(&plain).map_err(|e| e.to_string())?;
+    Ok(doc
+        .entries
+        .into_iter()
+        .map(|e| (e.sheet, e.row_index, e.col_index, e.masked))
+        .collect())
 }

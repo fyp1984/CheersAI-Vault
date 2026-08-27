@@ -1,5 +1,5 @@
 /* Copyright 2026 CheersAI Team. Licensed under Apache-2.0 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -68,12 +68,12 @@ import type {
 import { cn } from "@/lib/utils";
 
 export const RETAIN_MESSAGES = {
-  tab0: "保留加密源是启用自动反脱敏的唯一路径；若不勾选将无法自动还原原始 xlsx 样式；用户原件路径 B 也可完成但要求原件 sha 完全匹配",
-  confirm: "保留加密源是启用自动反脱敏的唯一路径；若不勾选将无法自动还原原始 xlsx 样式；用户原件路径 B 也可完成但要求原件 sha 完全匹配",
-  unmask_missing: "保留加密源是启用自动反脱敏的唯一路径；若不勾选将无法自动还原原始 xlsx 样式；用户原件路径 B 也可完成但要求原件 sha 完全匹配",
+  tab0: "加密源留存可选：不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用），但仍可正常完成脱敏。如需反脱敏，可提供用户原件并通过路径 B 还原——要求原件 SHA-256 与 .ecmap header 完全匹配，不支持凭空猜测恢复。",
+  confirm: "不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用）；如需反脱敏，可改用用户原件通过路径 B 还原，要求原件 SHA-256 与 .ecmap header 完全匹配，不支持凭空猜测恢复。",
+  unmask_missing: "反脱敏材料不足：不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用，需要 .ecmap + 加密源 + 口令三者齐全）；请提供与原始文件 SHA-256 完全匹配的用户原件以尝试路径 B，不支持凭空猜测恢复。",
 };
 
-const PLACEHOLDER_STRATEGIES: MaskingStrategyId[] = [
+export const PLACEHOLDER_STRATEGIES: MaskingStrategyId[] = [
   "BANK_CARD",
   "EMAIL",
   "ADDRESS",
@@ -83,7 +83,7 @@ const PLACEHOLDER_STRATEGIES: MaskingStrategyId[] = [
 const STRATEGY_LABELS: Record<MaskingStrategyId, string> = {
   FULL_MASK: "全掩码（***）",
   PHONE_MID4: "手机中间 4 位",
-  IDCARD_MID10: "身份证中间 10 位",
+  IDCARD_MID10: "身份证掩码（18 位 6+8+4 / 15 位 3+8+4）",
   BANKCARD_LAST4: "银行卡后 4 位",
   EMAIL_USER_MASK: "邮箱用户名掩码",
   DEFAULT_VALUE: "默认值替换",
@@ -104,6 +104,23 @@ const ACTIVE_STRATEGIES: MaskingStrategyId[] = [
   "CLEAR_COL",
 ];
 
+export function isSelectableMaskingStrategy(
+  strategy: MaskingStrategyId
+): boolean {
+  return ACTIVE_STRATEGIES.includes(strategy);
+}
+
+export function getMaskingStrategyOptionState(strategy: MaskingStrategyId): {
+  disabled: boolean;
+  className?: string;
+} {
+  const disabled = !isSelectableMaskingStrategy(strategy);
+  return {
+    disabled,
+    className: disabled ? "text-gray-400" : undefined,
+  };
+}
+
 interface ExcelMaskingDialogProps {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -122,6 +139,132 @@ interface ExcelMaskingDialogProps {
     config: ExcelMaskingConfig,
     maxRows?: number
   ) => Promise<ExcelMaskPreview>;
+}
+
+/**
+ * Retention is optional (scope B): whether masking can proceed only depends
+ * on having at least one rule, never on `retainChecked`.
+ */
+export function hasAnyExcelMaskingRule(rulesCount: number): boolean {
+  return rulesCount > 0;
+}
+
+export function canConfirmExcelMasking(
+  rulesCount: number,
+  confirmSecondCheck: boolean
+): boolean {
+  return hasAnyExcelMaskingRule(rulesCount) && confirmSecondCheck;
+}
+
+/**
+ * Parses a cell-override reference: a single cell (`A1`), a rectangle
+ * (`B3:D5`), optionally prefixed with an explicit sheet (`Sheet1!A2:B3`,
+ * defaulting to `defaultSheet` when omitted). Returns `null` for any input
+ * that doesn't match this grammar, including empty/whitespace-only input.
+ */
+export function parseCellRange(
+  input: string,
+  defaultSheet: string
+): { sheet: string; cells: { row: number; col: number }[] } | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const colLetterToIndex = (letters: string): number => {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+      result = result * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return result - 1;
+  };
+
+  const parseRef = (ref: string): { col: number; row: number } | null => {
+    const m = ref.match(/^([A-Za-z]+)(\d+)$/);
+    if (!m) return null;
+    const oneBasedRow = parseInt(m[2], 10);
+    // A 1-based row number of 0 (`A0`) or with leading zeros that parse to 0
+    // (`A00`) is not a valid Excel reference; row 1 is the first row.
+    if (!Number.isFinite(oneBasedRow) || oneBasedRow < 1) return null;
+    return {
+      col: colLetterToIndex(m[1].toUpperCase()),
+      row: oneBasedRow - 1,
+    };
+  };
+
+  const sepIdx = trimmed.indexOf("!");
+  let sheetName = defaultSheet;
+  let refPart = trimmed;
+  if (sepIdx >= 0) {
+    sheetName = trimmed.slice(0, sepIdx);
+    refPart = trimmed.slice(sepIdx + 1);
+  }
+  // An explicit sheet prefix must not be empty/whitespace-only (`!A1`); the
+  // implicit default-sheet case can't produce this, since `defaultSheet` is
+  // never assigned here when there is no `!`.
+  if (!sheetName.trim()) return null;
+
+  const colonIdx = refPart.indexOf(":");
+  if (colonIdx >= 0) {
+    const start = parseRef(refPart.slice(0, colonIdx));
+    const end = parseRef(refPart.slice(colonIdx + 1));
+    if (!start || !end) return null;
+    // A reversed range (start after end on either axis) is not a valid
+    // rectangle — reject it instead of silently producing zero cells.
+    if (start.row > end.row || start.col > end.col) return null;
+    const cells: { row: number; col: number }[] = [];
+    for (let r = start.row; r <= end.row; r++) {
+      for (let c = start.col; c <= end.col; c++) {
+        cells.push({ row: r, col: c });
+      }
+    }
+    return { sheet: sheetName, cells };
+  }
+  const single = parseRef(refPart);
+  if (!single) return null;
+  return { sheet: sheetName, cells: [single] };
+}
+
+/**
+ * A fixed, safe (no internal parser detail/path/stack trace) error message
+ * for a cell-reference input that is non-empty but fails to parse; `null`
+ * while the input is empty or already valid, so the caller can clear the
+ * error the moment the input is corrected.
+ */
+export function cellRangeValidationError(
+  input: string,
+  defaultSheet: string
+): string | null {
+  if (!input.trim()) return null;
+  return parseCellRange(input, defaultSheet)
+    ? null
+    : "单元格引用格式不正确，请使用如 A1、B3:D5 或 Sheet1!A2:B3 的格式";
+}
+
+/**
+ * True when a preview response's request id no longer matches the most
+ * recently issued request: a fast repeated refresh must not let an earlier
+ * (slower) response overwrite a newer one.
+ */
+export function isStalePreviewResponse(
+  requestIdAtCallTime: number,
+  latestRequestId: number
+): boolean {
+  return requestIdAtCallTime !== latestRequestId;
+}
+
+/**
+ * AC-14: the independent secondary passphrase must be cleared the moment the
+ * key mode switches away from `SECONDARY_PASSPHRASE` (sandbox-reused and
+ * device-key modes never need it, and must not keep it lingering in memory),
+ * and switching back later must start empty rather than resurface a value
+ * typed during an earlier visit to this mode. Staying in
+ * `SECONDARY_PASSPHRASE` (mode unchanged, still selected) leaves the current
+ * in-progress value untouched.
+ */
+export function nextSecondaryPassphraseForKeyMode(
+  mode: EncSourceKeyMode,
+  currentSecondaryPassphrase: string
+): string {
+  return mode === "SECONDARY_PASSPHRASE" ? currentSecondaryPassphrase : "";
 }
 
 function isExcelFile(p: string): boolean {
@@ -179,6 +322,15 @@ export default function ExcelMaskingDialog({
   const [secondaryPassphrase, setSecondaryPassphrase] = useState(
     defaultPassphrase
   );
+
+  // AC-14: leaving SECONDARY_PASSPHRASE must clear the in-memory secondary
+  // passphrase immediately, not just hide the field — switching back to
+  // SECONDARY_PASSPHRASE later must start from empty, never re-surface the
+  // value typed in a previous visit to this mode.
+  const handleKeyModeChange = useCallback((mode: EncSourceKeyMode) => {
+    setKeyMode(mode);
+    setSecondaryPassphrase((prev) => nextSecondaryPassphraseForKeyMode(mode, prev));
+  }, []);
 
   const [columnRules, setColumnRules] = useState<ColumnMaskRule[]>([]);
   const [cellOverrides, setCellOverrides] = useState<CellOverrideRule[]>([]);
@@ -279,7 +431,7 @@ export default function ExcelMaskingDialog({
     return columnRules.length + cellOverrides.length;
   }, [columnRules, cellOverrides]);
 
-  const canConfirm = retainChecked && rulesCount > 0 && confirmSecondCheck;
+  const canConfirm = canConfirmExcelMasking(rulesCount, confirmSecondCheck);
 
   const toggleColumnChecked = useCallback(
     (colIndex: number, headerText: string) => {
@@ -320,57 +472,15 @@ export default function ExcelMaskingDialog({
     [selectedSheet]
   );
 
-  const parseCellRange = (
-    input: string
-  ): { sheet: string; cells: { row: number; col: number }[] } | null => {
-    const trimmed = input.trim();
-    if (!trimmed) return null;
-
-    const colLetterToIndex = (letters: string): number => {
-      let result = 0;
-      for (let i = 0; i < letters.length; i++) {
-        result = result * 26 + (letters.charCodeAt(i) - 64);
-      }
-      return result - 1;
-    };
-
-    const parseRef = (ref: string): { col: number; row: number } | null => {
-      const m = ref.match(/^([A-Za-z]+)(\d+)$/);
-      if (!m) return null;
-      return {
-        col: colLetterToIndex(m[1].toUpperCase()),
-        row: parseInt(m[2], 10) - 1,
-      };
-    };
-
-    const sepIdx = trimmed.indexOf("!");
-    let sheetName = selectedSheet;
-    let refPart = trimmed;
-    if (sepIdx >= 0) {
-      sheetName = trimmed.slice(0, sepIdx);
-      refPart = trimmed.slice(sepIdx + 1);
-    }
-
-    const colonIdx = refPart.indexOf(":");
-    if (colonIdx >= 0) {
-      const start = parseRef(refPart.slice(0, colonIdx));
-      const end = parseRef(refPart.slice(colonIdx + 1));
-      if (!start || !end) return null;
-      const cells: { row: number; col: number }[] = [];
-      for (let r = start.row; r <= end.row; r++) {
-        for (let c = start.col; c <= end.col; c++) {
-          cells.push({ row: r, col: c });
-        }
-      }
-      return { sheet: sheetName, cells };
-    }
-    const single = parseRef(refPart);
-    if (!single) return null;
-    return { sheet: sheetName, cells: [single] };
-  };
+  // A fixed, safe (no internal parser detail/path/stack trace) error shown
+  // while the cell-reference input is non-empty but fails to parse; clears
+  // automatically once the input is empty or corrected to a valid reference.
+  const cellInputError = useMemo(() => {
+    return cellRangeValidationError(overrideCellInput, selectedSheet);
+  }, [overrideCellInput, selectedSheet]);
 
   const addCellOverride = useCallback(() => {
-    const parsed = parseCellRange(overrideCellInput);
+    const parsed = parseCellRange(overrideCellInput, selectedSheet);
     if (!parsed) return;
     setCellOverrides((prev) => {
       let next = [...prev];
@@ -415,38 +525,6 @@ export default function ExcelMaskingDialog({
     return result;
   }, [columnRules, cellOverrides]);
 
-  const loadPreview = useCallback(async () => {
-    if (!primaryFile && !primaryPath) return;
-    setPreviewLoading(true);
-    try {
-      const config: ExcelMaskingConfig = buildConfigs()[0] ?? {
-        file_path: primaryFile?.name ?? primaryPath,
-        sheet_policies: [],
-        retain_encrypted_source: retainChecked,
-        key_mode: keyMode,
-        secondary_passphrase:
-          keyMode === "SECONDARY_PASSPHRASE" ? secondaryPassphrase : undefined,
-      };
-      const res = primaryFile
-        ? onPreviewMasking
-          ? await onPreviewMasking(primaryFile, config, 20)
-          : null
-        : await tauriCommands.excelPreviewMasking(config, 20);
-      setPreview(res);
-    } catch {
-      setPreview(null);
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [
-    primaryFile,
-    primaryPath,
-    retainChecked,
-    keyMode,
-    secondaryPassphrase,
-    onPreviewMasking,
-  ]);
-
   const buildConfigs = useCallback((): ExcelMaskingConfig[] => {
     const policies = sheets.map((s) => {
       return {
@@ -472,6 +550,51 @@ export default function ExcelMaskingDialog({
     retainChecked,
     keyMode,
     secondaryPassphrase,
+  ]);
+
+  // Guards against a fast repeated refresh where an earlier (slower) preview
+  // request resolves after a newer one and clobbers it with stale data: each
+  // call claims the next id, and a response is only applied if its id is
+  // still the most recently issued one by the time it resolves.
+  const previewRequestIdRef = useRef(0);
+
+  const loadPreview = useCallback(async () => {
+    if (!primaryFile && !primaryPath) return;
+    const requestId = ++previewRequestIdRef.current;
+    setPreviewLoading(true);
+    try {
+      const config: ExcelMaskingConfig = buildConfigs()[0] ?? {
+        file_path: primaryFile?.name ?? primaryPath,
+        sheet_policies: [],
+        retain_encrypted_source: retainChecked,
+        key_mode: keyMode,
+        secondary_passphrase:
+          keyMode === "SECONDARY_PASSPHRASE" ? secondaryPassphrase : undefined,
+      };
+      const res = primaryFile
+        ? onPreviewMasking
+          ? await onPreviewMasking(primaryFile, config, 20)
+          : null
+        : await tauriCommands.excelPreviewMasking(config, 20, defaultPassphrase);
+      if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
+      setPreview(res);
+    } catch {
+      if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
+      setPreview(null);
+    } finally {
+      if (!isStalePreviewResponse(requestId, previewRequestIdRef.current)) {
+        setPreviewLoading(false);
+      }
+    }
+  }, [
+    primaryFile,
+    primaryPath,
+    retainChecked,
+    keyMode,
+    secondaryPassphrase,
+    onPreviewMasking,
+    defaultPassphrase,
+    buildConfigs,
   ]);
 
   const handleConfirm = useCallback(async () => {
@@ -534,7 +657,7 @@ export default function ExcelMaskingDialog({
                   retainChecked={retainChecked}
                   onRetainChange={setRetainChecked}
                   keyMode={keyMode}
-                  onKeyModeChange={setKeyMode}
+                  onKeyModeChange={handleKeyModeChange}
                   secondaryPassphrase={secondaryPassphrase}
                   onSecondaryPassphraseChange={setSecondaryPassphrase}
                 />
@@ -568,6 +691,7 @@ export default function ExcelMaskingDialog({
                   cellOverrides={cellOverrides}
                   onRemove={removeCellOverride}
                   conflictCells={conflictCells}
+                  cellInputError={cellInputError}
                 />
               </TabsContent>
 
@@ -577,7 +701,7 @@ export default function ExcelMaskingDialog({
                   previewLoading={previewLoading}
                   onReload={loadPreview}
                   rulesCount={rulesCount}
-                  canConfirmBase={retainChecked && rulesCount > 0}
+                  canConfirmBase={hasAnyExcelMaskingRule(rulesCount)}
                   confirmSecondCheck={confirmSecondCheck}
                   onConfirmSecondCheckChange={setConfirmSecondCheck}
                 />
@@ -658,11 +782,9 @@ function EncRetainTab({
               htmlFor="retain-enc-source"
               className="text-sm leading-6 cursor-pointer"
             >
-              <span className="font-medium">
-                我已阅读三提示并确认：需要反脱敏就必须保留加密源。
-              </span>
+              <span className="font-medium">保留加密源（.encrypted_src）</span>
               <span className="block text-xs text-gray-500 mt-1">
-                不勾选将无法自动还原原始 xlsx 样式和格式；后续反脱敏需走路径 B 并验证原件 sha。
+                勾选后额外生成加密源文件，可启用路径 A 自动反脱敏；不勾选也可正常完成脱敏，仅路径 A 不可用——仍可通过路径 B（用户原件 SHA-256 与 .ecmap header 完全匹配）反脱敏。
               </span>
             </Label>
           </div>
@@ -870,11 +992,13 @@ function ColumnMaskTab({
                       <Select
                         disabled={!checked}
                         value={strategy}
-                        onValueChange={(v) =>
+                        onValueChange={(v) => {
+                          const nextStrategy = v as MaskingStrategyId;
+                          if (!isSelectableMaskingStrategy(nextStrategy)) return;
                           onUpdateColumnRule(idx, {
-                            strategy: v as MaskingStrategyId,
-                          })
-                        }
+                            strategy: nextStrategy,
+                          });
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -888,11 +1012,19 @@ function ColumnMaskTab({
                           <div className="px-2 py-1 text-[11px] text-gray-400">
                             ——— DSG 预留占位 ———
                           </div>
-                          {PLACEHOLDER_STRATEGIES.map((sid) => (
-                            <SelectItem key={sid} value={sid}>
-                              {STRATEGY_LABELS[sid]}
-                            </SelectItem>
-                          ))}
+                          {PLACEHOLDER_STRATEGIES.map((sid) => {
+                            const optionState = getMaskingStrategyOptionState(sid);
+                            return (
+                              <SelectItem
+                                key={sid}
+                                value={sid}
+                                disabled={optionState.disabled}
+                                className={optionState.className}
+                              >
+                                {STRATEGY_LABELS[sid]}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                       {checked && isPlaceholder && (
@@ -936,6 +1068,7 @@ interface CellOverrideTabProps {
   cellOverrides: CellOverrideRule[];
   onRemove: (idx: number) => void;
   conflictCells: Set<string>;
+  cellInputError: string | null;
 }
 
 function CellOverrideTab({
@@ -949,6 +1082,7 @@ function CellOverrideTab({
   cellOverrides,
   onRemove,
   conflictCells,
+  cellInputError,
 }: CellOverrideTabProps) {
   return (
     <div className="space-y-4">
@@ -964,6 +1098,12 @@ function CellOverrideTab({
                 value={overrideCellInput}
                 onChange={(e) => onOverrideCellInputChange(e.target.value)}
                 placeholder="例：Sheet1!A2 或 B3:D5"
+                aria-invalid={cellInputError ? true : undefined}
+                className={
+                  cellInputError
+                    ? "border-red-500 focus-visible:ring-red-500"
+                    : undefined
+                }
               />
             </div>
             <div className="md:col-span-4">
@@ -993,11 +1133,20 @@ function CellOverrideTab({
               />
             </div>
             <div className="md:col-span-1">
-              <Button onClick={onAdd} className="w-full">
+              <Button
+                onClick={onAdd}
+                className="w-full"
+                disabled={Boolean(cellInputError)}
+              >
                 <Sparkles className="w-4 h-4" />
               </Button>
             </div>
           </div>
+          {cellInputError && (
+            <p className="text-sm text-red-600" role="alert">
+              {cellInputError}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -1115,7 +1264,7 @@ function PreviewTab({
           <AlertTriangle className="w-4 h-4 text-amber-600" />
           <AlertTitle className="text-amber-800">还不能应用</AlertTitle>
           <AlertDescription className="text-amber-700 text-sm">
-            请先回到「加密源 &amp; 密钥」Tab 勾选保留加密源确认，并至少添加 1 条规则。
+            请先至少添加 1 条列策略或单元格覆盖规则；是否保留加密源不影响本次脱敏是否可执行。
           </AlertDescription>
         </Alert>
       )}
