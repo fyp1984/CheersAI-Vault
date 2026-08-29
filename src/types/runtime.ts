@@ -122,6 +122,13 @@ export interface RuntimeExcelArtifactMembersResponse {
   persisted_files: RuntimeExcelPersistedFile[];
 }
 
+/**
+ * 企业 Excel 恢复模式（镜像 `service-contracts::ExcelRestoreMode`）。
+ * `path_a` 使用服务器已持有的 masked+ecmap+encrypted_source；
+ * `path_b` 额外上传用户原件。
+ */
+export type RuntimeExcelRestoreMode = "path_a" | "path_b";
+
 /** 服务端结构化错误体，仅承载 `code`/`message`/`retryable` 三个安全字段。 */
 export interface RuntimeErrorBody {
   code: string;

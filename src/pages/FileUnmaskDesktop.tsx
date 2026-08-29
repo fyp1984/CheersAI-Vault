@@ -43,6 +43,40 @@ export function describeExcelRestoreSuccess(result: ExcelRestoreResult): {
   };
 }
 
+/**
+ * UI-STATE-001 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+ * 切换恢复路径（A/B）或重新选择材料后，上一轮的瞬时结果（成功卡片、旧输出
+ * 路径、错误提示）必须被清空，避免把旧路径的成功结果误认为当前路径结果。
+ * 组件在切换路径与选择文件时应用本清空值；纯函数便于在 node:test 下钉住
+ * 契约（本工程 `.test.*` 无 jsdom，无法直接挂载页面）。
+ */
+export function clearedRestoreSessionState(): {
+  result: null;
+  legacyResult: null;
+  error: string;
+} {
+  return { result: null, legacyResult: null, error: "" };
+}
+
+/**
+ * Choose the suggested Excel restore name from the material whose bytes will
+ * be restored. Path B has the user's original file available, so its
+ * extension is a better contract than the masked workbook's `.xlsx` output
+ * extension. Rust still validates the final bytes before writing.
+ */
+export function deriveExcelRestoreDefaultFileName(
+  maskedFile: string,
+  restoreMode: "A" | "B",
+  userOriginalFile: string
+): string {
+  const sourceFile =
+    restoreMode === "B" && userOriginalFile ? userOriginalFile : maskedFile;
+  const sourceName = sourceFile.split(/[\\/]/).pop() || "file";
+  const stem = sourceName.replace(/\.[^.]+$/, "");
+  const extension = sourceName.match(/\.[^.]+$/)?.[0] || ".xlsx";
+  return `${stem}_已还原${extension}`;
+}
+
 export default function FileUnmaskDesktop() {
   const { maskedFile, mappingFile, setMaskedFile, setMappingFile } =
     useUnmaskStore();
@@ -147,6 +181,16 @@ export default function FileUnmaskDesktop() {
     }
   };
 
+  const handleRestoreModeChange = (mode: string) => {
+    setRestoreMode(mode as "A" | "B");
+    // UI-STATE-001: 切换恢复路径后清除上一轮结果提示，避免把旧路径的成功
+    // 结果误认为当前路径结果。
+    const cleared = clearedRestoreSessionState();
+    setResult(cleared.result);
+    setLegacyResult(cleared.legacyResult);
+    setError(cleared.error);
+  };
+
   const handleUnmask = async () => {
     if (isExcelFlow) {
       if (restoreMode === "A" && missingA) {
@@ -170,11 +214,16 @@ export default function FileUnmaskDesktop() {
     setLegacyResult(null);
 
     try {
-      const originalFileName =
-        maskedFile.split(/[\\/]/).pop() || "file";
+      const originalFileName = maskedFile.split(/[\\/]/).pop() || "file";
       const fileNameWithoutExt = originalFileName.replace(/\.[^.]+$/, "");
       const fileExt = originalFileName.match(/\.[^.]+$/)?.[0] || ".txt";
-      const defaultFileName = `${fileNameWithoutExt}_已还原${fileExt}`;
+      const defaultFileName = isExcelFlow
+        ? deriveExcelRestoreDefaultFileName(
+            maskedFile,
+            restoreMode,
+            userOriginalFile
+          )
+        : `${fileNameWithoutExt}_已还原${fileExt}`;
       const defaultDir = maskedFile.substring(
         0,
         maskedFile.lastIndexOf(
@@ -192,7 +241,16 @@ export default function FileUnmaskDesktop() {
         filters: [
           {
             name: "支持的文件",
-            extensions: ["txt", "md", "csv", "xlsx", "docx", "pdf", "pptx"],
+            extensions: [
+              "txt",
+              "md",
+              "csv",
+              "xlsx",
+              "xls",
+              "docx",
+              "pdf",
+              "pptx",
+            ],
           },
         ],
       });
@@ -265,9 +323,7 @@ export default function FileUnmaskDesktop() {
           {isExcelFlow ? (
             <Tabs
               value={restoreMode}
-              onValueChange={(v) =>
-                setRestoreMode(v as "A" | "B")
-              }
+              onValueChange={handleRestoreModeChange}
             >
               <TabsList className="mb-6">
                 <TabsTrigger value="A">

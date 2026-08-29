@@ -323,6 +323,32 @@ fn validate_column_rule_modes(config: &ExcelMaskingConfig) -> Result<(), String>
     Ok(())
 }
 
+/// UI-STATE-004 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+/// 先校验口令、后写文件——在写出任何脱敏产物之前确认将要用于加密的口令
+/// 可用，避免应用失败后残留不完整的 masked/report 半成品（空沙箱口令场景
+/// 曾真实复现：`masked.xlsx` 与报告已写出、`.ecmap` 加密失败）。
+///
+/// - `SANDBOX_REUSED`（默认）：沙箱口令必须非空白；
+/// - `SECONDARY_PASSPHRASE`：独立二级口令必须非空白；
+/// - `DEVICE_KEY`：真实密钥在加密阶段经 keyring 解析，此处不做预先校验
+///   （隔离测试不覆盖真实 macOS Keychain ACL，页面/契约测试已覆盖选择）。
+fn validate_effective_passphrase(config: &ExcelMaskingConfig) -> Result<(), String> {
+    match &config.source_pass_mode {
+        Some(EncSourcePassModeDto::SecondaryPhrase(phrase)) => {
+            if phrase.trim().is_empty() {
+                return Err("独立二级口令不能为空".to_string());
+            }
+        }
+        Some(EncSourcePassModeDto::SandboxReused) | None => {
+            if config.passphrase.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("沙箱口令不能为空".to_string());
+            }
+        }
+        Some(EncSourcePassModeDto::DeviceKey) => {}
+    }
+    Ok(())
+}
+
 fn mask_value_legacy_fields(value: &str, rule: &ColumnMaskingRule) -> String {
     if let Some(rep) = &rule.replacement {
         if rule.pattern.is_none() {
@@ -581,6 +607,15 @@ pub async fn excel_apply_masking(
     output_dir: String,
 ) -> Result<ExcelApplyResult, String> {
     validate_column_rule_modes(&config)?;
+    // UI-STATE-004 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+    // 先校验口令、后写文件。只有在确实需要加密（生成 .ecmap 或保留加密源）
+    // 时才校验口令；口令错误（如空沙箱口令）必须在创建输出目录或写出任何
+    // 脱敏产物之前失败，避免应用失败后残留不完整的 masked/report 半成品。
+    let will_encrypt =
+        config.generate_ecmap.unwrap_or(true) || config.retain_encrypted_source.unwrap_or(false);
+    if will_encrypt {
+        validate_effective_passphrase(&config)?;
+    }
     let input_path = Path::new(&config.input_file_path);
     let stem = input_path
         .file_stem()
@@ -676,8 +711,17 @@ pub async fn excel_apply_masking(
             masked_rows.push(masked_row);
         }
 
-        excel_style_core::fallback_xlsxwriter_full(&header, &masked_rows, &output_path)
-            .map_err(|e| format!("写入 masked CSV 输出失败: {}", e))?
+        let mut csv_outcome =
+            excel_style_core::fallback_xlsxwriter_full(&header, &masked_rows, &output_path)
+                .map_err(|e| format!("写入 masked CSV 输出失败: {}", e))?;
+        // R-closeout (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+        // `fallback_xlsxwriter_full` writes every cell and therefore reports
+        // hits=0; the "实际发生替换的单元格数" is exactly the number of
+        // `.ecmap` entries collected above. Align the report with the
+        // `.ecmap` entries and the produced workbook so the old "报告统计为 0"
+        // defect cannot recur on the desktop CSV path either.
+        csv_outcome.hits = entries.len() as u64;
+        csv_outcome
     } else if file_parser::is_xls_path(input_path) {
         // R3: `.xls` is legacy OLE, not an OOXML ZIP, so it can never go
         // through `rewrite_clone_inject` — the shared
@@ -884,7 +928,19 @@ pub async fn excel_apply_masking(
 
     if config.generate_ecmap.unwrap_or(true) {
         let pass = config.passphrase.clone().unwrap_or_default();
-        let hint = crypto::domain_hint8(&pass, KeyDomain::EcmapV1);
+        // R-closeout (工作包 D): the header hint must be for the passphrase
+        // the .ecmap is actually encrypted with. For SECONDARY_PASSPHRASE
+        // that is the secondary phrase, never the sandbox fallback; for
+        // SandboxReused it stays the sandbox passphrase.
+        let effective_hint_pass: String = match &config.source_pass_mode {
+            Some(EncSourcePassModeDto::SecondaryPhrase(phrase))
+                if !phrase.trim().is_empty() =>
+            {
+                phrase.clone()
+            }
+            _ => pass.clone(),
+        };
+        let hint = crypto::domain_hint8(&effective_hint_pass, KeyDomain::EcmapV1);
         let key_source = canonical_key_source(config.source_pass_mode.as_ref()).to_string();
 
         let doc = EcmapDocumentV1 {
@@ -923,6 +979,77 @@ pub async fn excel_apply_masking(
         encrypted_source_path: encsrc_path,
         report_md,
     })
+}
+
+const LEGACY_XLS_MAGIC: &[u8; 8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+fn restored_excel_extension(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.starts_with(LEGACY_XLS_MAGIC) {
+        return Ok("xls");
+    }
+
+    // OOXML workbooks are ZIP archives. The local-file header is sufficient
+    // here because the bytes have already been authenticated by the ecmap
+    // SHA-256 check; this branch only chooses the matching user-facing suffix.
+    if bytes.starts_with(b"PK\x03\x04") {
+        return Ok("xlsx");
+    }
+
+    // CSV is a supported Excel input and may be retained/restored as its
+    // original text bytes. Keep the detection deliberately conservative so a
+    // corrupted binary payload is never silently written with a .csv suffix.
+    if !bytes.is_empty()
+        && !bytes.iter().any(|byte| *byte == 0)
+        && bytes.iter().any(|byte| matches!(*byte, b',' | b'\n' | b'\r'))
+    {
+        return Ok("csv");
+    }
+
+    Err("恢复文件格式无法识别，已拒绝写出".to_string())
+}
+
+/// Normalize the selected restore path to the extension that matches the
+/// authenticated bytes. The file contents are never converted or rewritten;
+/// only a mismatched suffix is corrected before the final write.
+fn normalize_excel_restore_output_path(
+    output_path: &Path,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let expected_extension = restored_excel_extension(bytes)?;
+    let already_matches = output_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected_extension));
+
+    if already_matches {
+        return Ok(output_path.to_path_buf());
+    }
+
+    let mut normalized = output_path.to_path_buf();
+    normalized.set_extension(expected_extension);
+    Ok(normalized)
+}
+
+/// Resolve the final restore path without bypassing the save dialog's
+/// overwrite confirmation. When byte-based extension normalization changes
+/// the path, an existing directory entry at that new path was not selected
+/// by the user and must therefore be rejected before any write. Use
+/// `symlink_metadata` so even a broken symlink is treated as occupied; other
+/// metadata errors fail closed rather than being mistaken for absence.
+fn resolve_excel_restore_output_path(
+    output_path: &Path,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let normalized = normalize_excel_restore_output_path(output_path, bytes)?;
+    if normalized == output_path {
+        return Ok(normalized);
+    }
+
+    match fs::symlink_metadata(&normalized) {
+        Ok(_) => Err("恢复目标路径已存在，请重新选择文件名".to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(normalized),
+        Err(_) => Err("无法确认恢复目标路径状态，已拒绝写出".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -974,9 +1101,14 @@ pub async fn excel_restore_from_ecmap(
             return Err("校验失败：传入的 masked 文件 SHA256 与 ECMAP header.maskedSha256 不相等，拒绝猜测式还原".to_string());
         }
 
-        fs::write(&restore.output_path, plain).map_err(|e| format!("写入恢复文件失败: {}", e))?;
+        let final_output_path = resolve_excel_restore_output_path(
+            Path::new(&restore.output_path),
+            &plain,
+        )?;
+        fs::write(&final_output_path, &plain)
+            .map_err(|e| format!("写入恢复文件失败: {}", e))?;
         return Ok(ExcelRestoreResult {
-            restored_path: restore.output_path.clone(),
+            restored_path: final_output_path.to_string_lossy().to_string(),
             sha256_verified: true,
         });
     }
@@ -998,10 +1130,14 @@ pub async fn excel_restore_from_ecmap(
             return Err("校验失败：用户提供原件的 SHA256 与 ECMAP header.originalSha256 不相等，拒绝猜测式还原".to_string());
         }
 
-        fs::copy(user_path, &restore.output_path)
-            .map_err(|e| format!("复制恢复文件失败: {}", e))?;
+        let final_output_path = resolve_excel_restore_output_path(
+            Path::new(&restore.output_path),
+            &user_bytes,
+        )?;
+        fs::write(&final_output_path, &user_bytes)
+            .map_err(|e| format!("写入恢复文件失败: {}", e))?;
         return Ok(ExcelRestoreResult {
-            restored_path: restore.output_path.clone(),
+            restored_path: final_output_path.to_string_lossy().to_string(),
             sha256_verified: true,
         });
     }
@@ -1243,6 +1379,59 @@ mod tests {
         }
     }
 
+    /// R-closeout (工作包 B): a CSV with exactly 12 maskable phones must
+    /// report 12 in report.md on the desktop path too — `fallback_xlsxwriter
+    /// _full` cannot know which cells changed, so the CSV branch must align
+    /// the report hits with the `.ecmap` entries it actually wrote.
+    #[tokio::test]
+    async fn csv_12_hit_report_counts_real_replacements_not_zero() {
+        let dir = unique_temp_dir("csv-12hit");
+        let mut content = String::from("姓名,手机号\n");
+        for i in 1..=12u32 {
+            content.push_str(&format!("用户{i},13{:09}\n", 900_000_000 + i));
+        }
+        content.push_str("无效A,139\n无效B,not-a-phone\n");
+        let input = write_fixture_csv(&dir, content.as_bytes());
+        let input_path_str = input.to_string_lossy().to_string();
+
+        let config = ExcelMaskingConfig {
+            input_file_path: input_path_str.clone(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: phone_column_rules(),
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("test-sandbox-pass".to_string()),
+            retain_encrypted_source: Some(false),
+            source_pass_mode: Some(EncSourcePassModeDto::SandboxReused),
+            generate_ecmap: Some(true),
+        };
+
+        let output_dir = dir.join("out");
+        let result = excel_apply_masking(config, output_dir.to_string_lossy().to_string())
+            .await
+            .expect("csv apply masking must succeed");
+
+        let report_path = output_dir.join("fixture_masked_report.md");
+        let report = std::fs::read_to_string(&report_path).expect("read report.md");
+        assert!(
+            report.contains("**命中单元格数:** 12"),
+            "report must count 12 real replacements, got: {report}"
+        );
+        assert!(
+            !report.contains("**命中单元格数:** 0"),
+            "the old 0-hit defect must not reappear"
+        );
+
+        let ecmap_path = result.ecmap_path.expect("ecmap must be generated");
+        let ecmap_bytes = fs::read(&ecmap_path).expect("read ecmap");
+        let plain = crypto::decrypt_ecmap(&ecmap_bytes, "test-sandbox-pass").expect("decrypt ecmap");
+        let doc: EcmapDocumentV1 = serde_json::from_slice(&plain).expect("parse ecmap document");
+        assert_eq!(doc.entries.len(), 12, "ecmap must carry exactly 12 entries");
+    }
+
     #[tokio::test]
     async fn csv_gb18030_gbk_encoded_bytes_parse_correctly() {
         let dir = unique_temp_dir("csv-gbk");
@@ -1473,6 +1662,79 @@ mod tests {
         );
     }
 
+    /// R-closeout (工作包 A, 双 Sheet .xls): 逐 Sheet 配置语义。只配置
+    /// Sheet1 时，Sheet2 的所有单元格必须原样保留（不脱敏、不丢失），
+    /// `.ecmap` 不得出现任何 Sheet2 条目；显式配置 Sheet2 后 Sheet2 才按
+    /// 规则脱敏（既有 `xls_structure_preview_apply_and_masked_workbook_are_
+    /// fully_correct` 已覆盖双 Sheet 都配置的路径）。
+    #[tokio::test]
+    async fn xls_sheet2_stays_unchanged_when_only_sheet1_is_configured() {
+        let dir = unique_temp_dir("xls-sheet2-untouched");
+        let input = write_fixture_xls(&dir);
+        let input_path_str = input.to_string_lossy().to_string();
+
+        let mut sheet1_rules = HashMap::new();
+        sheet1_rules.insert("Phone".to_string(), phone_rule());
+        sheet1_rules.insert("Email".to_string(), email_rule());
+
+        let config = ExcelMaskingConfig {
+            input_file_path: input_path_str.clone(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: sheet1_rules,
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("xls-sheet2-test-pass".to_string()),
+            retain_encrypted_source: Some(false),
+            source_pass_mode: Some(EncSourcePassModeDto::SandboxReused),
+            generate_ecmap: Some(true),
+        };
+
+        let output_dir = dir.join("out");
+        let result = excel_apply_masking(config, output_dir.to_string_lossy().to_string())
+            .await
+            .expect("xls apply with only Sheet1 configured must succeed");
+
+        use calamine::{open_workbook_auto, Data, Reader};
+        let mut workbook =
+            open_workbook_auto(&result.masked_path).expect("open xls-derived masked workbook");
+        assert_eq!(
+            workbook.sheet_names().to_vec(),
+            vec!["Sheet1".to_string(), "Sheet2".to_string()],
+            "both sheets must survive"
+        );
+
+        let sheet1 = workbook.worksheet_range("Sheet1").expect("Sheet1");
+        assert_eq!(cell_to_string_for_test(&sheet1, 1, 1), "139****0000");
+
+        // Sheet2 has no configured rules: every cell stays byte-identical.
+        let sheet2 = workbook.worksheet_range("Sheet2").expect("Sheet2 must exist");
+        assert_eq!(cell_to_string_for_test(&sheet2, 0, 0), "Phone");
+        assert_eq!(
+            cell_to_string_for_test(&sheet2, 1, 0),
+            "13900000000",
+            "Sheet2 phone must stay unmasked"
+        );
+
+        // The ecmap contains zero Sheet2 entries.
+        let ecmap_bytes = fs::read(result.ecmap_path.expect("ecmap must be generated"))
+            .expect("read ecmap");
+        let plain = crypto::decrypt_ecmap(&ecmap_bytes, "xls-sheet2-test-pass")
+            .expect("decrypt ecmap");
+        let doc: EcmapDocumentV1 =
+            serde_json::from_slice(&plain).expect("parse ecmap document");
+        assert!(
+            doc.entries.iter().all(|entry| entry.sheet == "Sheet1"),
+            "no Sheet2 entry may exist when only Sheet1 is configured: {:?}",
+            doc.entries
+                .iter()
+                .map(|entry| (&entry.sheet, &entry.cell_ref))
+                .collect::<Vec<_>>()
+        );
+    }
+
     /// R1: a corrupted/disguised `.xls` (garbage bytes, not real OLE) must
     /// fail closed instead of a panic or false success, confirming the
     /// format-routing fix still validates real content, not just the
@@ -1681,6 +1943,200 @@ mod tests {
             .expect("ecmap must decrypt");
         let doc: EcmapDocumentV1 = serde_json::from_slice(&plain).expect("parse ecmap json");
         assert!(doc.header.source_retained);
+    }
+
+    /// UI-STATE-004: 空/空白沙箱口令必须在使用前失败（先校验口令、后写文件），
+    /// 且不得残留任何 masked/report 半成品（曾真实复现：`masked.xlsx` 与报告
+    /// 已写出、`.ecmap` 加密失败）。
+    #[tokio::test]
+    async fn apply_masking_with_empty_sandbox_passphrase_fails_with_zero_artifacts() {
+        for passphrase in ["", "   ", "\t\n"] {
+            let dir = unique_temp_dir("empty-sandbox-apply");
+            let input = write_fixture_xlsx(
+                &dir,
+                &["姓名", "手机号"],
+                &[vec!["张三", "13900001234"]],
+            );
+            let config = ExcelMaskingConfig {
+                input_file_path: input.to_string_lossy().to_string(),
+                output_name_suffix: None,
+                sheets: vec![SheetMaskingConfig {
+                    sheet_name: "Sheet1".to_string(),
+                    header_row: Some(0),
+                    column_rules: phone_column_rules(),
+                    cell_overrides: vec![],
+                }],
+                passphrase: Some(passphrase.to_string()),
+                retain_encrypted_source: Some(false),
+                source_pass_mode: Some(EncSourcePassModeDto::SandboxReused),
+                generate_ecmap: Some(true),
+            };
+            let output_dir = dir.join("out");
+            let err = excel_apply_masking(config, output_dir.to_string_lossy().to_string())
+                .await
+                .expect_err("empty sandbox passphrase must fail before writing any artifact");
+            assert!(err.contains("沙箱口令不能为空"), "got: {err}");
+            assert!(
+                !output_dir.exists() || fs::read_dir(&output_dir).unwrap().next().is_none(),
+                "no masked/report artifact may be left behind for passphrase={passphrase:?}"
+            );
+        }
+    }
+
+    /// UI-STATE-004: 空独立二级口令同样在写任何产物前失败且零残留。
+    #[tokio::test]
+    async fn apply_masking_with_empty_secondary_passphrase_fails_with_zero_artifacts() {
+        let dir = unique_temp_dir("empty-secondary-apply");
+        let input = write_fixture_xlsx(
+            &dir,
+            &["姓名", "手机号"],
+            &[vec!["张三", "13900001234"]],
+        );
+        let config = ExcelMaskingConfig {
+            input_file_path: input.to_string_lossy().to_string(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: phone_column_rules(),
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("sandbox-fallback".to_string()),
+            retain_encrypted_source: Some(true),
+            source_pass_mode: Some(EncSourcePassModeDto::SecondaryPhrase("".to_string())),
+            generate_ecmap: Some(true),
+        };
+        let output_dir = dir.join("out");
+        let err = excel_apply_masking(config, output_dir.to_string_lossy().to_string())
+            .await
+            .expect_err("empty secondary passphrase must fail before writing any artifact");
+        assert!(err.contains("独立二级口令不能为空"), "got: {err}");
+        assert!(
+            !output_dir.exists() || fs::read_dir(&output_dir).unwrap().next().is_none(),
+            "no masked/report artifact may be left behind"
+        );
+    }
+
+    /// R-closeout (工作包 D): SECONDARY_PASSPHRASE 完整闭环。脱敏用独立二级
+    /// 口令加密 `.ecmap`/`.encrypted_src`，header hint 必须是该二级口令的
+    /// hint（而不是沙箱口令的）；路径 A / 路径 B 用正确二级口令恢复成功，
+    /// 错误口令安全失败。
+    #[tokio::test]
+    async fn secondary_passphrase_masks_restores_via_path_a_and_b_and_rejects_wrong_passphrase() {
+        let dir = unique_temp_dir("secondary-passphrase");
+        let input = write_fixture_xlsx(
+            &dir,
+            &["姓名", "手机号"],
+            &[vec!["张三", "13900001234"]],
+        );
+
+        let config = ExcelMaskingConfig {
+            input_file_path: input.to_string_lossy().to_string(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: phone_column_rules(),
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("sandbox-fallback-pass".to_string()),
+            retain_encrypted_source: Some(true),
+            source_pass_mode: Some(EncSourcePassModeDto::SecondaryPhrase(
+                "fixture-secondary-pass".to_string(),
+            )),
+            generate_ecmap: Some(true),
+        };
+
+        let output_dir = dir.join("out");
+        let result = excel_apply_masking(config, output_dir.to_string_lossy().to_string())
+            .await
+            .expect("secondary passphrase masking must succeed");
+        assert!(
+            result.encrypted_source_path.is_some(),
+            "retain=true must produce .encrypted_src"
+        );
+
+        let ecmap_path = result.ecmap_path.clone().expect("ecmap must be generated");
+        let ecmap_bytes = fs::read(&ecmap_path).expect("read ecmap");
+        // The ecmap is encrypted with the secondary phrase, not the sandbox
+        // fallback.
+        let sandbox_decrypt = crypto::decrypt_ecmap(&ecmap_bytes, "sandbox-fallback-pass");
+        assert!(
+            sandbox_decrypt.is_err(),
+            "the sandbox passphrase must NOT decrypt a secondary-passphrase ecmap"
+        );
+        let plain =
+            crypto::decrypt_ecmap(&ecmap_bytes, "fixture-secondary-pass")
+                .expect("decrypt ecmap with the secondary phrase");
+        let doc: EcmapDocumentV1 = serde_json::from_slice(&plain).expect("parse ecmap json");
+        assert_eq!(doc.header.source_encryption_key_source, KEY_SOURCE_SEPARATE);
+        assert!(doc.header.source_retained);
+        let expected_hint =
+            crypto::domain_hint8("fixture-secondary-pass", KeyDomain::EcmapV1);
+        assert_eq!(
+            doc.header.passphrase_domain_hint8, expected_hint,
+            "the header hint must match the effective (secondary) passphrase"
+        );
+        assert_ne!(
+            doc.header.passphrase_domain_hint8,
+            crypto::domain_hint8("sandbox-fallback-pass", KeyDomain::EcmapV1),
+            "the header hint must not be the sandbox passphrase hint"
+        );
+
+        // Path A: correct secondary passphrase restores the original bytes.
+        let original_bytes = fs::read(&input).expect("read original");
+        let restore_a = ExcelRestoreReq {
+            masked_file_path: result.masked_path.clone(),
+            ecmap_file_path: ecmap_path.clone(),
+            encrypted_source_path: result.encrypted_source_path.clone(),
+            user_original_file_path: None,
+            output_path: dir.join("restored-a.xlsx").to_string_lossy().to_string(),
+            passphrase: Some("fixture-secondary-pass".to_string()),
+        };
+        let restored_a = excel_restore_from_ecmap(restore_a)
+            .await
+            .expect("path A restore with the secondary phrase must succeed");
+        assert!(restored_a.sha256_verified);
+        assert_eq!(
+            fs::read(&restored_a.restored_path).expect("read restored-a"),
+            original_bytes
+        );
+
+        // Wrong secondary passphrase fails closed with a safe message.
+        let restore_bad = ExcelRestoreReq {
+            masked_file_path: result.masked_path.clone(),
+            ecmap_file_path: ecmap_path.clone(),
+            encrypted_source_path: result.encrypted_source_path.clone(),
+            user_original_file_path: None,
+            output_path: dir.join("restored-bad.xlsx").to_string_lossy().to_string(),
+            passphrase: Some("wrong-secondary-pass".to_string()),
+        };
+        let err = excel_restore_from_ecmap(restore_bad)
+            .await
+            .expect_err("a wrong secondary passphrase must fail safely");
+        assert!(err.contains("ECMAP 解密失败"), "got: {err}");
+        assert!(
+            !dir.join("restored-bad.xlsx").exists(),
+            "no restored artifact may be produced on failure"
+        );
+
+        // Path B: user original + correct secondary passphrase.
+        let restore_b = ExcelRestoreReq {
+            masked_file_path: result.masked_path.clone(),
+            ecmap_file_path: ecmap_path.clone(),
+            encrypted_source_path: None,
+            user_original_file_path: Some(input.to_string_lossy().to_string()),
+            output_path: dir.join("restored-b.xlsx").to_string_lossy().to_string(),
+            passphrase: Some("fixture-secondary-pass".to_string()),
+        };
+        let restored_b = excel_restore_from_ecmap(restore_b)
+            .await
+            .expect("path B restore with the secondary phrase must succeed");
+        assert!(restored_b.sha256_verified);
+        assert_eq!(
+            fs::read(&restored_b.restored_path).expect("read restored-b"),
+            original_bytes
+        );
     }
 
     // --- Cell overrides now carry a strategy + optional replacement,
@@ -2012,7 +2468,10 @@ mod tests {
     #[tokio::test]
     async fn restore_path_a_succeeds_with_legacy_header_missing_source_retained() {
         let dir = unique_temp_dir("restore-a-legacy-header");
-        let original_bytes = b"legacy original file bytes".to_vec();
+        // The compatibility fixture must still be a recognizable legacy Excel
+        // payload now that restore validates the final suffix against bytes.
+        let mut original_bytes = LEGACY_XLS_MAGIC.to_vec();
+        original_bytes.extend_from_slice(b"legacy original file bytes");
         let pass = "test-restore-a-legacy";
 
         let encsrc_bytes =
@@ -2240,5 +2699,152 @@ mod tests {
             .await
             .expect_err("a wrong passphrase must fail safely, not restore anything");
         assert!(err.contains("ECMAP 解密失败"));
+    }
+
+    #[test]
+    fn restore_output_extension_follows_actual_excel_bytes() {
+        let legacy_ole = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        let normalized_xls = normalize_excel_restore_output_path(
+            Path::new("/tmp/fixture/employee_已还原.xlsx"),
+            &legacy_ole,
+        )
+        .expect("legacy OLE bytes must be recognized as .xls");
+        assert_eq!(
+            normalized_xls,
+            PathBuf::from("/tmp/fixture/employee_已还原.xls")
+        );
+
+        let ooxml_zip = b"PK\x03\x04fixture";
+        let normalized_xlsx = normalize_excel_restore_output_path(
+            Path::new("/tmp/fixture/employee_已还原.xls"),
+            ooxml_zip,
+        )
+        .expect("OOXML ZIP bytes must be recognized as .xlsx");
+        assert_eq!(
+            normalized_xlsx,
+            PathBuf::from("/tmp/fixture/employee_已还原.xlsx")
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_paths_a_and_b_preserve_legacy_xls_bytes_and_suffix() {
+        let dir = unique_temp_dir("restore-legacy-xls-format");
+        let input = write_fixture_xls(&dir);
+        let original_bytes = fs::read(&input).expect("read legacy xls fixture");
+        assert!(original_bytes.starts_with(LEGACY_XLS_MAGIC));
+
+        let config = ExcelMaskingConfig {
+            input_file_path: input.to_string_lossy().to_string(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: HashMap::new(),
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("restore-legacy-xls-pass".to_string()),
+            retain_encrypted_source: Some(true),
+            source_pass_mode: Some(EncSourcePassModeDto::SandboxReused),
+            generate_ecmap: Some(true),
+        };
+        let result = excel_apply_masking(config, dir.join("out").to_string_lossy().to_string())
+            .await
+            .expect("legacy xls apply must succeed");
+
+        let restore_a = excel_restore_from_ecmap(ExcelRestoreReq {
+            masked_file_path: result.masked_path.clone(),
+            ecmap_file_path: result.ecmap_path.clone().expect("ecmap path"),
+            encrypted_source_path: result.encrypted_source_path.clone(),
+            user_original_file_path: None,
+            output_path: dir.join("path-a.xlsx").to_string_lossy().to_string(),
+            passphrase: Some("restore-legacy-xls-pass".to_string()),
+        })
+        .await
+        .expect("Path A legacy xls restore must succeed");
+        assert!(restore_a.restored_path.ends_with("path-a.xls"));
+        let restored_a = fs::read(&restore_a.restored_path).expect("read Path A restore");
+        assert!(restored_a.starts_with(LEGACY_XLS_MAGIC));
+        assert_eq!(restored_a, original_bytes);
+
+        let restore_b = excel_restore_from_ecmap(ExcelRestoreReq {
+            masked_file_path: result.masked_path,
+            ecmap_file_path: result.ecmap_path.expect("ecmap path"),
+            encrypted_source_path: None,
+            user_original_file_path: Some(input.to_string_lossy().to_string()),
+            output_path: dir.join("path-b.xlsx").to_string_lossy().to_string(),
+            passphrase: Some("restore-legacy-xls-pass".to_string()),
+        })
+        .await
+        .expect("Path B legacy xls restore must succeed");
+        assert!(restore_b.restored_path.ends_with("path-b.xls"));
+        let restored_b = fs::read(&restore_b.restored_path).expect("read Path B restore");
+        assert!(restored_b.starts_with(LEGACY_XLS_MAGIC));
+        assert_eq!(restored_b, original_bytes);
+    }
+
+    #[tokio::test]
+    async fn restore_paths_reject_existing_normalized_target_without_overwrite() {
+        let dir = unique_temp_dir("restore-normalized-target-exists");
+        let input = write_fixture_xls(&dir);
+        let config = ExcelMaskingConfig {
+            input_file_path: input.to_string_lossy().to_string(),
+            output_name_suffix: None,
+            sheets: vec![SheetMaskingConfig {
+                sheet_name: "Sheet1".to_string(),
+                header_row: Some(0),
+                column_rules: HashMap::new(),
+                cell_overrides: vec![],
+            }],
+            passphrase: Some("restore-existing-target-pass".to_string()),
+            retain_encrypted_source: Some(true),
+            source_pass_mode: Some(EncSourcePassModeDto::SandboxReused),
+            generate_ecmap: Some(true),
+        };
+        let result = excel_apply_masking(config, dir.join("out").to_string_lossy().to_string())
+            .await
+            .expect("legacy xls apply must succeed");
+        let ecmap_path = result.ecmap_path.clone().expect("ecmap path");
+        let encrypted_source_path = result
+            .encrypted_source_path
+            .clone()
+            .expect("encrypted source path");
+
+        let sentinel_a = b"existing Path A target must remain unchanged";
+        let requested_a = dir.join("path-a.xlsx");
+        let normalized_a = dir.join("path-a.xls");
+        fs::write(&normalized_a, sentinel_a).expect("seed existing Path A target");
+        let error_a = excel_restore_from_ecmap(ExcelRestoreReq {
+            masked_file_path: result.masked_path.clone(),
+            ecmap_file_path: ecmap_path.clone(),
+            encrypted_source_path: Some(encrypted_source_path.clone()),
+            user_original_file_path: None,
+            output_path: requested_a.to_string_lossy().to_string(),
+            passphrase: Some("restore-existing-target-pass".to_string()),
+        })
+        .await
+        .expect_err("Path A must reject an occupied normalized target");
+        assert_eq!(error_a, "恢复目标路径已存在，请重新选择文件名");
+        assert_eq!(fs::read(&normalized_a).unwrap(), sentinel_a);
+        assert!(!requested_a.exists(), "the unconfirmed requested path must stay absent");
+
+        let original = fs::read(&input).expect("read original Path B bytes");
+        let sentinel_b = b"existing Path B target must remain unchanged";
+        let requested_b = dir.join("path-b.xlsx");
+        let normalized_b = dir.join("path-b.xls");
+        fs::write(&normalized_b, sentinel_b).expect("seed existing Path B target");
+        let error_b = excel_restore_from_ecmap(ExcelRestoreReq {
+            masked_file_path: result.masked_path,
+            ecmap_file_path: ecmap_path,
+            encrypted_source_path: None,
+            user_original_file_path: Some(input.to_string_lossy().to_string()),
+            output_path: requested_b.to_string_lossy().to_string(),
+            passphrase: Some("restore-existing-target-pass".to_string()),
+        })
+        .await
+        .expect_err("Path B must reject an occupied normalized target");
+        assert_eq!(error_b, "恢复目标路径已存在，请重新选择文件名");
+        assert_eq!(fs::read(&normalized_b).unwrap(), sentinel_b);
+        assert!(!requested_b.exists(), "the unconfirmed requested path must stay absent");
+        assert!(original.starts_with(LEGACY_XLS_MAGIC));
     }
 }

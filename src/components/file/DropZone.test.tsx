@@ -193,3 +193,40 @@ test("failed Excel apply never falls back to the original Excel or partial artif
   assert.deepEqual(routing.outputs, []);
   assert.deepEqual(routing.normalQueuePaths, ["/input/readme.txt"]);
 });
+
+// R-closeout (工作包 D): 桌面路径不再吞掉底层错误后只显示无法定位的通用
+// 文案 — 首个失败会以安全分类文案透出，且绝不回显路径/口令/堆栈。
+test("failed Excel apply exposes a safe classified first error, never raw internals", async () => {
+  const secret = "top-secret-passphrase";
+  const routing = await executeExcelApplyRouting({
+    configs: [config("/input/sample.xlsx")],
+    pendingPaths: ["/input/sample.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "fictional-test-passphrase",
+    applyMasking: async () => {
+      throw new Error(
+        `读取原文件失败: /private/tmp/secret.xlsx 口令=${secret} at excel_masking.rs:851`
+      );
+    },
+  });
+
+  assert.equal(routing.failureCount, 1);
+  const message = routing.firstErrorMessage;
+  assert.ok(typeof message === "string" && message.length > 0);
+  assert.ok(!message.includes(secret), "must not echo the passphrase");
+  assert.ok(!message.includes("/private/tmp"), "must not echo the absolute path");
+  assert.ok(!message.includes("excel_masking.rs"), "must not echo stack frames");
+  assert.ok(!message.includes("读取原文件失败"), "must not echo the raw error");
+});
+
+test("successful Excel apply exposes no first error message", async () => {
+  const routing = await executeExcelApplyRouting({
+    configs: [config("/input/sample.xlsx")],
+    pendingPaths: ["/input/sample.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "fictional-test-passphrase",
+    applyMasking: async () => appliedResult("sample"),
+  });
+  assert.equal(routing.failureCount, 0);
+  assert.equal(routing.firstErrorMessage, undefined);
+});

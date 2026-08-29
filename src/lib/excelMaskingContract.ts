@@ -44,6 +44,118 @@ export class ExcelMaskingContractError extends Error {
   }
 }
 
+/**
+ * R-closeout (工作包 D): 桌面 Excel 脱敏失败的安全分类文案。
+ *
+ * 底层 Tauri 命令以字符串形式返回错误，其中可能包含绝对路径、口令、堆栈
+ * 或密文片段，不能直接回显。本函数只按已知模式映射为固定、可操作的文案；
+ * 任何未识别错误一律落到固定兜底文案，绝不透传原始错误内容。
+ */
+
+type ExcelFailureCategory =
+  | "sandbox_passphrase"
+  | "passphrase_empty"
+  | "csv_read"
+  | "excel_open"
+  | "permission"
+  | "crypto"
+  | "format"
+  | "contract"
+  | "unknown";
+
+function excelFailureCategory(error: unknown): ExcelFailureCategory {
+  const raw =
+    typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  if (raw.trim().length === 0) {
+    // Contract errors always carry a fixed message; treat empty-raw
+    // non-string errors as unknown.
+    return error instanceof ExcelMaskingContractError ? "contract" : "unknown";
+  }
+  // Order matters (UI-STATE-003): specific config errors carry fixed safe
+  // contract messages and must be classified by message BEFORE the generic
+  // contract-instance fallback, so e.g. an `ExcelMaskingContractError(
+  // "沙箱口令不能为空")` shows an actionable "沙箱口令不能为空" text instead
+  // of the misleading "预览数据结构无效".
+  if (/沙箱口令不能为空|Sandbox passphrase must not be empty/.test(raw)) {
+    return "sandbox_passphrase";
+  }
+  if (/独立二级口令不能为空|口令不能为空/.test(raw)) {
+    return "passphrase_empty";
+  }
+  if (/Failed to read CSV file|读取 CSV|CSV 文件/.test(raw)) {
+    return "csv_read";
+  }
+  if (/Failed to open Excel|打开 Excel|Failed to process legacy xls/.test(raw)) {
+    return "excel_open";
+  }
+  if (/Permission denied|denied|权限/.test(raw)) {
+    return "permission";
+  }
+  if (/ECMAP|Encrypt|Decrypt|加密|解密/.test(raw)) {
+    return "crypto";
+  }
+  if (/Invalid magic|Data too short|格式无效|已损坏/.test(raw)) {
+    return "format";
+  }
+  if (
+    error instanceof ExcelMaskingContractError ||
+    /预览返回结构无效|拒绝继续/.test(raw)
+  ) {
+    return "contract";
+  }
+  return "unknown";
+}
+
+export function classifyDesktopExcelApplyError(error: unknown): string {
+  switch (excelFailureCategory(error)) {
+    case "sandbox_passphrase":
+      return "沙箱口令不能为空，请在设置中配置沙箱口令后重试。";
+    case "passphrase_empty":
+      return "加密口令不能为空，请在脱敏配置中填写口令后重试。";
+    case "csv_read":
+      return "无法读取 CSV 文件，请确认文件格式正确且未被占用后重试。";
+    case "excel_open":
+      return "无法打开 Excel 文件，请确认文件格式有效且未被占用后重试。";
+    case "permission":
+      return "没有权限读写文件，请检查文件与输出目录权限后重试。";
+    case "crypto":
+      return "加密相关处理失败，请检查配置或口令后重试。";
+    case "format":
+      return "映射或加密源文件格式无效，请重新生成产物后重试。";
+    default:
+      return "Excel 脱敏执行失败，请检查配置后重试。";
+  }
+}
+
+/**
+ * R-closeout (工作包 D): 桌面 Excel 预览失败的安全分类文案。与
+ * `classifyDesktopExcelApplyError` 共享同一失败分类，但使用预览语境下的
+ * 固定文案；契约转换失败（`ExcelMaskingContractError`）单独归类为
+ * "预览数据结构无效"。绝不回显路径、口令、堆栈、SQL 或密文正文。
+ */
+export function classifyDesktopExcelPreviewError(error: unknown): string {
+  switch (excelFailureCategory(error)) {
+    case "contract":
+      return "Excel 预览数据结构无效，请重新选择文件后重试。";
+    case "sandbox_passphrase":
+      return "沙箱口令不能为空，请在设置中配置沙箱口令后重试。";
+    case "passphrase_empty":
+      return "加密口令不能为空，请在脱敏配置中填写口令后重试。";
+    case "csv_read":
+      return "无法读取 CSV 文件，请确认文件格式正确且未被占用后重试。";
+    case "excel_open":
+      return "无法打开 Excel 文件，请确认文件格式有效且未被占用后重试。";
+    case "permission":
+      return "没有权限读写文件，请检查文件权限后重试。";
+    case "crypto":
+      return "加密相关处理失败，请检查配置或口令后重试。";
+    case "format":
+      return "文件格式无效或已损坏，请重新选择文件后重试。";
+    default:
+      return "预览生成失败，请检查配置后重试。";
+  }
+}
+
 export type TauriEncSourcePassModeDto =
   | { type: "SandboxReused" }
   | { type: "SecondaryPhrase"; value: string }
@@ -371,12 +483,15 @@ export function toTauriExcelMaskingConfig(
   });
 
   const source_pass_mode = toSourcePassMode(config.key_mode, config.secondary_passphrase);
-  if (
-    config.key_mode === "SANDBOX_REUSED" &&
-    !options.sandboxPassphrase?.trim()
-  ) {
-    throw new ExcelMaskingContractError("沙箱口令不能为空");
-  }
+
+  // UI-STATE-003 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+  // the sandbox-passphrase requirement is NOT enforced here. The preview
+  // command never encrypts and must work even when the sandbox passphrase is
+  // unset (isolated/first-run environments); the apply command enforces it in
+  // Rust (`passphrase_from_mode(SandboxReused, "")` rejects with
+  // "Sandbox passphrase must not be empty"), which the desktop apply
+  // classifier maps to the actionable "沙箱口令不能为空" message. Throwing
+  // here would block the preview with a misleading error instead.
 
   return {
     input_file_path: config.file_path,

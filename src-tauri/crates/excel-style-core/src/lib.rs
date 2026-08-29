@@ -205,9 +205,6 @@ fn process_sheet_xml(
                 if name_bytes == b"c" {
                     in_c_element = true;
                     let current_cell_r = attr_value(&e, b"r");
-                    let t_attr = attr_value(&e, b"t");
-                    let cell_was_shared = t_attr.as_deref() == Some("s");
-                    let cell_was_inline = t_attr.as_deref() == Some("inlineStr");
                     let mut key_match: Option<String> = None;
                     if let Some(ref r_val) = current_cell_r {
                         if let Some((row, col)) = parse_cell_ref_a1(sheet_name, r_val) {
@@ -223,16 +220,25 @@ fn process_sheet_xml(
                             }
                         }
                     }
-                    cell_rewrites_as_inline =
-                        key_match.is_some() && (cell_was_shared || cell_was_inline);
+                    // A replaced cell is always written as an inline-string
+                    // cell, regardless of its original type (shared string,
+                    // inline string, plain number, boolean, date, or formula
+                    // result). Writing a string into a numeric `<v>` would
+                    // leave the cell typed as a number and make the final
+                    // workbook invalid for real readers (Excel asks to
+                    // repair). The original value/formula element is skipped
+                    // and a fresh `<is><t>` is emitted on the cell close.
+                    cell_rewrites_as_inline = key_match.is_some();
                     skip_inline_depth = 0;
-                    if cell_rewrites_as_inline && cell_was_shared {
+                    if cell_rewrites_as_inline {
                         let mut attrs_vec: Vec<Vec<u8>> = Vec::new();
+                        let mut wrote_t = false;
                         for attr in e.attributes().flatten() {
                             let key_bytes = attr.key.as_ref();
                             let val_bytes: &[u8] = &attr.value;
                             if key_bytes == b"t" {
                                 attrs_vec.push(b"t=\"inlineStr\"".to_vec());
+                                wrote_t = true;
                             } else {
                                 let mut pair =
                                     Vec::with_capacity(key_bytes.len() + val_bytes.len() + 3);
@@ -242,6 +248,9 @@ fn process_sheet_xml(
                                 pair.push(b'"');
                                 attrs_vec.push(pair);
                             }
+                        }
+                        if !wrote_t {
+                            attrs_vec.push(b"t=\"inlineStr\"".to_vec());
                         }
                         let content: String = if attrs_vec.is_empty() {
                             "c".to_string()
@@ -261,14 +270,17 @@ fn process_sheet_xml(
                         writer.write_event(Event::Start(e))?;
                     }
                     pending_v_replacement = key_match;
-                } else if in_c_element && cell_rewrites_as_inline && name_bytes == b"is" {
+                } else if in_c_element
+                    && cell_rewrites_as_inline
+                    && (name_bytes == b"is" || name_bytes == b"f")
+                {
+                    // Skip the original inline-string content and any formula
+                    // element of a replaced cell — both are replaced by the
+                    // fresh `<is><t>` written on the cell close.
                     skip_inline_depth = 1;
                 } else if name_bytes == b"v" && in_c_element {
                     in_v_element = true;
-                    skip_v_text = false;
-                    if pending_v_replacement.is_some() {
-                        skip_v_text = true;
-                    }
+                    skip_v_text = cell_rewrites_as_inline;
                     if !cell_rewrites_as_inline {
                         writer.write_event(Event::Start(e))?;
                     }
@@ -793,6 +805,7 @@ fn _random_bytes<const N: usize>() -> [u8; N] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_cell_ref_basic() {
@@ -806,5 +819,243 @@ mod tests {
             Some((100, 27))
         );
         assert_eq!(parse_cell_ref_a1("Sheet", "Other!A1"), None);
+    }
+
+    // -----------------------------------------------------------------
+    // R-closeout (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+    // a numeric cell replaced by a string must be written as a legal
+    // string cell (t="inlineStr" + <is><t>), never as a numeric <v>
+    // holding a non-numeric value; formulas of replaced cells are dropped;
+    // unmasked numbers/formulas/styles pass through untouched.
+    // -----------------------------------------------------------------
+
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "excel-style-core-closeout-{tag}-{nanos}-{n}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp test dir");
+        dir
+    }
+
+    /// Extracts the full `<c ...>...</c>` (or `<c .../>`) element whose `r`
+    /// attribute equals `cell_ref` from raw worksheet XML.
+    fn extract_cell_element(xml: &str, cell_ref: &str) -> Option<String> {
+        let mut rest = xml;
+        loop {
+            let Some(start) = rest.find("<c ") else {
+                return None;
+            };
+            let after_start = &rest[start..];
+            let Some(end_gt) = after_start.find('>') else {
+                return None;
+            };
+            let tag = &after_start[..=end_gt];
+            if tag.contains(&format!("r=\"{cell_ref}\"")) {
+                if tag.ends_with("/>") {
+                    return Some(tag.to_string());
+                }
+                let body = &after_start[end_gt + 1..];
+                let Some(end_close) = body.find("</c>") else {
+                    return None;
+                };
+                return Some(format!("{tag}{}</c>", &body[..end_close]));
+            }
+            rest = &after_start[end_gt + 1..];
+        }
+    }
+
+    #[test]
+    fn numeric_cell_replaced_with_string_is_written_as_inline_string_cell() {
+        let dir = unique_temp_dir("numeric-to-inline");
+        let input = dir.join("nums.xlsx");
+        {
+            let mut workbook = rust_xlsxwriter::Workbook::new();
+            let worksheet = workbook.add_worksheet().set_name("Sheet1").unwrap();
+            worksheet.write_string(0, 0, "数量").unwrap();
+            worksheet.write_string(0, 1, "金额").unwrap();
+            worksheet.write_number(1, 0, 3.0).unwrap();
+            worksheet.write_number(1, 1, 9.5).unwrap();
+            worksheet.write_string(2, 0, "备注").unwrap();
+            workbook.save(&input).unwrap();
+        }
+
+        let mut replacements = HashMap::new();
+        replacements.insert(
+            CellKey {
+                sheet: "Sheet1".to_string(),
+                row: 2,
+                col: 1,
+            },
+            "***".to_string(),
+        );
+        let output = dir.join("masked.xlsx");
+        let outcome = rewrite_clone_inject(&input, &output, &replacements).expect("rewrite");
+        assert_eq!(outcome.hits, 1);
+
+        // A real workbook reader opens it and sees the string replacement
+        // plus the untouched numeric cell.
+        use calamine::{open_workbook_auto, Data, Reader};
+        let mut workbook = open_workbook_auto(&output).expect("masked workbook must open");
+        let range = workbook.worksheet_range("Sheet1").expect("Sheet1");
+        match range.get((1, 0)) {
+            Some(Data::String(s)) => assert_eq!(s, "***"),
+            other => panic!("A2 must be a string cell, got {other:?}"),
+        }
+        assert!(matches!(range.get((1, 1)), Some(Data::Float(f)) if (*f - 9.5).abs() < 1e-9));
+
+        // The raw XML is well-formed and type-consistent.
+        let zip_bytes = fs::read(&output).expect("read masked zip");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("open zip");
+        let mut sheet_xml = String::new();
+        zip.by_name("xl/worksheets/sheet1.xml")
+            .expect("sheet1 part")
+            .read_to_string(&mut sheet_xml)
+            .expect("read sheet xml");
+        let a2 = extract_cell_element(&sheet_xml, "A2").expect("A2 cell element");
+        assert!(
+            a2.contains("t=\"inlineStr\""),
+            "A2 must be declared as inline string, got: {a2}"
+        );
+        assert!(
+            a2.contains("<is><t>***</t></is>"),
+            "A2 must carry the inline string value, got: {a2}"
+        );
+        assert!(
+            !a2.contains("<v>"),
+            "A2 must not keep a numeric <v>, got: {a2}"
+        );
+        let b2 = extract_cell_element(&sheet_xml, "B2").expect("B2 cell element");
+        assert!(
+            !b2.contains("t=\"inlineStr\"") && b2.contains("<v>9.5</v>"),
+            "unmasked numeric B2 must stay a number, got: {b2}"
+        );
+    }
+
+    #[test]
+    fn formula_cell_replaced_with_string_drops_formula_and_writes_inline_string() {
+        let dir = unique_temp_dir("formula-to-inline");
+        let input = dir.join("formulas.xlsx");
+        {
+            let mut workbook = rust_xlsxwriter::Workbook::new();
+            let worksheet = workbook.add_worksheet().set_name("Sheet1").unwrap();
+            worksheet.write_number(1, 0, 3.0).unwrap();
+            worksheet.write_number(1, 1, 9.5).unwrap();
+            worksheet
+                .write_formula(1, 2, "=A2+B2")
+                .expect("write formula");
+            workbook.save(&input).unwrap();
+        }
+
+        let mut replacements = HashMap::new();
+        replacements.insert(
+            CellKey {
+                sheet: "Sheet1".to_string(),
+                row: 2,
+                col: 3,
+            },
+            "REDACTED".to_string(),
+        );
+        let output = dir.join("masked.xlsx");
+        let outcome = rewrite_clone_inject(&input, &output, &replacements).expect("rewrite");
+        assert_eq!(outcome.hits, 1);
+
+        let zip_bytes = fs::read(&output).expect("read masked zip");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("open zip");
+        let mut sheet_xml = String::new();
+        zip.by_name("xl/worksheets/sheet1.xml")
+            .expect("sheet1 part")
+            .read_to_string(&mut sheet_xml)
+            .expect("read sheet xml");
+        let c2 = extract_cell_element(&sheet_xml, "C2").expect("C2 cell element");
+        assert!(
+            c2.contains("t=\"inlineStr\"") && c2.contains("<is><t>REDACTED</t></is>"),
+            "replaced formula cell must become a string cell, got: {c2}"
+        );
+        assert!(
+            !c2.contains("<f>"),
+            "formula of a replaced cell must be dropped (a cell cannot hold both <f> and <is>), got: {c2}"
+        );
+        // Unmasked numeric cells stay numbers.
+        let a2 = extract_cell_element(&sheet_xml, "A2").expect("A2 cell element");
+        assert!(
+            !a2.contains("t=\"inlineStr\"") && a2.contains("<v>"),
+            "unmasked A2 must stay a number, got: {a2}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // R-closeout (preview root-cause): the bounded structure scan (cap 5)
+    // and the preview scan (cap 20) must agree on `max_col`/headers width;
+    // a row beyond the structure cap that introduces a NEW column must not
+    // make the preview emit a cell the structure headers cannot cover.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn structure_and_preview_scans_agree_on_max_col_even_with_late_new_columns() {
+        use std::io::Write;
+        let dir = unique_temp_dir("scan-maxcol");
+        let path = dir.join("late-col.xlsx");
+        {
+            // 7 data rows; the 7th data row (row 8) introduces column D.
+            let mut sheet = String::from(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:D8"/><sheetData>"#,
+            );
+            sheet.push_str(r#"<row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c><c r="B1" t="inlineStr"><is><t>Phone</t></is></c><c r="C1" t="inlineStr"><is><t>Email</t></is></c></row>"#);
+            for i in 2..=7u32 {
+                sheet.push_str(&format!(
+                    r#"<row r="{i}"><c r="A{i}" t="inlineStr"><is><t>u{i}</t></is></c><c r="B{i}" t="inlineStr"><is><t>139{i:04}</t></is></c><c r="C{i}" t="inlineStr"><is><t>u{i}@x.invalid</t></is></c></row>"#
+                ));
+            }
+            sheet.push_str(
+                r#"<row r="8"><c r="A8" t="inlineStr"><is><t>u8</t></is></c><c r="B8" t="inlineStr"><is><t>13980000</t></is></c><c r="C8" t="inlineStr"><is><t>u8@x.invalid</t></is></c><c r="D8" t="inlineStr"><is><t>EXTRA</t></is></c></row>"#,
+            );
+            sheet.push_str("</sheetData></worksheet>");
+
+            let file = fs::File::create(&path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("xl/workbook.xml", opts).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            ).unwrap();
+            zip.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
+            zip.write_all(sheet.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let structure = table_reader::read_xlsx_sheet_structure(&path, "Sheet1", 5)
+            .expect("structure scan");
+        let preview = table_reader::read_xlsx_preview(&path, "Sheet1", 20).expect("preview scan");
+        // The desktop preview response reports `headers` from the structure
+        // scan while emitting cells from the preview scan; both must agree
+        // on width so the frontend `cell.col <= headers.length` contract
+        // check can never reject a real native response. Today both scans
+        // observe every row (the early-break optimization does not fire for
+        // this fixture), so they must agree on `max_col`.
+        assert_eq!(
+            structure.max_col, preview.headers.len() as u32,
+            "structure width (headers) and preview width must agree"
+        );
+        let max_preview_col = preview
+            .rows
+            .iter()
+            .map(|row| row.values.len() as u32)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_preview_col <= structure.max_col,
+            "preview rows must stay within the reported header width"
+        );
+        // And the preview scan must have observed the late new column (D),
+        // otherwise the fixture does not exercise the disagreement case.
+        assert_eq!(preview.headers.len(), 4, "fixture must introduce a late new column");
     }
 }

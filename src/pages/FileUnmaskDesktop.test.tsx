@@ -2,7 +2,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { describeExcelRestoreSuccess } from "./FileUnmaskDesktop";
+import {
+  clearedRestoreSessionState,
+  deriveExcelRestoreDefaultFileName,
+  describeExcelRestoreSuccess,
+} from "./FileUnmaskDesktop";
 import type { ExcelRestoreResult } from "@/types/commands";
 
 // TASK-EXCEL-P0-RESTORE-IPC-PASSPHRASE-CLOSEOUT-001: the independent tester's
@@ -56,4 +60,48 @@ test("describeExcelRestoreSuccess passes the real output path through unmodified
     const display = describeExcelRestoreSuccess({ restored_path, sha256_verified: true });
     assert.equal(display.outputPath, restored_path);
   }
+});
+
+// UI-STATE-001 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001): switching
+// restore path (A/B) must clear the previous round's transient results, so a
+// Path B success card can never be mistaken for a Path A result. The clearing
+// contract is pinned as a pure function here because `.test.*` suites have no
+// jsdom to mount the page.
+
+test("clearedRestoreSessionState empties the transient result state on path switch", () => {
+  const cleared = clearedRestoreSessionState();
+  assert.equal(cleared.result, null);
+  assert.equal(cleared.legacyResult, null);
+  assert.equal(cleared.error, "");
+});
+
+test("clearedRestoreSessionState never carries the previous output path or passphrase", () => {
+  const cleared = clearedRestoreSessionState();
+  assert.deepEqual(Object.keys(cleared).sort(), ["error", "legacyResult", "result"]);
+  assert.ok(
+    !("outputPath" in cleared) && !("restored_path" in cleared),
+    "old output path must not survive a path switch"
+  );
+});
+
+test("Path B derives the default restore filename from the user original extension", () => {
+  assert.equal(
+    deriveExcelRestoreDefaultFileName(
+      "/tmp/fixture/employee_masked.xlsx",
+      "B",
+      "/tmp/fixture/employee_source.xls"
+    ),
+    "employee_source_已还原.xls"
+  );
+});
+
+test("Path A keeps the masked workbook fallback until Rust validates the bytes", () => {
+  assert.equal(
+    deriveExcelRestoreDefaultFileName(
+      "/tmp/fixture/employee_masked.xlsx",
+      "A",
+      "/tmp/fixture/employee_source.xls"
+    ),
+    "employee_masked_已还原.xlsx"
+  );
 });

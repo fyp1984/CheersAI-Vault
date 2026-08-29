@@ -216,6 +216,37 @@ pub struct ExcelArtifactMembersResponse {
     pub persisted_files: Vec<ExcelPersistedFile>,
 }
 
+/// The two supported enterprise Excel restore modes (R-closeout
+/// TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001, 工作包 C).
+///
+/// - `PathA`: the server already holds `masked + ecmap + encrypted_source`;
+///   the client only supplies the matching passphrase.
+/// - `PathB`: the server holds `masked + ecmap`; the client additionally
+///   uploads the original file and the matching passphrase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcelRestoreMode {
+    PathA,
+    PathB,
+}
+
+impl ExcelRestoreMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PathA => "path_a",
+            Self::PathB => "path_b",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "path_a" => Some(Self::PathA),
+            "path_b" => Some(Self::PathB),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub code: String,

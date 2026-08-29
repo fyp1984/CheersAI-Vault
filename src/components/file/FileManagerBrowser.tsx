@@ -18,9 +18,11 @@ import {
   downloadRuntimeExcelArtifactMember as downloadRuntimeExcelArtifactMemberRequest,
   fetchRuntimeBatch,
   fetchRuntimeBatches,
+  fetchRuntimeExcelArtifactMembers,
   fetchRuntimeFileBayCandidates,
   fetchRuntimeFileBayStatus,
 } from "@/lib/runtime/client";
+import { EXCEL_ARTIFACT_ACTION_LABELS, excelMemberActionsForKinds } from "@/lib/runtime/excelClient";
 import { runtimeFormatLabel } from "@/lib/runtime/formatCatalog";
 import type {
   RuntimeBatchDetail,
@@ -28,6 +30,7 @@ import type {
   RuntimeBatchStatus,
   RuntimeBatchSummary,
   RuntimeExcelArtifactMemberKind,
+  RuntimeExcelPersistedFile,
   RuntimeFileBayCandidate,
   RuntimeFileBayStatusResponse,
   RuntimeFileBayUploadItem,
@@ -40,16 +43,6 @@ function safeDisplayName(name: string): string {
   // eslint-disable-next-line no-control-regex
   return name.replace(/[\x00-\x1f\x7f]/g, "");
 }
-
-const EXCEL_ARTIFACT_ACTIONS: ReadonlyArray<{
-  kind: RuntimeExcelArtifactMemberKind;
-  label: string;
-}> = [
-  { kind: "masked_workbook", label: "下载工作簿" },
-  { kind: "report", label: "下载报告" },
-  { kind: "ecmap", label: "下载 ECMAP" },
-  { kind: "encrypted_source", label: "下载加密源" },
-];
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -173,6 +166,34 @@ export function FileManagerBrowser() {
   const [connection, setConnection] = useState<ConnectionState>("ok");
   const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // R-closeout (工作包 C): per-artifact Excel manifest members. Download
+  // actions render only for kinds actually present in the manifest.
+  const [excelMembers, setExcelMembers] = useState<
+    Record<string, RuntimeExcelPersistedFile[] | "loading" | "error">
+  >({});
+  const excelMembersFetchedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!detail) return;
+    let cancelled = false;
+    for (const file of detail.files) {
+      if (file.artifact_kind !== "excel_bundle_manifest" || !file.artifact_id) continue;
+      const artifactId = file.artifact_id;
+      if (excelMembersFetchedRef.current.has(artifactId)) continue;
+      excelMembersFetchedRef.current.add(artifactId);
+      setExcelMembers((current) => ({ ...current, [artifactId]: "loading" }));
+      void fetchRuntimeExcelArtifactMembers(artifactId).then((result) => {
+        if (cancelled) return;
+        setExcelMembers((current) => ({
+          ...current,
+          [artifactId]: result.ok ? result.data.persisted_files : "error",
+        }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
 
   const loadBatches = useCallback(async () => {
     setListState({ kind: "loading" });
@@ -580,25 +601,35 @@ export function FileManagerBrowser() {
                             file.artifact_id &&
                             file.artifact_kind === "excel_bundle_manifest" && (
                               <div className="flex flex-wrap items-center gap-2">
-                                {EXCEL_ARTIFACT_ACTIONS.map((action) => (
-                                  <Button
-                                    key={action.kind}
-                                    variant="secondary"
-                                    size="sm"
-                                    icon={Download}
-                                    disabled={downloadingArtifactId === file.artifact_id}
-                                    onClick={() =>
-                                      void downloadExcelArtifactMember(
-                                        file.artifact_id as string,
-                                        action.kind
-                                      )
-                                    }
-                                  >
-                                    {downloadingArtifactId === file.artifact_id
-                                      ? "下载中…"
-                                      : action.label}
-                                  </Button>
-                                ))}
+                                {excelMemberActionsForKinds(excelMembers[file.artifact_id]).map(
+                                  (kind) => (
+                                    <Button
+                                      key={kind}
+                                      variant="secondary"
+                                      size="sm"
+                                      icon={Download}
+                                      disabled={downloadingArtifactId === file.artifact_id}
+                                      onClick={() =>
+                                        void downloadExcelArtifactMember(
+                                          file.artifact_id as string,
+                                          kind
+                                        )
+                                      }
+                                    >
+                                      {downloadingArtifactId === file.artifact_id
+                                        ? "下载中…"
+                                        : EXCEL_ARTIFACT_ACTION_LABELS.find(
+                                            (action) => action.kind === kind
+                                          )?.label ?? "下载"}
+                                    </Button>
+                                  )
+                                )}
+                                {excelMembers[file.artifact_id] === "loading" && (
+                                  <span className="text-xs text-gray-400">加载产物清单…</span>
+                                )}
+                                {excelMembers[file.artifact_id] === "error" && (
+                                  <span className="text-xs text-red-400">产物清单加载失败</span>
+                                )}
                               </div>
                             )}
                             {file.status === "Completed" && file.artifact_id && file.restore_available ? (

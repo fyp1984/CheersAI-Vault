@@ -55,6 +55,7 @@ import { Progress } from "@/components/ui/progress";
 import { PassphraseBox } from "@/components/common/PassphraseBox";
 import { tauriCommands } from "@/lib/tauri";
 import { normalizeCaughtRuntimeErrorMessage } from "@/lib/runtime/errorClassification";
+import { classifyDesktopExcelPreviewError } from "@/lib/excelMaskingContract";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import type {
   CellOverrideRule,
@@ -154,6 +155,17 @@ export function canConfirmExcelMasking(
   confirmSecondCheck: boolean
 ): boolean {
   return hasAnyExcelMaskingRule(rulesCount) && confirmSecondCheck;
+}
+
+/**
+ * R-closeout (工作包 D): 预览失败的安全分类文案。预览是 Excel 配置流程的
+ * 第一个失败层；此前 `loadPreview` 的 catch 只清空预览、不展示任何错误，
+ * 用户只能看到"没有预览"而无法定位失败原因。本函数把失败映射为固定安全
+ * 文案（复用 `excelMaskingContract` 的分类器，绝不回显路径、口令、堆栈或
+ * 密文），使该层的最小修复可被纯函数测试钉住。
+ */
+export function excelPreviewFailureMessage(error: unknown): string {
+  return classifyDesktopExcelPreviewError(error);
 }
 
 export const MAX_CELL_OVERRIDE_CELLS = 10_000;
@@ -394,6 +406,9 @@ export default function ExcelMaskingDialog({
 
   const [preview, setPreview] = useState<ExcelMaskPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // R-closeout (工作包 D): 固定安全 preview error 状态。预览失败不再静默
+  // 吞掉，而是展示分类后的固定安全文案（不包含路径/口令/堆栈/密文）。
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -404,6 +419,7 @@ export default function ExcelMaskingDialog({
     let cancelled = false;
     setLoading(true);
     setLoadingProgress(10);
+    setPreviewError(null);
     const load = primaryFile
       ? (onParseStructure
           ? onParseStructure(primaryFile)
@@ -596,6 +612,7 @@ export default function ExcelMaskingDialog({
     if (!primaryFile && !primaryPath) return;
     const requestId = ++previewRequestIdRef.current;
     setPreviewLoading(true);
+    setPreviewError(null);
     try {
       const config: ExcelMaskingConfig = buildConfigs()[0] ?? {
         file_path: primaryFile?.name ?? primaryPath,
@@ -612,9 +629,12 @@ export default function ExcelMaskingDialog({
         : await tauriCommands.excelPreviewMasking(config, 20, defaultPassphrase);
       if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
       setPreview(res);
-    } catch {
+    } catch (error) {
       if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
       setPreview(null);
+      // R-closeout (工作包 D): 首个失败层（预览加载）的最小修复——不再静默
+      // 吞错，展示分类后的固定安全文案。
+      setPreviewError(excelPreviewFailureMessage(error));
     } finally {
       if (!isStalePreviewResponse(requestId, previewRequestIdRef.current)) {
         setPreviewLoading(false);
@@ -733,6 +753,7 @@ export default function ExcelMaskingDialog({
                 <PreviewTab
                   preview={preview}
                   previewLoading={previewLoading}
+                  previewError={previewError}
                   onReload={loadPreview}
                   rulesCount={rulesCount}
                   canConfirmBase={hasAnyExcelMaskingRule(rulesCount)}
@@ -1263,6 +1284,7 @@ function CellOverrideTab({
 interface PreviewTabProps {
   preview: ExcelMaskPreview | null;
   previewLoading: boolean;
+  previewError: string | null;
   onReload: () => void;
   rulesCount: number;
   canConfirmBase: boolean;
@@ -1273,6 +1295,7 @@ interface PreviewTabProps {
 function PreviewTab({
   preview,
   previewLoading,
+  previewError,
   onReload,
   rulesCount,
   canConfirmBase,
@@ -1292,6 +1315,16 @@ function PreviewTab({
           刷新预览
         </Button>
       </div>
+
+      {previewError && !previewLoading && (
+        <Alert variant="default" className="border-red-200 bg-red-50">
+          <AlertTriangle className="w-4 h-4 text-red-600" />
+          <AlertTitle className="text-red-800">预览失败</AlertTitle>
+          <AlertDescription className="text-red-700 text-sm">
+            {previewError}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {!canConfirmBase && (
         <Alert variant="default" className="bg-amber-50 border-amber-200">

@@ -17,6 +17,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use service_contracts::{
     ExcelArtifactMemberKind, ExcelArtifactMembersResponse, ExcelPersistArtifactsResponse,
+    ExcelRestoreMode,
 };
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
@@ -244,14 +245,28 @@ where
 
     let member_download = warp::path!("api" / "v1" / "artifacts" / String / "members" / String)
         .and(warp::get())
-        .and(runtime_filter)
+        .and(runtime_filter.clone())
         .and_then(download_artifact_member_handler);
+
+    // R-closeout (工作包 C): minimal enterprise Excel restore adaptation.
+    // POST /api/v1/excel/artifacts/{artifact_id}/restore with multipart
+    // fields `mode` (path_a | path_b), `passphrase` and, for Path B,
+    // `user_original` (the uploaded original file). The server resolves
+    // every material from the artifact manifest by artifact_id — the client
+    // can never submit server paths. All failure modes fail closed with
+    // safe error codes and zero restored artifacts.
+    let restore = warp::path!("api" / "v1" / "excel" / "artifacts" / String / "restore")
+        .and(warp::post())
+        .and(warp::multipart::form().max_length(512 * 1024 * 1024))
+        .and(runtime_filter)
+        .and_then(excel_restore_handler);
 
     parse_structure
         .or(preview)
         .or(jobs)
         .or(members)
         .or(member_download)
+        .or(restore)
 }
 
 async fn parse_structure_handler(
@@ -380,10 +395,351 @@ async fn download_artifact_member_handler(
         .header("content-type", member_content_type(member.kind))
         .header(
             "content-disposition",
-            format!("attachment; filename=\"{}\"", member.display_name),
+            content_disposition_download(&member.display_name),
         )
         .body(bytes)
         .expect("valid excel member response"))
+}
+
+// ---------------------------------------------------------------------
+// R-closeout (工作包 C): enterprise Excel restore (Path A / Path B)
+// ---------------------------------------------------------------------
+
+struct ExcelRestorePayload {
+    mode: ExcelRestoreMode,
+    passphrase: String,
+    /// Path B only: the uploaded original file bytes, held in memory and
+    /// mirrored to an ephemeral temp file for the duration of the request.
+    user_original_bytes: Option<Vec<u8>>,
+}
+
+async fn parse_excel_restore_form(form: FormData) -> Result<ExcelRestorePayload, Rejection> {
+    let mut mode: Option<ExcelRestoreMode> = None;
+    let mut passphrase = String::new();
+    let mut user_original_bytes: Option<Vec<u8>> = None;
+    let mut form = form;
+
+    while let Some(part) = form.try_next().await.map_err(|_| {
+        crate::api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_MULTIPART",
+            "The multipart request could not be parsed",
+            false,
+        )
+    })? {
+        let name = part.name().to_string();
+        let bytes = part
+            .stream()
+            .try_fold(BytesMut::new(), |mut data, chunk| async move {
+                data.put(chunk);
+                Ok::<_, warp::Error>(data)
+            })
+            .await
+            .map_err(|_| {
+                crate::api_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_MULTIPART",
+                    "The multipart request could not be parsed",
+                    false,
+                )
+            })?
+            .to_vec();
+
+        match name.as_str() {
+            "mode" => {
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    crate::api_error(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_REQUEST",
+                        "mode must be utf-8 text",
+                        false,
+                    )
+                })?;
+                mode = Some(
+                    ExcelRestoreMode::parse(text.trim()).ok_or_else(|| {
+                        crate::api_error(
+                            StatusCode::BAD_REQUEST,
+                            "EXCEL_RESTORE_MODE_INVALID",
+                            "The Excel restore mode must be path_a or path_b",
+                            false,
+                        )
+                    })?,
+                );
+            }
+            "passphrase" => {
+                passphrase = String::from_utf8(bytes).map_err(|_| {
+                    crate::api_error(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_REQUEST",
+                        "passphrase must be utf-8 text",
+                        false,
+                    )
+                })?;
+            }
+            "user_original" => {
+                // Path B only. Bytes stay in memory; the handler mirrors
+                // them into an ephemeral temp file that is dropped (removed)
+                // on both success and failure.
+                user_original_bytes = Some(bytes);
+            }
+            _ => {}
+        }
+    }
+
+    let mode = mode.ok_or_else(|| {
+        crate::api_error(
+            StatusCode::BAD_REQUEST,
+            "EXCEL_RESTORE_MODE_REQUIRED",
+            "An Excel restore mode (path_a or path_b) is required",
+            false,
+        )
+    })?;
+    Ok(ExcelRestorePayload {
+        mode,
+        passphrase,
+        user_original_bytes,
+    })
+}
+
+/// Fail-closed restore rejection: logs a safe `RestoreFailed` event and
+/// returns a fixed, non-sensitive error body (no passphrase, no plaintext,
+/// no paths, no ciphertext).
+async fn restore_failure(
+    runtime: &crate::Runtime,
+    code: &'static str,
+    message: &'static str,
+) -> Rejection {
+    let _ = runtime
+        .store
+        .log_restore_event("RestoreFailed", "failed", Some(code), None)
+        .await;
+    crate::api_error(StatusCode::BAD_REQUEST, code, message, false)
+}
+
+/// Sanitized download name for a restored Excel file: `{stem}_还原.{ext}`,
+/// with control characters and quote characters stripped so the
+/// `content-disposition` header can never be injected with.
+fn excel_restored_download_name(display_name: &str) -> String {
+    let path = Path::new(display_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("restored_file");
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("xlsx");
+    let mut out = String::with_capacity(stem.len() + ext.len() + 8);
+    for ch in format!("{stem}_还原.{ext}").chars() {
+        if ch.is_control() || ch == '"' || ch == '\\' {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Build an RFC 6266 `Content-Disposition` attachment header that keeps the
+/// quoted `filename` strictly ASCII (control characters, quotes, backslashes
+/// and non-ASCII runes replaced with `_`) while carrying the real, possibly
+/// Chinese download name in the RFC 5987 `filename*` parameter (UTF-8
+/// percent-encoded, only `A-Za-z0-9-._~` left verbatim). This lets browsers
+/// decode Chinese download names while keeping the header injection-proof.
+pub(crate) fn content_disposition_download(filename: &str) -> String {
+    let mut quoted = String::with_capacity(filename.len());
+    for ch in filename.chars() {
+        if ch.is_control() || ch == '"' || ch == '\\' {
+            quoted.push('_');
+        } else if ch.is_ascii() {
+            quoted.push(ch);
+        } else {
+            quoted.push('_');
+        }
+    }
+    if quoted.is_empty() {
+        quoted.push_str("download");
+    }
+    let mut encoded = String::with_capacity(filename.len() * 3);
+    for byte in filename.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{:02X}", byte));
+        }
+    }
+    format!("attachment; filename=\"{quoted}\"; filename*=UTF-8''{encoded}")
+}
+
+/// Enterprise Excel restore: Path A decrypts the server-held
+/// `.encrypted_src` (verified against the `.ecmap` header); Path B verifies
+/// the uploaded user original against the `.ecmap` header. Both require the
+/// matching passphrase to decrypt the `.ecmap` first. Wrong passphrase,
+/// wrong original, missing materials, non-terminal or non-Excel artifacts
+/// all fail closed with zero restored artifacts.
+async fn excel_restore_handler(
+    artifact_id: String,
+    form: FormData,
+    runtime: crate::Runtime,
+) -> Result<impl Reply, Rejection> {
+    let payload = parse_excel_restore_form(form).await?;
+
+    // Resolve every material from the artifact manifest by artifact_id;
+    // anything that is not a Completed Excel bundle manifest fails here.
+    let materials = runtime
+        .store
+        .excel_restore_materials(&artifact_id)
+        .await
+        .map_err(store_rejection)?;
+
+    let ecmap_json = match decrypt_scoped(
+        &materials.ecmap_bytes,
+        ECMAP_MAGIC,
+        &payload.passphrase,
+        b"ECMAP_V1\0",
+    ) {
+        Ok(json) => json,
+        Err(_) => {
+            return Err(restore_failure(
+                &runtime,
+                "EXCEL_RESTORE_DECRYPT_FAILED",
+                "口令不正确或映射文件与口令不匹配。",
+            )
+            .await)
+        }
+    };
+    let doc: EcmapDocumentV1 = match serde_json::from_slice(&ecmap_json) {
+        Ok(doc) => doc,
+        Err(_) => {
+            return Err(restore_failure(
+                &runtime,
+                "EXCEL_RESTORE_INVALID",
+                "映射数据无效，无法恢复。",
+            )
+            .await)
+        }
+    };
+    // Reject unknown key-source values instead of guessing how to decrypt.
+    if normalize_key_source(&doc.header.source_encryption_key_source).is_err() {
+        return Err(restore_failure(
+            &runtime,
+            "EXCEL_RESTORE_INVALID",
+            "映射数据无效，无法恢复。",
+        )
+        .await);
+    }
+
+    let plain: Vec<u8> = match payload.mode {
+        ExcelRestoreMode::PathA => {
+            let Some(encsrc) = materials.encrypted_source_bytes else {
+                return Err(restore_failure(
+                    &runtime,
+                    "EXCEL_RESTORE_MATERIAL_MISSING",
+                    "缺少加密源材料，无法按路径 A 恢复。",
+                )
+                .await);
+            };
+            let decrypted = match decrypt_scoped(
+                &encsrc,
+                ENCSRC_MAGIC,
+                &payload.passphrase,
+                b"ENCSRC_V1\0",
+            ) {
+                Ok(plain) => plain,
+                Err(_) => {
+                    return Err(restore_failure(
+                        &runtime,
+                        "EXCEL_RESTORE_DECRYPT_FAILED",
+                        "口令不正确或加密源与口令不匹配。",
+                    )
+                    .await)
+                }
+            };
+            if sha256_hex(&decrypted) != doc.header.original_sha256 {
+                return Err(restore_failure(
+                    &runtime,
+                    "EXCEL_RESTORE_MISMATCH",
+                    "材料校验失败：加密源与映射记录不一致。",
+                )
+                .await);
+            }
+            if sha256_hex(&materials.masked_bytes) != doc.header.masked_sha256 {
+                return Err(restore_failure(
+                    &runtime,
+                    "EXCEL_RESTORE_MISMATCH",
+                    "材料校验失败：脱敏工作簿与映射记录不一致。",
+                )
+                .await);
+            }
+            decrypted
+        }
+        ExcelRestoreMode::PathB => {
+            let Some(user_bytes) = payload.user_original_bytes else {
+                return Err(restore_failure(
+                    &runtime,
+                    "EXCEL_RESTORE_MATERIAL_MISSING",
+                    "缺少用户原件，无法按路径 B 恢复。",
+                )
+                .await);
+            };
+            // Mirror the upload into an ephemeral temp file for the
+            // duration of the request; dropping the guard removes it on
+            // both success and failure (临时文件按策略清理).
+            let temp_guard = match tempdir() {
+                Ok(dir) => dir,
+                Err(_) => {
+                    return Err(restore_failure(
+                        &runtime,
+                        "RUNTIME_STORAGE_FAILED",
+                        "临时存储失败。",
+                    )
+                    .await)
+                }
+            };
+            if std::fs::write(temp_guard.path().join("user_original.bin"), &user_bytes).is_err() {
+                return Err(restore_failure(
+                    &runtime,
+                    "RUNTIME_STORAGE_FAILED",
+                    "临时存储失败。",
+                )
+                .await);
+            }
+            if sha256_hex(&user_bytes) != doc.header.original_sha256 {
+                return Err(restore_failure(
+                    &runtime,
+                    "EXCEL_RESTORE_MISMATCH",
+                    "材料校验失败：用户原件与映射记录不一致。",
+                )
+                .await);
+            }
+            user_bytes
+        }
+    };
+
+    let restored_count = doc.entries.len();
+    let _ = runtime
+        .store
+        .log_restore_event(
+            "RestoreSucceeded",
+            "completed",
+            None,
+            Some(restored_count),
+        )
+        .await;
+
+    let fname = excel_restored_download_name(&materials.display_name);
+    Ok(warp::http::Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/octet-stream")
+        .header(
+            "content-disposition",
+            content_disposition_download(&fname),
+        )
+        .header("X-Restored-Entity-Count", restored_count.to_string())
+        .body(plain)
+        .expect("valid excel restore response"))
 }
 
 async fn parse_excel_form(
@@ -1153,7 +1509,7 @@ fn build_csv_masked_artifact(
         masked_rows.push(masked_row);
     }
 
-    let outcome = excel_style_core::fallback_xlsxwriter_full(&header, &masked_rows, masked_path)
+    let mut outcome = excel_style_core::fallback_xlsxwriter_full(&header, &masked_rows, masked_path)
         .map_err(|e| {
             build_failure(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1162,6 +1518,14 @@ fn build_csv_masked_artifact(
                 true,
             )
         })?;
+    // R-closeout (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+    // `fallback_xlsxwriter_full` writes every cell and therefore reports
+    // hits=0 (it has no knowledge of which cells actually changed). The
+    // "实际发生替换的单元格数" is exactly the number of `.ecmap` entries
+    // collected above — align the report with the `.ecmap` entries, the
+    // persisted masked_entity_count and the produced workbook so the old
+    // "报告统计为 0" defect cannot recur.
+    outcome.hits = entries.len() as u64;
 
     Ok((outcome, entries))
 }
@@ -1541,6 +1905,33 @@ fn encrypt_scoped(
     Ok(output)
 }
 
+/// Production counterpart of `encrypt_scoped`: validates the magic and
+/// decrypts with the same domain-scoped PBKDF2 key derivation. Used by the
+/// enterprise Excel restore endpoint to decrypt `.ecmap` and
+/// `.encrypted_src` server-held materials with the client-supplied
+/// passphrase; any format/size/passphrase mismatch fails closed.
+fn decrypt_scoped(
+    data: &[u8],
+    magic: &[u8],
+    passphrase: &str,
+    domain: &[u8],
+) -> Result<Vec<u8>, String> {
+    let min_len = magic.len() + SALT_LEN + NONCE_LEN + 16;
+    if data.len() < min_len || !data.starts_with(magic) {
+        return Err("scoped data too short or magic mismatch".to_string());
+    }
+    let offset = magic.len();
+    let salt = &data[offset..offset + SALT_LEN];
+    let nonce_bytes = &data[offset + SALT_LEN..offset + SALT_LEN + NONCE_LEN];
+    let ciphertext = &data[offset + SALT_LEN + NONCE_LEN..];
+    let key = derive_key_scoped(passphrase, salt, domain)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Cipher init error: {e}"))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "scoped decrypt failed".to_string())
+}
+
 fn derive_key_scoped(passphrase: &str, salt: &[u8], domain: &[u8]) -> Result<[u8; 32], String> {
     let scoped_input = [domain, passphrase.as_bytes()].concat();
     let mut key = [0u8; 32];
@@ -1618,20 +2009,7 @@ fn decrypt_scoped_for_test(
     passphrase: &str,
     domain: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let min_len = magic.len() + SALT_LEN + NONCE_LEN + 16;
-    if data.len() < min_len || !data.starts_with(magic) {
-        return Err("scoped data too short or magic mismatch".to_string());
-    }
-    let offset = magic.len();
-    let salt = &data[offset..offset + SALT_LEN];
-    let nonce_bytes = &data[offset + SALT_LEN..offset + SALT_LEN + NONCE_LEN];
-    let ciphertext = &data[offset + SALT_LEN + NONCE_LEN..];
-    let key = derive_key_scoped(passphrase, salt, domain)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Cipher init error: {e}"))?;
-    let nonce = Nonce::from_slice(nonce_bytes);
-    cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| "scoped decrypt failed".to_string())
+    decrypt_scoped(data, magic, passphrase, domain)
 }
 
 #[cfg(test)]

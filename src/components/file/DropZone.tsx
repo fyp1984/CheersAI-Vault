@@ -6,6 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import { useFileStore } from "@/store/fileStore";
+import { classifyDesktopExcelApplyError } from "@/lib/excelMaskingContract";
 import { tauriCommands } from "@/lib/tauri";
 import ExcelMaskingDialog from "@/components/file/ExcelMaskingDialog";
 import type { ExcelApplyResult, ExcelMaskingConfig } from "@/types/commands";
@@ -67,6 +68,11 @@ export interface ExcelApplyRoutingResult {
   outputs: ExcelOutputSummary[];
   normalQueuePaths: string[];
   failureCount: number;
+  /**
+   * R-closeout (工作包 D): 第一个失败的安全分类文案。只包含固定安全文案，
+   * 绝不含原始错误中的路径、口令、堆栈或密文；无失败时为 undefined。
+   */
+  firstErrorMessage?: string;
 }
 
 export function toExcelOutputSummary(result: ExcelApplyResult): ExcelOutputSummary {
@@ -93,13 +99,17 @@ export async function executeExcelApplyRouting({
 }: ExcelApplyRoutingOptions): Promise<ExcelApplyRoutingResult> {
   const outputs: ExcelOutputSummary[] = [];
   let failureCount = 0;
+  let firstError: unknown = null;
 
   for (const config of configs) {
     try {
       const result = await applyMasking(config, outputDir, sandboxPassphrase);
       outputs.push(toExcelOutputSummary(result));
-    } catch {
+    } catch (error) {
       failureCount += 1;
+      if (firstError === null) {
+        firstError = error;
+      }
     }
   }
 
@@ -112,6 +122,8 @@ export async function executeExcelApplyRouting({
     outputs,
     normalQueuePaths: regularInputsAfterExcelFlow(pendingPaths),
     failureCount,
+    firstErrorMessage:
+      firstError === null ? undefined : classifyDesktopExcelApplyError(firstError),
   };
 }
 
@@ -208,6 +220,14 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
       outputDirOverride?: string
     ) => {
       const outDir = outputDirOverride || outputDir;
+      // UI-STATE-002 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+      // 确认后立即关闭配置弹窗并清空待处理路径，避免用户停留在弹窗中等待
+      // PBKDF2 加密等耗时步骤（产物已写出但弹窗仍停留、取消/Escape 不生效的
+      // 根因是应用尚未返回）；应用在后台完成，结果由下方的状态更新呈现在
+      // 页面主区。executeExcelApplyRouting 使用闭包捕获的 pendingPaths，
+      // 不受此处提前清空影响。
+      setDialogOpen(false);
+      setPendingPaths([]);
       const routing = await executeExcelApplyRouting({
         configs,
         pendingPaths,
@@ -226,10 +246,10 @@ export function DropZone({ onFilesDropped }: DropZoneProps) {
       }
       setExcelOutputs(routing.outputs);
       setRouteMessage(
-        routing.failureCount > 0 ? EXCEL_APPLY_FAILURE_MESSAGE : null
+        routing.failureCount > 0
+          ? routing.firstErrorMessage ?? EXCEL_APPLY_FAILURE_MESSAGE
+          : null
       );
-      setPendingPaths([]);
-      setDialogOpen(false);
     },
     [pendingPaths, outputDir, onFilesDropped, passphrase]
   );

@@ -11,6 +11,7 @@ import {
   RETAIN_MESSAGES,
   canConfirmExcelMasking,
   cellRangeValidationError,
+  excelPreviewFailureMessage,
   hasAnyExcelMaskingRule,
   isStalePreviewResponse,
   mergeCellOverrides,
@@ -324,4 +325,48 @@ test("nextSecondaryPassphraseForKeyMode simulates a full switch-away-and-back cy
   // switch back to mode② — must start empty, not resurface the old value
   secondaryPassphrase = nextSecondaryPassphraseForKeyMode("SECONDARY_PASSPHRASE", secondaryPassphrase);
   assert.equal(secondaryPassphrase, "");
+});
+
+// ---------------------------------------------------------------------
+// R-closeout (工作包 D): 预览失败的安全分类文案（首个失败层的最小修复）
+// ---------------------------------------------------------------------
+
+test("excelPreviewFailureMessage maps known preview failures to fixed safe messages", () => {
+  assert.equal(
+    excelPreviewFailureMessage("Failed to open Excel: /tmp/x.xlsx"),
+    "无法打开 Excel 文件，请确认文件格式有效且未被占用后重试。"
+  );
+  assert.equal(
+    excelPreviewFailureMessage("独立二级口令不能为空"),
+    "加密口令不能为空，请在脱敏配置中填写口令后重试。"
+  );
+  assert.equal(
+    excelPreviewFailureMessage("Sandbox passphrase must not be empty"),
+    "沙箱口令不能为空，请在设置中配置沙箱口令后重试。"
+  );
+});
+
+test("excelPreviewFailureMessage maps contract conversion failures to the fixed structure message", () => {
+  assert.equal(
+    excelPreviewFailureMessage(
+      new Error("Tauri Excel 预览返回结构无效，拒绝继续")
+    ),
+    "Excel 预览数据结构无效，请重新选择文件后重试。"
+  );
+});
+
+test("excelPreviewFailureMessage never echoes path, passphrase, stack or ciphertext", () => {
+  const secret = "fixture-secondary-test-pass";
+  const path = "/private/tmp/客户名单-2026.xlsx";
+  const raw = `Failed to open Excel: ${path} 口令=${secret} at excel_preview_masking.rs:392`;
+  const message = excelPreviewFailureMessage(raw);
+  assert.ok(!message.includes(secret), "must not echo the passphrase");
+  assert.ok(!message.includes(path), "must not echo the absolute path");
+  assert.ok(!message.includes("excel_preview_masking.rs"), "must not echo stack frames");
+  assert.ok(!message.includes(raw), "must not echo the raw error");
+});
+
+test("excelPreviewFailureMessage falls back to a fixed preview message for unknown errors", () => {
+  assert.equal(excelPreviewFailureMessage("boom"), "预览生成失败，请检查配置后重试。");
+  assert.equal(excelPreviewFailureMessage(undefined), "预览生成失败，请检查配置后重试。");
 });
