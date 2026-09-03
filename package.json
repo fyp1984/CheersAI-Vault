@@ -1,7 +1,7 @@
 {
   "name": "cheersai-vault",
   "private": true,
-  "version": "0.1.41",
+  "version": "0.1.42",
   "license": "Apache-2.0",
   "homepage": "https://github.com/fyp1984/CheersAI-Vault",
   "repository": {

@@ -1,23 +1,23 @@
 {
-  "version": "0.1.41",
+  "version": "0.1.42",
   "notes": "- 修复个人版与企业版文件名脱敏，支持姓名、手机号、15位/18位身份证、银行卡及敏感词文件名合规遮罩。\n- 修复桌面端手工替换后文件名不同步的问题，导出文件名与预览替换结果保持一致。\n- 本次增量包版本号提升至 0.1.41，可用于验证版本展示、更新检测与手工更新入口。",
   "pub_date": "2026-08-11T00:00:00Z",
   "platforms": {
     "darwin-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.41/CheersAI_Vault_0.1.41_x86_64.app.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x86_64.app.tar.gz"
     },
     "darwin-aarch64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.41/CheersAI_Vault_0.1.41_aarch64.app.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_aarch64.app.tar.gz"
     },
     "windows-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.41/CheersAI_Vault_0.1.41_x64.nsis.zip"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x64.nsis.zip"
     },
     "linux-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.41/CheersAI_Vault_0.1.41_x86_64.AppImage.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x86_64.AppImage.tar.gz"
     }
   }
 }

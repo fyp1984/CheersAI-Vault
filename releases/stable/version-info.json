@@ -1,7 +1,7 @@
 {
   "product": "CheersAI Vault",
   "channel": "stable",
-  "latestVersion": "0.1.41",
+  "latestVersion": "0.1.42",
   "minimumSupportedVersion": "0.1.40",
   "publishedAt": "2026-08-11T00:00:00Z",
   "releaseNotesSummary": "CheersAI Vault 0.1.41 修复个人版与企业版文件名敏感信息脱敏链路。",
@@ -25,10 +25,10 @@
     "remindAfterHours": 6,
     "backupRequired": true,
     "updateManifestUrl": "https://raw.githubusercontent.com/fyp1984/CheersAI-Vault/main/releases/stable/latest.json",
-    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.41"
+    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.42"
   },
   "web": {
     "pollIntervalMinutes": 30,
-    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.41"
+    "releasePageUrl": "https://github.com/fyp1984/CheersAI-Vault/releases/tag/v0.1.42"
   }
 }
