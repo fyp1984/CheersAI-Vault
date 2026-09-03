@@ -1,5 +1,10 @@
 # CheersAI Vault
 
+[![Release](https://img.shields.io/badge/release-0.1.42-blue?logo=semver)](https://github.com/fyp1984/CheersAI-Vault/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](./LICENSE)
+[![Excel P0](https://img.shields.io/badge/Excel%20增强-P0-green?logo=microsoftexcel)](#excel-增强脱敏功能)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Docker-lightgrey)](#快速开始)
+
 Language:
 
 - 中文说明： [`docs/USER_GUIDE.md`](./docs/USER_GUIDE.md)
@@ -16,6 +21,45 @@ CheersAI Desensitization Sandbox is an open source local file-masking applicatio
 - 共享核心： 脱敏规则、文件解析、映射编解码、OCR 组件封装、FileBay 集成等
 
 本仓库的目标不是做一个普通文件工具，而是提供一套真正能落到日常工作里的“先脱敏、再分享、可恢复”的安全处理能力。
+
+## Excel 增强脱敏功能（P0 客户交付版 · v0.1.42）
+
+近期通过 PR #30 合并的 Excel 增强脱敏能力正式落地到 P0 客户交付，覆盖“结构化表格逐格解析 → 按列/按格配置规则 → 生成加密映射 → 输出报告与脱敏工作簿 → 双路径反脱敏恢复”的完整业务流程，并同时在桌面端（Tauri）、企业浏览器端（Runtime API）与 FileBay 集成三条链路复用同一套核心引擎。
+
+### 功能能力矩阵
+
+| 能力 | 说明 | 支持情况 | 关键模块 |
+| --- | --- | --- | --- |
+| 工作簿结构解析 | 读取 Sheet 列表、表头行、每列 sample（列优先）、数据量级提示 | ✅ | [excel_masking.rs:excel_parse_structure](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/src/commands/excel_masking.rs#L412-L417) · [table_reader.rs](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/crates/excel-style-core/src/table_reader.rs) |
+| 按列配置掩码策略 | FULL_MASK / PHONE_MID4 / IDCARD_MID10 / BANKCARD_LAST4 / EMAIL_USER_MASK / DEFAULT_VALUE / CLEAR_COL 等 8 种策略，可独立配置 replacement | ✅ | [ColumnMaskRule](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/types/commands.ts#L3-L100) · [ExcelMaskingDialog.tsx:STRATEGY_LABELS](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/components/file/ExcelMaskingDialog.tsx#L91-L110) |
+| 单元格级别覆盖规则 | 除列级规则外，可额外指定某几行某几格使用独立策略，用于处理“表头下方备注/行尾汇总”等异常情况 | ✅ | [CellOverrideRule](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/types/commands.ts#L3-L100) · [ExcelMaskingDialog.tsx](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/components/file/ExcelMaskingDialog.tsx#L267-L272) |
+| 加密源留存双模式 | `SANDBOX_REUSED`（默认，沙箱内复用）与 `SECONDARY_PASSPHRASE`（ecmap 与加密源各用一套口令，适合跨用户安全分享） | ✅ | [EncSourceKeyMode](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/types/commands.ts#L3-L100) · [crypto.rs encrypt_ecmap](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/src/core/crypto.rs) |
+| `.ecmap` 加密映射文件输出 | 以 AES-GCM + 口令派生密钥封装 EcmapDocumentV1（header + cell 映射），文件名后缀 `.ecmap`；可与脱敏工作簿单独外发 | ✅ | [excel_masking.rs:excel_apply_masking](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/src/commands/excel_masking.rs#L605-L978) · `ecmap_header_declares_source_retained()` L184 |
+| 双路径反脱敏恢复 | 路径 A：`.ecmap + 加密源文件 + 口令`（自动恢复）；路径 B：`.ecmap + 用户原始 xlsx + 口令`（SHA-256 必须与写入时 header 完全匹配，不支持凭空恢复） | ✅ | [excel_masking.rs:excel_restore_from_ecmap](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/src/commands/excel_masking.rs#L1056-L1104) · `RETAIN_MESSAGES` 三路径安全文案 L72-L75 |
+| 安全口令强度与 cell 范围上限 | 最小口令长度、校验口令不一致、Sheet/行/列数量上限与单元格覆盖数上限，避免超大型工作簿导致 DoS | ✅ | [commit 6f5efe4](https://github.com/fyp1984/CheersAI-Vault/commit/6f5efe4) · [ExcelMaskingDialog.test.tsx](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/components/file/ExcelMaskingDialog.test.tsx) |
+| 输出 / 恢复一致性闭环 | 报告 hits/conflicts/covered_cells 与实际输出 workbook、`.ecmap` entries 三者逐条对齐，杜绝历史出现的“报告统计为 0 但文件已被改”问题 | ✅ | [commit 622b8d7](https://github.com/fyp1984/CheersAI-Vault/commit/622b8d7) · [RewriteOutcome](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/crates/excel-style-core/src/lib.rs#L47-L54) |
+| 样式 / 公式保留 | 基于 zip + sharedStrings 的双后端实现（calamine 读 + rust_xlsxwriter 写 与 zip/xml 流解析），尽可能保留字体、填充、列宽、合并单元格与样式，仅替换被命中单元格的 value，公式不做二次改写 | ✅ | [excel-style-core/src/lib.rs](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/crates/excel-style-core/src/lib.rs) · [excel.rs](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/apps/vault-runtime-api/src/excel.rs)（Runtime 端） |
+| Runtime 浏览器端 end-to-end | 企业浏览器端通过 Vault Pro Web 上传 Excel，走与桌面端相同的 engine-core + excel-style-core 核心路径，错误文案全部中文安全化，不得出现英文 HTTP 字面量 | ✅ | [excelClient.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/runtime/excelClient.ts) · [errorClassification.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/runtime/errorClassification.ts) |
+| 桌面端 FileUnmask 双路径提示 | 上传 ecmap 后自动判定是否可走路径 A；若用户未勾选加密留存，UI 会醒目提示并引导使用“路径 B 用户原件”还原 | ✅ | [FileUnmaskDesktop.tsx](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/pages/FileUnmaskDesktop.tsx) · [FileUnmaskBrowser.tsx](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/pages/FileUnmaskBrowser.tsx) |
+
+### 关键测试覆盖（共 11+ 份单测/合同测试）
+
+- [excelMaskingContract.test.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/excelMaskingContract.test.ts)：桌面端错误分类与合同断言（421+ 行）
+- [ExcelMaskingDialog.test.tsx](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/components/file/ExcelMaskingDialog.test.tsx)：UI 级交互与默认值
+- [tauriExcelRestoreContract.test.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/tauriExcelRestoreContract.test.ts)：双路径恢复合约
+- [excelRestoreContract.test.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/runtime/excelRestoreContract.test.ts)：Runtime 恢复路径合约
+- [excelArtifactAvailability.test.ts](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src/lib/runtime/excelArtifactAvailability.test.ts)：生成物可用性检查
+- [excel-style-core/tests/integration.rs](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/crates/excel-style-core/tests/integration.rs)：Rust 端 rewrite engine 集成测试
+- [excel-style-core/tests/table_reader.rs](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/src-tauri/crates/excel-style-core/tests/table_reader.rs)：Rust 端表解析集成测试
+
+### 与原有“通用 Excel 列映射”的主要区别
+
+- **更细的控制粒度**：通用 Excel 流程只按列推断，增强版引入 `CellOverrideRule` 支持单元格级 override
+- **可恢复性**：通用流程只保留预览，增强版使用 `.ecmap` + 双路径恢复，支持交付给客户后“先脱敏 → 客户改完 → 回来自动反脱敏”的完整链路
+- **客户级安全性**：加密源留存可选 + 独立口令 + ecmap header source_retained 声明 3 层互锁，避免内部分享时误将加密源外带
+- **合同化测试**：单测与合同测试直接约束 UI 文案与 Rust 命令返回值，不允许英文 HTTP 字面量透出
+
+---
 
 ## 产品定位与价值亮点
 
