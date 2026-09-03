@@ -57,7 +57,82 @@ CheersAI Desensitization Sandbox is an open source local file-masking applicatio
 - **更细的控制粒度**：通用 Excel 流程只按列推断，增强版引入 `CellOverrideRule` 支持单元格级 override
 - **可恢复性**：通用流程只保留预览，增强版使用 `.ecmap` + 双路径恢复，支持交付给客户后“先脱敏 → 客户改完 → 回来自动反脱敏”的完整链路
 - **客户级安全性**：加密源留存可选 + 独立口令 + ecmap header source_retained 声明 3 层互锁，避免内部分享时误将加密源外带
-- **合同化测试**：单测与合同测试直接约束 UI 文案与 Rust 命令返回值，不允许英文 HTTP 字面量透出
+- 合同化测试：单测与合同测试直接约束 UI 文案与 Rust 命令返回值，不允许英文 HTTP 字面量透出
+
+---
+
+## 桌面端 DMG 打包 Skill 调用方式（程序安装包版本管理沿用既有的 version-manager.js 机制）
+
+自 v0.1.42 起，macOS 安装包统一固化为 **单架构 portable DMG**，工程显示名统一为 **CheersAI Desktop**（工程仓名、运行时用户数据目录名仍保留 `CheersAI-Vault`，避免老用户数据迁移，无需处理）。
+
+### 0. 版本号管理（直接复用现有 version-manager / bump-version，不重新定义流程）
+
+- **查询 5 处版本锚点是否一致**（package.json、Cargo.toml [package].version、tauri.conf.json、`releases/stable/version-info.json` latestVersion、`releases/stable/latest.json` version）：
+
+```bash
+corepack pnpm version:check
+```
+
+- **自动递增（patch / minor / major）并同步 5 处锚点**：
+
+```bash
+corepack pnpm version:patch    # 0.1.42 → 0.1.43
+corepack pnpm version:minor    # 0.1.42 → 0.2.0
+corepack pnpm version:major    # 0.1.42 → 1.0.0
+```
+
+- **指定版本号**：
+
+```bash
+corepack pnpm version:set -- 0.1.43
+```
+
+### 1. 标准打包 Skill（前端 + Rust 全量构建 → portable DMG）
+
+- 主入口：`pnpm build:dmg:portable`（脚本：[scripts/build-macos-portable-dmg.sh](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/scripts/build-macos-portable-dmg.sh)）
+- 流程：自动跑 `version:check` 做锚点检查 → 执行 `tauri build --bundles dmg`（失败时 fallback 复用已产出的单架构 `.app`）→ ad-hoc 重签名 → `/Applications` 软链 → `hdiutil create -format UDZO` → 打印路径/SHA-256/验收清单/下一步命令
+- 输出文件名强制：`CheersAI_Desktop_${VERSION}_${ARCH}_portable.dmg`（对应 `tauri.conf.json:productName` = `CheersAI Desktop`）
+- **执行命令**：
+
+```bash
+corepack pnpm build:dmg:portable
+# 等价：bash scripts/build-macos-portable-dmg.sh
+```
+
+### 2. 沙箱快速封装 Skill（不重新编译，只执行 .app → DMG 的最后一段）
+
+- 场景：Trae / IDE sandbox 把前端 vite build + Rust cargo build 全跑完但因禁止访问 `/dev/rdisk*` 导致 hdiutil 失败，此时 `.app` 已存在于 `src-tauri/target/<target>/release/bundle/macos/CheersAI Desktop.app`。
+- 入口：`pnpm build:dmg:quick`（脚本：[scripts/build-macos-portable-dmg-quick.sh](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/scripts/build-macos-portable-dmg-quick.sh)）
+- 流程：先 `pnpm version:check` → 定位已有的 `.app` → 校验单架构匹配 → 清 xattr → ad-hoc/custom sign + strict 校验 → `/Applications` 软链 → `hdiutil create UDZO` → 打印体积/SHA-256/CFBundleShortVersionString/架构 + 下一步 verify 命令
+- **执行命令**（真终端执行 20~40s）：
+
+```bash
+corepack pnpm build:dmg:quick
+# 等价：bash scripts/build-macos-portable-dmg-quick.sh
+```
+
+### 3. DMG 自动化校验 Skill（10 项自动 PASS/FAIL）
+
+- 入口：`pnpm verify:dmg`（脚本：[scripts/verify-macos-portable-dmg.sh](file:///Users/sevensimle/Documents/WorkSpace/CheersAI/CheersAI-Vault/scripts/verify-macos-portable-dmg.sh)）
+- 10 项校验：
+  1. `dist` 中 DMG 存在
+  2. DMG ≥ 10MiB（UDZO 正常压缩的合理下限，避免空壳/截断包）
+  3. `shasum -a 256` 为 64 hex
+  4. `hdiutil attach -readonly` 可挂载
+  5. DMG 中含有 `CheersAI Desktop.app`
+  6. `CFBundleShortVersionString == 指定版本`
+  7. `CFBundleVersion == 指定版本`
+  8. 二进制为单架构且等于 `--arch` / 当前机器 arch
+  9. `codesign -dvv` 可读（存在签名）
+  10. `codesign --verify --deep --strict` 通过
+- **执行命令**：
+
+```bash
+corepack pnpm verify:dmg                                    # 默认 package.json version + 当前 arch
+corepack pnpm verify:dmg --version 0.1.42                   # 指定版本
+corepack pnpm verify:dmg --version 0.1.42 --arch x86_64     # 指定版本 + 架构
+corepack pnpm verify:dmg --dmg ./dist/CheersAI_Desktop_0.1.42_x86_64_portable.dmg
+```
 
 ---
 
