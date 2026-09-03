@@ -699,6 +699,8 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "calamine 0.26.1",
+ "csv",
+ "encoding_rs",
  "hkdf",
  "quick-xml 0.36.2",
  "rand 0.8.7",

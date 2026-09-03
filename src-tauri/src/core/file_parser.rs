@@ -948,7 +948,75 @@ pub struct SheetDef {
     pub max_col: u32,
 }
 
+/// True for a `.csv` path (case-insensitive extension match). Shared by the
+/// Excel-enhanced structure/preview/apply commands to decide whether to
+/// dispatch to `excel_style_core::table_reader`'s CSV functions instead of
+/// calamine, which has no CSV support at all.
+pub fn is_csv_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false)
+}
+
+/// True for a legacy OLE `.xls` path (case-insensitive). `.xls` is not a
+/// ZIP archive, so it must never be routed to `table_reader`'s ZIP-based
+/// `.xlsx` reader (R1): it keeps using calamine's `open_workbook_auto`,
+/// which validates the actual bytes rather than trusting the extension.
+pub fn is_xls_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("xls"))
+        .unwrap_or(false)
+}
+
+const TABLE_READ_SAMPLE_ROWS: usize = 5;
+
 pub fn parse_excel_structure_detailed(path: &str) -> Result<Vec<SheetDef>, String> {
+    let path_ref = std::path::Path::new(path);
+
+    if is_csv_path(path_ref) {
+        let structure = excel_style_core::table_reader::read_csv_structure(
+            path_ref,
+            TABLE_READ_SAMPLE_ROWS,
+        )
+        .map_err(|e| format!("Failed to read CSV file: {}", e))?;
+        return Ok(vec![SheetDef {
+            name: structure.name,
+            headers: structure.headers,
+            column_samples: structure.column_samples,
+            deprecated_data_hint: None,
+            max_row: structure.max_row,
+            max_col: structure.max_col,
+        }]);
+    }
+
+    if is_xls_path(path_ref) {
+        return parse_xls_structure_legacy(path);
+    }
+
+    let structures = excel_style_core::table_reader::read_xlsx_all_sheets_structure(
+        path_ref,
+        TABLE_READ_SAMPLE_ROWS,
+    )
+    .map_err(|e| format!("Failed to open Excel file: {}", e))?;
+
+    Ok(structures
+        .into_iter()
+        .map(|s| SheetDef {
+            name: s.name,
+            headers: s.headers,
+            column_samples: s.column_samples,
+            deprecated_data_hint: None,
+            max_row: s.max_row,
+            max_col: s.max_col,
+        })
+        .collect())
+}
+
+/// The pre-`table_reader` calamine-based structure reader, restored
+/// verbatim for `.xls` only (R1).
+fn parse_xls_structure_legacy(path: &str) -> Result<Vec<SheetDef>, String> {
     use calamine::{open_workbook_auto, Reader};
 
     let mut workbook =

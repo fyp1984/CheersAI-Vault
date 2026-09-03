@@ -115,6 +115,16 @@ pub struct ExcelArtifactMemberPayload {
     pub sha256: String,
 }
 
+/// Server-held materials for an enterprise Excel restore, always resolved
+/// from the artifact manifest — never from client-supplied paths.
+#[derive(Debug)]
+pub struct ExcelRestoreMaterials {
+    pub display_name: String,
+    pub masked_bytes: Vec<u8>,
+    pub ecmap_bytes: Vec<u8>,
+    pub encrypted_source_bytes: Option<Vec<u8>>,
+}
+
 #[derive(Debug)]
 pub struct PendingPreviewJob {
     pub preview_id: String,
@@ -808,6 +818,45 @@ impl Store {
         Ok((member, bytes))
     }
 
+    /// All server-held materials for an enterprise Excel restore, resolved
+    /// strictly through the artifact manifest (never from client-supplied
+    /// paths). Fails closed with `NotFound` for anything that is not a
+    /// `Completed` Excel bundle manifest — the Markdown restore path stays
+    /// fully separate (no cross-routing).
+    pub async fn excel_restore_materials(
+        &self,
+        artifact_id: &str,
+    ) -> Result<ExcelRestoreMaterials, StoreError> {
+        let manifest = self.read_excel_artifact_manifest(artifact_id).await?;
+        let mut masked_workbook: Option<Vec<u8>> = None;
+        let mut ecmap: Option<Vec<u8>> = None;
+        let mut encrypted_source: Option<Vec<u8>> = None;
+        for member in &manifest.members {
+            let bytes = fs::read(self.controlled_path(&member.object_key)?).await?;
+            match member.kind {
+                ExcelArtifactMemberKind::MaskedWorkbook => masked_workbook = Some(bytes),
+                ExcelArtifactMemberKind::Ecmap => ecmap = Some(bytes),
+                ExcelArtifactMemberKind::EncryptedSource => encrypted_source = Some(bytes),
+                ExcelArtifactMemberKind::Report => {}
+            }
+        }
+        let masked_bytes = masked_workbook.ok_or(StoreError::InvalidState)?;
+        let ecmap_bytes = ecmap.ok_or(StoreError::InvalidState)?;
+        let display_name = sqlx::query_scalar::<_, String>(
+            "SELECT display_name FROM batch_files WHERE id = (SELECT file_id FROM artifacts WHERE id = ?)",
+        )
+        .bind(artifact_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or_default();
+        Ok(ExcelRestoreMaterials {
+            display_name,
+            masked_bytes,
+            ecmap_bytes,
+            encrypted_source_bytes: encrypted_source,
+        })
+    }
+
     /// Read markdown + mapping + display name for a completed artifact (restore).
     pub async fn artifact_with_mapping(
         &self,
@@ -896,6 +945,10 @@ impl Store {
             .map(|row| {
                 let status_value: String = row.get("status");
                 let mapping_key: Option<String> = row.get("mapping_object_key");
+                let artifact_kind = row
+                    .get::<Option<String>, _>("artifact_id")
+                    .map(|_| row.get::<String, _>("artifact_kind"))
+                    .and_then(|value| ArtifactKind::parse(&value));
                 Ok(BatchFile {
                     file_id: row.get("id"),
                     display_name: row.get("display_name"),
@@ -906,13 +959,21 @@ impl Store {
                         .get::<Option<i64>, _>("masked_entity_count")
                         .map(|value| value as usize),
                     artifact_id: row.get("artifact_id"),
-                    artifact_kind: row
-                        .get::<Option<String>, _>("artifact_id")
-                        .map(|_| row.get::<String, _>("artifact_kind"))
-                        .and_then(|value| ArtifactKind::parse(&value)),
+                    artifact_kind,
                     error_code: row.get("error_code"),
                     error_message: row.get("error_message"),
-                    restore_available: mapping_key.is_some(),
+                    // R-closeout (工作包 C): restore availability must be
+                    // projected from the actual artifact kind, not only from
+                    // the Markdown `mapping_object_key` (which is explicitly
+                    // NULL for Excel manifests). A completed Excel bundle
+                    // manifest always carries masked_workbook + ecmap, so
+                    // restore is available; Path A additionally needs
+                    // encrypted_source, which callers discover via the
+                    // manifest members endpoint.
+                    restore_available: match artifact_kind {
+                        Some(ArtifactKind::ExcelBundleManifest) => true,
+                        _ => mapping_key.is_some(),
+                    },
                 })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
@@ -1899,6 +1960,17 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Total number of restore security events (success + failure) — used by
+    /// tests to assert that restore attempts are always logged with safe
+    /// metadata only.
+    #[allow(dead_code)]
+    pub async fn restore_event_count(&self) -> Result<usize, StoreError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM restore_events")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as usize)
     }
 
     /// Browser operation-log projection (FR-007 minimal-exposure mode):

@@ -25,6 +25,58 @@ import { Message } from "@/components/ui/cheersai-ui";
 import { RETAIN_MESSAGES } from "@/components/file/ExcelMaskingDialog";
 import type { ExcelRestoreResult } from "@/types/commands";
 
+// The Rust command `excel_restore_from_ecmap` returns
+// `ExcelRestoreResult { restored_path: String, sha256_verified: bool }` — it
+// never had a `restored_count` or `matched` field. The success card
+// previously read those nonexistent fields anyway, so it always showed an
+// empty restored count and, since `!undefined` is `true`, always claimed
+// "SHA 未匹配" even on a fully verified restore. This is the single place
+// that turns a real `ExcelRestoreResult` into display text, so a targeted
+// test can pin the exact fields consumed and catch either regression.
+export function describeExcelRestoreSuccess(result: ExcelRestoreResult): {
+  statusText: string;
+  outputPath: string;
+} {
+  return {
+    statusText: result.sha256_verified ? "SHA-256 校验通过" : "SHA-256 未通过校验",
+    outputPath: result.restored_path,
+  };
+}
+
+/**
+ * UI-STATE-001 (TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001):
+ * 切换恢复路径（A/B）或重新选择材料后，上一轮的瞬时结果（成功卡片、旧输出
+ * 路径、错误提示）必须被清空，避免把旧路径的成功结果误认为当前路径结果。
+ * 组件在切换路径与选择文件时应用本清空值；纯函数便于在 node:test 下钉住
+ * 契约（本工程 `.test.*` 无 jsdom，无法直接挂载页面）。
+ */
+export function clearedRestoreSessionState(): {
+  result: null;
+  legacyResult: null;
+  error: string;
+} {
+  return { result: null, legacyResult: null, error: "" };
+}
+
+/**
+ * Choose the suggested Excel restore name from the material whose bytes will
+ * be restored. Path B has the user's original file available, so its
+ * extension is a better contract than the masked workbook's `.xlsx` output
+ * extension. Rust still validates the final bytes before writing.
+ */
+export function deriveExcelRestoreDefaultFileName(
+  maskedFile: string,
+  restoreMode: "A" | "B",
+  userOriginalFile: string
+): string {
+  const sourceFile =
+    restoreMode === "B" && userOriginalFile ? userOriginalFile : maskedFile;
+  const sourceName = sourceFile.split(/[\\/]/).pop() || "file";
+  const stem = sourceName.replace(/\.[^.]+$/, "");
+  const extension = sourceName.match(/\.[^.]+$/)?.[0] || ".xlsx";
+  return `${stem}_已还原${extension}`;
+}
+
 export default function FileUnmaskDesktop() {
   const { maskedFile, mappingFile, setMaskedFile, setMappingFile } =
     useUnmaskStore();
@@ -41,6 +93,11 @@ export default function FileUnmaskDesktop() {
 
   const [encryptedSource, setEncryptedSource] = useState<string>("");
   const [userOriginalFile, setUserOriginalFile] = useState<string>("");
+
+  const excelRestoreDisplay = useMemo(
+    () => (result ? describeExcelRestoreSuccess(result) : null),
+    [result]
+  );
 
   const missingA = useMemo(() => {
     return !maskedFile || !mappingFile || !encryptedSource;
@@ -124,6 +181,16 @@ export default function FileUnmaskDesktop() {
     }
   };
 
+  const handleRestoreModeChange = (mode: string) => {
+    setRestoreMode(mode as "A" | "B");
+    // UI-STATE-001: 切换恢复路径后清除上一轮结果提示，避免把旧路径的成功
+    // 结果误认为当前路径结果。
+    const cleared = clearedRestoreSessionState();
+    setResult(cleared.result);
+    setLegacyResult(cleared.legacyResult);
+    setError(cleared.error);
+  };
+
   const handleUnmask = async () => {
     if (isExcelFlow) {
       if (restoreMode === "A" && missingA) {
@@ -147,11 +214,16 @@ export default function FileUnmaskDesktop() {
     setLegacyResult(null);
 
     try {
-      const originalFileName =
-        maskedFile.split(/[\\/]/).pop() || "file";
+      const originalFileName = maskedFile.split(/[\\/]/).pop() || "file";
       const fileNameWithoutExt = originalFileName.replace(/\.[^.]+$/, "");
       const fileExt = originalFileName.match(/\.[^.]+$/)?.[0] || ".txt";
-      const defaultFileName = `${fileNameWithoutExt}_已还原${fileExt}`;
+      const defaultFileName = isExcelFlow
+        ? deriveExcelRestoreDefaultFileName(
+            maskedFile,
+            restoreMode,
+            userOriginalFile
+          )
+        : `${fileNameWithoutExt}_已还原${fileExt}`;
       const defaultDir = maskedFile.substring(
         0,
         maskedFile.lastIndexOf(
@@ -169,7 +241,16 @@ export default function FileUnmaskDesktop() {
         filters: [
           {
             name: "支持的文件",
-            extensions: ["txt", "md", "csv", "xlsx", "docx", "pdf", "pptx"],
+            extensions: [
+              "txt",
+              "md",
+              "csv",
+              "xlsx",
+              "xls",
+              "docx",
+              "pdf",
+              "pptx",
+            ],
           },
         ],
       });
@@ -242,9 +323,7 @@ export default function FileUnmaskDesktop() {
           {isExcelFlow ? (
             <Tabs
               value={restoreMode}
-              onValueChange={(v) =>
-                setRestoreMode(v as "A" | "B")
-              }
+              onValueChange={handleRestoreModeChange}
             >
               <TabsList className="mb-6">
                 <TabsTrigger value="A">
@@ -383,7 +462,7 @@ export default function FileUnmaskDesktop() {
             </div>
           )}
 
-          {result && (
+          {excelRestoreDisplay && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6 flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -391,11 +470,10 @@ export default function FileUnmaskDesktop() {
                   反脱敏成功
                 </p>
                 <p className="text-sm text-emerald-700 mt-1">
-                  已还原 {result.restored_count} 处敏感信息
-                  {!result.matched && "（原件 sha 未匹配，降级样式已输出）"}
+                  {excelRestoreDisplay.statusText}
                 </p>
                 <p className="text-xs text-emerald-600 mt-2 break-all">
-                  输出文件：{result.restored_path}
+                  输出文件：{excelRestoreDisplay.outputPath}
                 </p>
               </div>
             </div>

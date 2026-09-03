@@ -17,15 +17,69 @@ import type {
   SensitiveTerm,
   AddSensitiveTermRequest,
   UpdateSensitiveTermRequest,
+  UpdateBackupSummary,
   SensitiveTermsStats,
   SheetDef,
   ExcelMaskingConfig,
-  ExcelMaskPreview,
   ExcelApplyResult,
   ExcelRestoreReq,
   ExcelRestoreResult,
 } from "@/types/commands";
 import type { LogEntry, ProcessingHistory, UserSetting, DatabaseStatistics } from "@/types/log";
+import {
+  toCanonicalExcelMaskPreview,
+  toTauriExcelMaskingConfig,
+  type TauriExcelMaskPreview,
+} from "@/lib/excelMaskingContract";
+
+// The Rust command `excel_restore_from_ecmap` (src-tauri/src/commands/excel_masking.rs)
+// takes a single named parameter `restore: ExcelRestoreReq`; Tauri's invoke matches
+// JS object keys to Rust parameter names, so the wrapped payload's top-level key must
+// be exactly `restore` (a `req` key here is silently a different, unrecognized
+// argument and the call fails with a missing-required-argument error). Extracted as a
+// pure function so a targeted test can assert the exact key name without mocking
+// `invoke` or Tauri itself.
+export const EXCEL_RESTORE_FROM_ECMAP_COMMAND = "excel_restore_from_ecmap" as const;
+
+export function buildExcelRestoreInvokeArgs(
+  req: ExcelRestoreReq
+): { restore: ExcelRestoreReq } {
+  return { restore: req };
+}
+
+// The Rust command `excel_parse_structure` (src-tauri/src/commands/excel_masking.rs)
+// returns `ExcelStructure { sheets: Vec<SheetDef> }` — an envelope object, not a bare
+// array. Treating that envelope directly as `SheetDef[]` (the old behavior) type-checks
+// but is wrong at runtime: callers doing `.find`/`.map` on it crash with
+// "X.find is not a function" instead of a clear error. `extractSheetsFromExcelStructureResponse`
+// is the single place that unwraps this envelope, and rejects any response missing a
+// legal `sheets` array with an explicit, safe error instead of propagating a malformed
+// shape further into the app.
+export interface ExcelStructureResponseEnvelope {
+  sheets: SheetDef[];
+}
+
+export class ExcelStructureResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExcelStructureResponseError";
+  }
+}
+
+export function extractSheetsFromExcelStructureResponse(
+  response: unknown
+): SheetDef[] {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !Array.isArray((response as { sheets?: unknown }).sheets)
+  ) {
+    throw new ExcelStructureResponseError(
+      "Excel 结构解析返回值缺少合法的 sheets 数组，拒绝继续"
+    );
+  }
+  return (response as ExcelStructureResponseEnvelope).sheets;
+}
 
 export const tauriCommands = {
   // Masking
@@ -367,16 +421,35 @@ export const tauriCommands = {
 
   // Excel Masking
   excelParseStructure: (filePath: string) =>
-    invoke<SheetDef[]>("excel_parse_structure", { filePath }),
+    invoke<ExcelStructureResponseEnvelope>("excel_parse_structure", { filePath }).then(
+      extractSheetsFromExcelStructureResponse
+    ),
 
-  excelPreviewMasking: (config: ExcelMaskingConfig, maxRows?: number) =>
-    invoke<ExcelMaskPreview>("excel_preview_masking", { config, maxRows }),
+  excelPreviewMasking: (
+    config: ExcelMaskingConfig,
+    maxRows?: number,
+    sandboxPassphrase?: string
+  ) =>
+    invoke<TauriExcelMaskPreview>("excel_preview_masking", {
+      config: toTauriExcelMaskingConfig(config, { sandboxPassphrase }),
+      maxRows,
+    }).then(toCanonicalExcelMaskPreview),
 
-  excelApplyMasking: (config: ExcelMaskingConfig, outputDir: string) =>
-    invoke<ExcelApplyResult>("excel_apply_masking", { config, outputDir }),
+  excelApplyMasking: (
+    config: ExcelMaskingConfig,
+    outputDir: string,
+    sandboxPassphrase?: string
+  ) =>
+    invoke<ExcelApplyResult>("excel_apply_masking", {
+      config: toTauriExcelMaskingConfig(config, { sandboxPassphrase }),
+      outputDir,
+    }),
 
   excelRestoreFromEcmap: (req: ExcelRestoreReq) =>
-    invoke<ExcelRestoreResult>("excel_restore_from_ecmap", { req }),
+    invoke<ExcelRestoreResult>(
+      EXCEL_RESTORE_FROM_ECMAP_COMMAND,
+      buildExcelRestoreInvokeArgs(req)
+    ),
 
   excelSaveTemplate: (name: string, config: ExcelMaskingConfig) =>
     invoke<string>("excel_save_template", { name, config }),
