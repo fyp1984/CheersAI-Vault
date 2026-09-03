@@ -161,7 +161,7 @@ fn dpapi_encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
         pbData: std::ptr::null_mut(),
     };
 
-    let description: Vec<u16> = "CheersAI Vault PIN\0".encode_utf16().collect();
+    let description: Vec<u16> = "CheersAI Desktop PIN\0".encode_utf16().collect();
 
     let result = unsafe {
         CryptProtectData(

@@ -5,19 +5,19 @@
   "platforms": {
     "darwin-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x86_64.app.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Desktop_0.1.42_x86_64.app.tar.gz"
     },
     "darwin-aarch64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_aarch64.app.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Desktop_0.1.42_aarch64.app.tar.gz"
     },
     "windows-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x64.nsis.zip"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Desktop_0.1.42_x64.nsis.zip"
     },
     "linux-x86_64": {
       "signature": "RELEASE_SIGNATURE_NOT_PUBLISHED_YET",
-      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Vault_0.1.42_x86_64.AppImage.tar.gz"
+      "url": "https://github.com/fyp1984/CheersAI-Vault/releases/download/v0.1.42/CheersAI_Desktop_0.1.42_x86_64.AppImage.tar.gz"
     }
   }
 }

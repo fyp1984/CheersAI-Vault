@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CheersAI Vault",
+  "productName": "CheersAI Desktop",
   "version": "0.1.42",
   "identifier": "com.cheersai.vault",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "CheersAI Vault · 智享AI，安全随行",
+        "title": "CheersAI Desktop · 智享AI，安全随行",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
@@ -62,8 +62,8 @@
     "publisher": "CheersAI Team",
     "copyright": "Copyright © 2024 CheersAI Team. All rights reserved.",
     "category": "Utility",
-    "shortDescription": "CheersAI Vault secure document masking application",
-    "longDescription": "CheersAI Vault is a secure desktop application for local document masking and recovery.",
+    "shortDescription": "CheersAI Desktop secure document masking application",
+    "longDescription": "CheersAI Desktop is a secure desktop application for local document masking and recovery.",
     "windows": {
       "wix": {
         "language": "zh-CN"

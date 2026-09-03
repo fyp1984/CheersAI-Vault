@@ -1,10 +1,10 @@
 {
-  "product": "CheersAI Vault",
+  "product": "CheersAI Desktop",
   "channel": "stable",
   "latestVersion": "0.1.42",
   "minimumSupportedVersion": "0.1.40",
   "publishedAt": "2026-08-11T00:00:00Z",
-  "releaseNotesSummary": "CheersAI Vault 0.1.41 修复个人版与企业版文件名敏感信息脱敏链路。",
+  "releaseNotesSummary": "CheersAI Desktop 0.1.42 新增 Excel P0 增强脱敏与反脱敏完整链路，并将桌面端对外工程名统一为 CheersAI Desktop。",
   "releaseNotes": [
     {
       "kind": "fix",
