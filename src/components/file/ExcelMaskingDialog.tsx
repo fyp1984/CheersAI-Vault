@@ -55,7 +55,7 @@ import { Progress } from "@/components/ui/progress";
 import { PassphraseBox } from "@/components/common/PassphraseBox";
 import { tauriCommands } from "@/lib/tauri";
 import { normalizeCaughtRuntimeErrorMessage } from "@/lib/runtime/errorClassification";
-import { classifyDesktopExcelPreviewError } from "@/lib/excelMaskingContract";
+import { classifyDesktopExcelPreviewError, hasUsableSandboxPassphrase } from "@/lib/excelMaskingContract";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import type {
   CellOverrideRule,
@@ -331,6 +331,81 @@ export function nextSecondaryPassphraseForKeyMode(
   return mode === "SECONDARY_PASSPHRASE" ? currentSecondaryPassphrase : "";
 }
 
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-6): fixed, safe
+ * explanation rendered while the shared sandbox default encryption passphrase
+ * is unavailable and the reuse mode is therefore disabled. It guides the user
+ * to set the 默认加密口令 in 沙箱管理 or to fall back to the independent
+ * secondary passphrase, and states that the sandbox PIN only locks/unlocks
+ * the sandbox and is never the encryption passphrase (FR-011). It must never
+ * echo any passphrase value, path, stack or internal response.
+ */
+export const SANDBOX_PASSPHRASE_UNAVAILABLE_HINT =
+  "当前没有可复用的默认加密口令，暂不能选择“复用沙箱口令”。请前往「沙箱管理」设置默认加密口令后重试，或改用「独立二级口令」并填写二级口令。沙箱 PIN 仅用于锁定与解锁沙箱，不是文件加密口令。";
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3): initial key
+ * mode when the dialog's key state is first created. A usable (non-blank)
+ * shared sandbox default encryption passphrase keeps the recommended reuse
+ * mode; `undefined`, empty or pure-whitespace values must start in the
+ * independent secondary passphrase mode instead of a reuse mode that could
+ * only fail later at the Rust apply step.
+ */
+export function initialKeyModeForSandboxPassphrase(
+  defaultPassphrase: string | undefined
+): EncSourceKeyMode {
+  return hasUsableSandboxPassphrase(defaultPassphrase)
+    ? "SANDBOX_REUSED"
+    : "SECONDARY_PASSPHRASE";
+}
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-5): pure
+ * decision for the forced fallback while the dialog is open. When the shared
+ * sandbox default encryption passphrase is unavailable, a stale
+ * `SANDBOX_REUSED` selection must not survive: it falls back to
+ * `SECONDARY_PASSPHRASE` and the stale in-memory secondary value (a mount
+ * prefill, never a user-typed one — AC-14 already cleared that when leaving
+ * the mode) is reset. Every other mode is kept so the user's deliberate
+ * choice stands (`DEVICE_KEY` needs no passphrase at all).
+ */
+export function nextKeyModeForSandboxAvailability(
+  open: boolean,
+  sandboxPassphraseAvailable: boolean,
+  keyMode: EncSourceKeyMode
+): { keyMode: EncSourceKeyMode; resetSecondaryPassphrase: boolean } {
+  if (!open || sandboxPassphraseAvailable || keyMode !== "SANDBOX_REUSED") {
+    return { keyMode, resetSecondaryPassphrase: false };
+  }
+  return { keyMode: "SECONDARY_PASSPHRASE", resetSecondaryPassphrase: true };
+}
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-4/AC-8): a key
+ * mode may only take part in the final confirm while its key material exists
+ * right now — `SANDBOX_REUSED` needs a usable sandbox default encryption
+ * passphrase, `SECONDARY_PASSPHRASE` needs a non-blank secondary passphrase,
+ * and `DEVICE_KEY` never needs either. Blocking here (button disabled and
+ * `handleConfirm` guarded) keeps a blank-passphrase run from ever reaching
+ * the Rust apply command, which is what produced the late
+ * “沙箱口令不能为空” failure the teacher saw.
+ */
+export function isKeyModeReadyForConfirm(
+  keyMode: EncSourceKeyMode,
+  options: { sandboxPassphraseAvailable: boolean; secondaryPassphrase: string }
+): boolean {
+  switch (keyMode) {
+    case "SANDBOX_REUSED":
+      return options.sandboxPassphraseAvailable;
+    case "SECONDARY_PASSPHRASE":
+      return hasUsableSandboxPassphrase(options.secondaryPassphrase);
+    case "DEVICE_KEY":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function isExcelFile(p: string): boolean {
   const lower = p.toLowerCase();
   return (
@@ -373,6 +448,13 @@ export default function ExcelMaskingDialog({
   const primaryPath = excelPaths[0] ?? "";
   const { privacy } = useExcelMaskingStore();
 
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3): only a
+  // non-blank shared sandbox default encryption passphrase (fileStore
+  // .passphrase, passed in as `defaultPassphrase`) may back the reuse mode.
+  const sandboxPassphraseAvailable = hasUsableSandboxPassphrase(
+    defaultPassphrase
+  );
+
   const [activeTab, setActiveTab] = useState("retain");
   const [loading, setLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -382,7 +464,9 @@ export default function ExcelMaskingDialog({
   const [retainChecked, setRetainChecked] = useState(
     privacy.excelDefaultRetainEncryptedSource
   );
-  const [keyMode, setKeyMode] = useState<EncSourceKeyMode>("SANDBOX_REUSED");
+  const [keyMode, setKeyMode] = useState<EncSourceKeyMode>(() =>
+    initialKeyModeForSandboxPassphrase(defaultPassphrase)
+  );
   const [secondaryPassphrase, setSecondaryPassphrase] = useState(
     defaultPassphrase
   );
@@ -395,6 +479,26 @@ export default function ExcelMaskingDialog({
     setKeyMode(mode);
     setSecondaryPassphrase((prev) => nextSecondaryPassphraseForKeyMode(mode, prev));
   }, []);
+
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-5): on open,
+  // or whenever the default encryption passphrase becomes unavailable while
+  // the dialog is open, a stale reuse-mode selection must not survive — the
+  // mode falls back to the independent secondary passphrase automatically
+  // (and the stale in-memory secondary value is reset). When a passphrase
+  // becomes available again the user's current choice is never overridden.
+  useEffect(() => {
+    const next = nextKeyModeForSandboxAvailability(
+      open,
+      sandboxPassphraseAvailable,
+      keyMode
+    );
+    if (next.keyMode !== keyMode) {
+      setKeyMode(next.keyMode);
+    }
+    if (next.resetSecondaryPassphrase) {
+      setSecondaryPassphrase("");
+    }
+  }, [open, sandboxPassphraseAvailable, keyMode]);
 
   const [columnRules, setColumnRules] = useState<ColumnMaskRule[]>([]);
   const [cellOverrides, setCellOverrides] = useState<CellOverrideRule[]>([]);
@@ -499,7 +603,17 @@ export default function ExcelMaskingDialog({
     return columnRules.length + cellOverrides.length;
   }, [columnRules, cellOverrides]);
 
-  const canConfirm = canConfirmExcelMasking(rulesCount, confirmSecondCheck);
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-4): besides the
+  // rule/final-check requirements, the selected key mode must currently have
+  // its key material — a blank secondary passphrase (or an unavailable reuse
+  // mode) disables the confirm button so a blank-passphrase run is blocked on
+  // the frontend instead of failing at the Rust write stage.
+  const canConfirm =
+    canConfirmExcelMasking(rulesCount, confirmSecondCheck) &&
+    isKeyModeReadyForConfirm(keyMode, {
+      sandboxPassphraseAvailable,
+      secondaryPassphrase,
+    });
 
   const toggleColumnChecked = useCallback(
     (colIndex: number, headerText: string) => {
@@ -712,6 +826,7 @@ export default function ExcelMaskingDialog({
                   onRetainChange={setRetainChecked}
                   keyMode={keyMode}
                   onKeyModeChange={handleKeyModeChange}
+                  sandboxPassphraseAvailable={sandboxPassphraseAvailable}
                   secondaryPassphrase={secondaryPassphrase}
                   onSecondaryPassphraseChange={setSecondaryPassphrase}
                 />
@@ -801,6 +916,7 @@ interface EncRetainTabProps {
   onRetainChange: (v: boolean) => void;
   keyMode: EncSourceKeyMode;
   onKeyModeChange: (v: EncSourceKeyMode) => void;
+  sandboxPassphraseAvailable: boolean;
   secondaryPassphrase: string;
   onSecondaryPassphraseChange: (v: string) => void;
 }
@@ -810,6 +926,7 @@ function EncRetainTab({
   onRetainChange,
   keyMode,
   onKeyModeChange,
+  sandboxPassphraseAvailable,
   secondaryPassphrase,
   onSecondaryPassphraseChange,
 }: EncRetainTabProps) {
@@ -853,10 +970,13 @@ function EncRetainTab({
             <div className="space-y-2">
               <label
                 className={cn(
-                  "flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors",
+                  "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+                  sandboxPassphraseAvailable ? "cursor-pointer" : "cursor-not-allowed",
                   keyMode === "SANDBOX_REUSED"
                     ? "border-blue-400 bg-blue-50"
-                    : "border-gray-200 hover:bg-gray-50"
+                    : sandboxPassphraseAvailable
+                      ? "border-gray-200 hover:bg-gray-50"
+                      : "border-gray-200"
                 )}
               >
                 <input
@@ -864,13 +984,22 @@ function EncRetainTab({
                   name="key-mode"
                   checked={keyMode === "SANDBOX_REUSED"}
                   onChange={() => onKeyModeChange("SANDBOX_REUSED")}
+                  disabled={!sandboxPassphraseAvailable}
                   className="mt-0.5"
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium">复用沙箱口令（推荐）</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    直接使用沙箱默认加密口令（fileStore.passphrase），减少记忆负担。
+                    直接使用「沙箱管理」中设置的默认加密口令加密映射文件，减少记忆负担。
                   </div>
+                  {!sandboxPassphraseAvailable && (
+                    <p
+                      role="note"
+                      className="mt-1.5 rounded border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-700"
+                    >
+                      {SANDBOX_PASSPHRASE_UNAVAILABLE_HINT}
+                    </p>
+                  )}
                 </div>
               </label>
 
@@ -901,6 +1030,15 @@ function EncRetainTab({
                       label="二级口令"
                     />
                   )}
+                  {keyMode === "SECONDARY_PASSPHRASE" &&
+                    secondaryPassphrase.trim().length === 0 && (
+                      <p
+                        role="note"
+                        className="text-xs text-amber-700"
+                      >
+                        独立二级口令不能为空或纯空白，填写后才能应用脱敏。
+                      </p>
+                    )}
                 </div>
               </label>
 

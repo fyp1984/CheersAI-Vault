@@ -6,7 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { useExcelMaskingStore } from "@/store/excelMaskingStore";
 import { useFileStore } from "@/store/fileStore";
-import { classifyDesktopExcelApplyError } from "@/lib/excelMaskingContract";
+import { classifyDesktopExcelApplyError, isExcelKeyMaterialMissing } from "@/lib/excelMaskingContract";
 import { tauriCommands } from "@/lib/tauri";
 import ExcelMaskingDialog from "@/components/file/ExcelMaskingDialog";
 import type { ExcelApplyResult, ExcelMaskingConfig } from "@/types/commands";
@@ -97,6 +97,21 @@ export async function executeExcelApplyRouting({
   sandboxPassphrase,
   applyMasking,
 }: ExcelApplyRoutingOptions): Promise<ExcelApplyRoutingResult> {
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-8): fail closed
+  // before any Rust invocation when the selected key mode has no usable key
+  // material. A blank-passphrase run must leave zero masked workbooks,
+  // reports, `.ecmap` and `.encrypted_src` artifacts — including in a mixed
+  // batch, where letting Rust reject per-config could still persist earlier
+  // successes. Nothing is invoked and nothing is routed in this state.
+  if (isExcelKeyMaterialMissing(configs, sandboxPassphrase)) {
+    return {
+      outputs: [],
+      normalQueuePaths: [],
+      failureCount: configs.length,
+      firstErrorMessage: EXCEL_KEY_MATERIAL_MISSING_MESSAGE,
+    };
+  }
+
   const outputs: ExcelOutputSummary[] = [];
   let failureCount = 0;
   let firstError: unknown = null;
@@ -132,6 +147,16 @@ export const PROTECTED_EXCEL_ARTIFACT_INPUT_ERROR =
 
 export const EXCEL_APPLY_FAILURE_MESSAGE =
   "Excel 脱敏执行失败，原始 Excel 和半成品均未加入普通处理队列，请检查配置或本地文件权限后重试。";
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-8): fixed, safe
+ * message for a submission whose selected key mode has no usable key
+ * material. In that state nothing is invoked and nothing is produced, so no
+ * masked workbook, report, `.ecmap` or `.encrypted_src` artifact can appear.
+ * It never echoes any passphrase value, path, stack or internal response.
+ */
+export const EXCEL_KEY_MATERIAL_MISSING_MESSAGE =
+  "Excel 脱敏未执行：当前密钥来源缺少可用口令，未生成任何脱敏产物。请在配置中改用可用的密钥来源：复用模式需先在「沙箱管理」设置默认加密口令，独立二级口令模式需填写二级口令。沙箱 PIN 仅用于锁定沙箱，不是加密口令。";
 
 // E: Excel/CSV inputs go through the enhanced flow and come out as .xlsx;
 // every other format still comes out as Markdown. Must never claim a single
