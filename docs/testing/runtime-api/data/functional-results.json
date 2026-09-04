@@ -1,0 +1,179 @@
+[
+  {
+    "case": "health",
+    "expected": "200 ready",
+    "http_status": 200,
+    "error_code": null,
+    "safe_error_shape": true,
+    "response_bytes": 36,
+    "response_sha256": "ab1894f721a358816e2258e17b961926571716b653aae98deb3a12d281e9a533",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "single_submit_poll",
+    "expected": "202 then Completed",
+    "http_status": 202,
+    "error_code": null,
+    "safe_error_shape": true,
+    "response_bytes": 140,
+    "response_sha256": "6e9b908c442ec061a9354b47ab2662b60d57f5805e461c5593313249e4b2cdc6",
+    "result": "PASS",
+    "detail": "Completed"
+  },
+  {
+    "case": "artifact_download",
+    "expected": "200 masked Markdown",
+    "http_status": 200,
+    "content_type": "text/markdown; charset=utf-8",
+    "response_bytes": 10233,
+    "response_sha256": "5b09fe0cc4563cff32dc030af9cb4b1795d4c4d57dd60d1e03e8c3b4f121c5e2",
+    "result": "PASS"
+  },
+  {
+    "case": "artifact_restore",
+    "expected": "200 exact fictional values restored",
+    "http_status": 200,
+    "restored_count_header": "2",
+    "response_bytes": 10240,
+    "response_sha256": "17eaddf772368f36a0940dccc0f035d228a6d9265141f99854b543f6c7d403f8",
+    "result": "PASS"
+  },
+  {
+    "case": "batch_10",
+    "expected": "202 and 10 completed",
+    "http_status": 202,
+    "error_code": null,
+    "safe_error_shape": true,
+    "response_bytes": 871,
+    "response_sha256": "73a4cd0c38757ac0ef4c4539a087f08c8c6249bb2f737d068d7d59d0bed0ebef",
+    "result": "PASS",
+    "detail": "{\"batch_id\": \"b19c317a-abbe-4682-82ab-88278136c41e\", \"status\": \"Completed\", \"file_count\": 10, \"completed_count\": 10, \"failed_count\": 0, \"masked_entity_count\": 20, \"created_at\": \"2026-09-04T08:29:04.657463+00:00\", \"updated_at\": \"2026-09-04T08:29:04.718680+00:00\"}"
+  },
+  {
+    "case": "mixed_failure_detail",
+    "expected": "CompletedWithErrors with safe file error",
+    "http_status": 202,
+    "error_code": null,
+    "safe_error_shape": true,
+    "response_bytes": 214,
+    "response_sha256": "4b1750e047f085dbfcc503b3a2122c6a98b798f819b60b723f5789b37d32c146",
+    "result": "PASS",
+    "detail": "{\"batch_status\": \"CompletedWithErrors\", \"error_code\": \"INPUT_CORRUPTED\"}"
+  },
+  {
+    "case": "missing_files",
+    "expected": "400 FILES_REQUIRED",
+    "http_status": 400,
+    "error_code": "FILES_REQUIRED",
+    "safe_error_shape": true,
+    "response_bytes": 85,
+    "response_sha256": "9784d223cbfbf613ec0cde6e8b2683fa405ea702714c6fdcbddbdd459e250cff",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "missing_rules",
+    "expected": "400 INVALID_RULES",
+    "http_status": 400,
+    "error_code": "INVALID_RULES",
+    "safe_error_shape": true,
+    "response_bytes": 76,
+    "response_sha256": "f8f3d4569ad4ce7b9baebc5da676034d8766815e386d90dedfc93775665b04bf",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "invalid_rules",
+    "expected": "400 INVALID_RULES",
+    "http_status": 400,
+    "error_code": "INVALID_RULES",
+    "safe_error_shape": true,
+    "response_bytes": 93,
+    "response_sha256": "4d46658f84b236826aaa400c158a19b61a768089005c6bbafede70a32db5608d",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "unexpected_field",
+    "expected": "400 UNEXPECTED_FIELD",
+    "http_status": 400,
+    "error_code": "UNEXPECTED_FIELD",
+    "safe_error_shape": true,
+    "response_bytes": 90,
+    "response_sha256": "54d082711cd7dfa2c96d5346e426bc4e810448a6ab1d510d863a63db8181f9d4",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "unsupported_format",
+    "expected": "400 INPUT_FORMAT_UNSUPPORTED",
+    "http_status": 400,
+    "error_code": "INPUT_FORMAT_UNSUPPORTED",
+    "safe_error_shape": true,
+    "response_bytes": 99,
+    "response_sha256": "f8ba4e729e7042c996582d08f0fc3fabde02633a9e4c1e7b9e28d5ebee164c86",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "file_count_limit",
+    "expected": "413 INPUT_LIMIT_EXCEEDED",
+    "http_status": 413,
+    "error_code": "INPUT_LIMIT_EXCEEDED",
+    "safe_error_shape": true,
+    "response_bytes": 96,
+    "response_sha256": "56310a00509158c2cf776baf5f334bafa9176ebf9255010ead4adb93ffc49e91",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "missing_batch",
+    "expected": "404 NOT_FOUND",
+    "http_status": 404,
+    "error_code": "NOT_FOUND",
+    "safe_error_shape": true,
+    "response_bytes": 87,
+    "response_sha256": "9bd50dd9d21e9e35be8e758d2530ea3d4878caa45db227c6467fb4a0d05836a3",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "missing_artifact",
+    "expected": "404 NOT_FOUND",
+    "http_status": 404,
+    "error_code": "NOT_FOUND",
+    "safe_error_shape": true,
+    "response_bytes": 87,
+    "response_sha256": "9bd50dd9d21e9e35be8e758d2530ea3d4878caa45db227c6467fb4a0d05836a3",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "restart_batch_persistence",
+    "expected": "200 Completed after restart",
+    "http_status": 200,
+    "error_code": null,
+    "safe_error_shape": true,
+    "response_bytes": 566,
+    "response_sha256": "a346cfb52627f24f3d123686860bae4ed98a6f3cd49df60447cbd556f90c7c0e",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "case": "restart_download_persistence",
+    "expected": "200 masked artifact after restart",
+    "http_status": 200,
+    "response_bytes": 10233,
+    "response_sha256": "5b09fe0cc4563cff32dc030af9cb4b1795d4c4d57dd60d1e03e8c3b4f121c5e2",
+    "result": "PASS"
+  },
+  {
+    "case": "restart_restore_persistence",
+    "expected": "200 restore after restart",
+    "http_status": 200,
+    "response_bytes": 10240,
+    "response_sha256": "17eaddf772368f36a0940dccc0f035d228a6d9265141f99854b543f6c7d403f8",
+    "result": "PASS"
+  }
+]

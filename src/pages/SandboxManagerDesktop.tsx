@@ -123,13 +123,6 @@ export default function SandboxManagerDesktop() {
   // 初始化：如果不记住口令，清空已保存的口令
   useEffect(() => {
     console.log("=== SandboxManager 初始化 ===");
-    console.log("Passphrase loaded:", passphrase ? `"${passphrase}"` : "(空)");
-    console.log("Remember passphrase:", rememberPassphrase);
-    console.log("Passphrase length:", passphrase.length);
-
-    // 检查 localStorage
-    const stored = localStorage.getItem("file-store");
-    console.log("LocalStorage file-store:", stored ? JSON.parse(stored) : "(无)");
 
     if (!rememberPassphrase && passphrase) {
       console.log("Clearing passphrase because rememberPassphrase is false");

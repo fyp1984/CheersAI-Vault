@@ -502,3 +502,53 @@ export function toTauriExcelMaskingConfig(
     generate_ecmap: true,
   };
 }
+
+/**
+ * Sandbox default-encryption-passphrase availability gate
+ * (TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001, AC-2/AC-3).
+ *
+ * `undefined`, empty, and pure-whitespace values are all unusable: while the
+ * shared `fileStore.passphrase` has no usable value, the Excel dialog must
+ * neither offer nor keep `SANDBOX_REUSED` selected. This is a UI/routing
+ * availability check only — the DTO converter above deliberately keeps
+ * converting `SANDBOX_REUSED` without a passphrase so the preview command
+ * (which never encrypts) keeps working in isolated/first-run environments
+ * (UI-STATE-003).
+ */
+export function hasUsableSandboxPassphrase(
+  sandboxPassphrase: string | undefined | null
+): boolean {
+  return (
+    typeof sandboxPassphrase === "string" &&
+    sandboxPassphrase.trim().length > 0
+  );
+}
+
+/**
+ * True when at least one config selects a key mode whose key material is
+ * missing right now: `SANDBOX_REUSED` without a usable sandbox default
+ * encryption passphrase, or `SECONDARY_PASSPHRASE` without a usable
+ * secondary passphrase. `DEVICE_KEY` never needs either value.
+ *
+ * The desktop apply routing must fail closed on this (invoke nothing) so a
+ * blank-passphrase run leaves zero masked workbooks, reports, `.ecmap` and
+ * `.encrypted_src` artifacts (AC-8), instead of surfacing the Rust-side
+ * rejection only after the final apply step.
+ */
+export function isExcelKeyMaterialMissing(
+  configs: readonly Pick<
+    ExcelMaskingConfig,
+    "key_mode" | "secondary_passphrase"
+  >[],
+  sandboxPassphrase: string | undefined | null
+): boolean {
+  return configs.some((config) => {
+    if (config.key_mode === "SANDBOX_REUSED") {
+      return !hasUsableSandboxPassphrase(sandboxPassphrase);
+    }
+    if (config.key_mode === "SECONDARY_PASSPHRASE") {
+      return !hasUsableSandboxPassphrase(config.secondary_passphrase);
+    }
+    return false;
+  });
+}

@@ -5,8 +5,12 @@ import assert from "node:assert/strict";
 import {
   CELL_RANGE_LIMIT_ERROR,
   MAX_CELL_OVERRIDE_CELLS,
+  SANDBOX_PASSPHRASE_UNAVAILABLE_HINT,
   getMaskingStrategyOptionState,
+  initialKeyModeForSandboxPassphrase,
+  isKeyModeReadyForConfirm,
   isSelectableMaskingStrategy,
+  nextKeyModeForSandboxAvailability,
   PLACEHOLDER_STRATEGIES,
   RETAIN_MESSAGES,
   canConfirmExcelMasking,
@@ -369,4 +373,142 @@ test("excelPreviewFailureMessage never echoes path, passphrase, stack or ciphert
 test("excelPreviewFailureMessage falls back to a fixed preview message for unknown errors", () => {
   assert.equal(excelPreviewFailureMessage("boom"), "预览生成失败，请检查配置后重试。");
   assert.equal(excelPreviewFailureMessage(undefined), "预览生成失败，请检查配置后重试。");
+});
+
+// ---------------------------------------------------------------------
+// TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3/AC-4/AC-5):
+// the reuse mode only exists while the shared sandbox default encryption
+// passphrase is usable; a blank-passphrase run is blocked on the frontend
+// instead of failing at the Rust apply stage with “沙箱口令不能为空”.
+// ---------------------------------------------------------------------
+
+test("initialKeyModeForSandboxPassphrase keeps the reuse mode only for a usable passphrase", () => {
+  assert.equal(
+    initialKeyModeForSandboxPassphrase("sbx-pass"),
+    "SANDBOX_REUSED",
+    "a usable default encryption passphrase defaults to the reuse mode (AC-2)"
+  );
+  for (const unusable of [undefined, "", "   \t\n"] as const) {
+    assert.equal(
+      initialKeyModeForSandboxPassphrase(unusable),
+      "SECONDARY_PASSPHRASE",
+      `an unusable passphrase (${JSON.stringify(unusable)}) must start in the independent secondary mode (AC-3)`
+    );
+  }
+});
+
+test("nextKeyModeForSandboxAvailability falls back from a stale reuse mode only while open and unavailable", () => {
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, false, "SANDBOX_REUSED"),
+    { keyMode: "SECONDARY_PASSPHRASE", resetSecondaryPassphrase: true },
+    "an unavailable passphrase must retire the reuse mode (AC-5)"
+  );
+  // Closed dialog: no forced change.
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(false, false, "SANDBOX_REUSED"),
+    { keyMode: "SANDBOX_REUSED", resetSecondaryPassphrase: false }
+  );
+  // Available passphrase: the user's mode is never overridden.
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, true, "SECONDARY_PASSPHRASE"),
+    { keyMode: "SECONDARY_PASSPHRASE", resetSecondaryPassphrase: false }
+  );
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, true, "SANDBOX_REUSED"),
+    { keyMode: "SANDBOX_REUSED", resetSecondaryPassphrase: false }
+  );
+  // Unavailable passphrase but the user already chose another mode: keep it.
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, false, "SECONDARY_PASSPHRASE"),
+    { keyMode: "SECONDARY_PASSPHRASE", resetSecondaryPassphrase: false }
+  );
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, false, "DEVICE_KEY"),
+    { keyMode: "DEVICE_KEY", resetSecondaryPassphrase: false }
+  );
+});
+
+test("nextKeyModeForSandboxAvailability simulates a dynamic blank-out without resurfacing stale values", () => {
+  // Dialog opens with a usable passphrase (reuse selected, secondary was a
+  // mount prefill), then the passphrase is dynamically cleared.
+  let keyMode = initialKeyModeForSandboxPassphrase("sbx-pass");
+  assert.equal(keyMode, "SANDBOX_REUSED");
+  let secondaryPassphrase = "stale-mount-prefill-fixture";
+  const fallback = nextKeyModeForSandboxAvailability(true, false, keyMode);
+  keyMode = fallback.keyMode;
+  if (fallback.resetSecondaryPassphrase) secondaryPassphrase = "";
+  assert.equal(keyMode, "SECONDARY_PASSPHRASE");
+  assert.equal(secondaryPassphrase, "");
+  // Re-appearing passphrase never flips the user's current mode back.
+  assert.deepEqual(
+    nextKeyModeForSandboxAvailability(true, true, keyMode).keyMode,
+    "SECONDARY_PASSPHRASE"
+  );
+});
+
+test("isKeyModeReadyForConfirm requires a usable sandbox passphrase for SANDBOX_REUSED", () => {
+  assert.equal(
+    isKeyModeReadyForConfirm("SANDBOX_REUSED", {
+      sandboxPassphraseAvailable: true,
+      secondaryPassphrase: "",
+    }),
+    true
+  );
+  assert.equal(
+    isKeyModeReadyForConfirm("SANDBOX_REUSED", {
+      sandboxPassphraseAvailable: false,
+      secondaryPassphrase: "",
+    }),
+    false,
+    "a blank default encryption passphrase must block confirmation (AC-3)"
+  );
+});
+
+test("isKeyModeReadyForConfirm requires a non-blank secondary passphrase for SECONDARY_PASSPHRASE", () => {
+  assert.equal(
+    isKeyModeReadyForConfirm("SECONDARY_PASSPHRASE", {
+      sandboxPassphraseAvailable: false,
+      secondaryPassphrase: "fixture-secondary-test-pass",
+    }),
+    true,
+    "secondary mode never needs the sandbox passphrase"
+  );
+  assert.equal(
+    isKeyModeReadyForConfirm("SECONDARY_PASSPHRASE", {
+      sandboxPassphraseAvailable: true,
+      secondaryPassphrase: "fixture-secondary-test-pass",
+    }),
+    true
+  );
+  for (const blank of ["", "   \t\n"]) {
+    assert.equal(
+      isKeyModeReadyForConfirm("SECONDARY_PASSPHRASE", {
+        sandboxPassphraseAvailable: true,
+        secondaryPassphrase: blank,
+      }),
+      false,
+      "a blank or whitespace-only secondary passphrase must block confirmation (AC-4)"
+    );
+  }
+});
+
+test("isKeyModeReadyForConfirm never blocks DEVICE_KEY", () => {
+  assert.equal(
+    isKeyModeReadyForConfirm("DEVICE_KEY", {
+      sandboxPassphraseAvailable: false,
+      secondaryPassphrase: "",
+    }),
+    true
+  );
+});
+
+test("SANDBOX_PASSPHRASE_UNAVAILABLE_HINT is fixed safe copy that guides to the default encryption passphrase and separates the PIN", () => {
+  const message = SANDBOX_PASSPHRASE_UNAVAILABLE_HINT;
+  assert.match(message, /沙箱管理/);
+  assert.match(message, /默认加密口令/);
+  assert.match(message, /独立二级口令/);
+  assert.match(message, /PIN/);
+  assert.match(message, /不是.*加密口令|加密口令.*不是/);
+  // Safety: no path, stack trace, internal identifier or passphrase echo.
+  assert.doesNotMatch(message, /fileStore|passphrase|Error|invoke|stack|at \S+:\d+|\//);
 });

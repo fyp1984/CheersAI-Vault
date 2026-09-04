@@ -6,6 +6,8 @@ import {
   ExcelMaskingContractError,
   classifyDesktopExcelApplyError,
   classifyDesktopExcelPreviewError,
+  hasUsableSandboxPassphrase,
+  isExcelKeyMaterialMissing,
   toCanonicalExcelMaskPreview,
   toTauriExcelMaskingConfig,
 } from "./excelMaskingContract";
@@ -620,5 +622,82 @@ test("real native preview response from the current .app converts to the canonic
   assert.equal(
     canonical.preview_rows.filter((row) => row.sheet === "Sheet2").length,
     1
+  );
+});
+
+// ---------------------------------------------------------------------
+// TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3/AC-8):
+// sandbox default-encryption-passphrase availability gate. UI/routing only —
+// the DTO converter above keeps converting SANDBOX_REUSED without a
+// passphrase so preview (which never encrypts) keeps working (UI-STATE-003).
+// ---------------------------------------------------------------------
+
+test("hasUsableSandboxPassphrase accepts only non-blank strings", () => {
+  assert.equal(hasUsableSandboxPassphrase("sbx-pass"), true);
+  assert.equal(hasUsableSandboxPassphrase("  spaced ok  "), true);
+  assert.equal(hasUsableSandboxPassphrase(undefined), false);
+  assert.equal(hasUsableSandboxPassphrase(null), false);
+  assert.equal(hasUsableSandboxPassphrase(""), false);
+  assert.equal(hasUsableSandboxPassphrase("   \t\n "), false);
+});
+
+test("isExcelKeyMaterialMissing flags SANDBOX_REUSED only while the sandbox passphrase is unusable", () => {
+  assert.equal(
+    isExcelKeyMaterialMissing([{ key_mode: "SANDBOX_REUSED" }], "sbx-pass"),
+    false
+  );
+  assert.equal(
+    isExcelKeyMaterialMissing([{ key_mode: "SANDBOX_REUSED" }], "  sbx-pass  "),
+    false
+  );
+  for (const unusable of [undefined, "", "   \t\n"]) {
+    assert.equal(
+      isExcelKeyMaterialMissing([{ key_mode: "SANDBOX_REUSED" }], unusable),
+      true,
+      `a blank default encryption passphrase (${JSON.stringify(unusable)}) must block SANDBOX_REUSED`
+    );
+  }
+});
+
+test("isExcelKeyMaterialMissing flags SECONDARY_PASSPHRASE without a usable secondary passphrase", () => {
+  assert.equal(
+    isExcelKeyMaterialMissing(
+      [{ key_mode: "SECONDARY_PASSPHRASE", secondary_passphrase: "s3cr3t" }],
+      undefined
+    ),
+    false,
+    "secondary mode never needs the sandbox passphrase"
+  );
+  assert.equal(
+    isExcelKeyMaterialMissing(
+      [{ key_mode: "SECONDARY_PASSPHRASE", secondary_passphrase: "   " }],
+      "sbx-pass"
+    ),
+    true
+  );
+  assert.equal(
+    isExcelKeyMaterialMissing([{ key_mode: "SECONDARY_PASSPHRASE" }], undefined),
+    true
+  );
+});
+
+test("isExcelKeyMaterialMissing never flags DEVICE_KEY or an empty config list", () => {
+  assert.equal(
+    isExcelKeyMaterialMissing([{ key_mode: "DEVICE_KEY" }], undefined),
+    false
+  );
+  assert.equal(isExcelKeyMaterialMissing([], undefined), false);
+});
+
+test("isExcelKeyMaterialMissing flags a mixed batch when any config lacks its key material", () => {
+  assert.equal(
+    isExcelKeyMaterialMissing(
+      [
+        { key_mode: "SECONDARY_PASSPHRASE", secondary_passphrase: "s3cr3t" },
+        { key_mode: "SANDBOX_REUSED" },
+      ],
+      undefined
+    ),
+    true
   );
 });
