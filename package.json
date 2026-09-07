@@ -27,7 +27,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:unit": "tsx --test src/lib/runtime/errorClassification.test.ts src/lib/runtime/host.test.ts src/lib/runtime/downloadName.test.ts src/lib/versionPolicy.test.ts src/lib/versionService.test.ts src/store/ruleStore.test.ts src/components/file/maskingPreviewManualReplace.test.ts",
+    "test:unit": "tsx --test src/lib/runtime/errorClassification.test.ts src/lib/runtime/host.test.ts src/lib/runtime/downloadName.test.ts src/lib/versionPolicy.test.ts src/lib/versionService.test.ts src/store/ruleStore.test.ts src/components/file/maskingPreviewManualReplace.test.ts src/lib/excelMaskingContract.test.ts src/components/file/DropZone.test.tsx src/components/file/ExcelMaskingDialog.test.tsx src/pages/SandboxManagerDesktop.test.tsx",
     "test:unit:compat": "corepack pnpm test:unit && corepack pnpm test",
     "test:e2e": "playwright test --project=chromium",
     "test:e2e:headed": "playwright test --headed",

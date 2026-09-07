@@ -262,7 +262,14 @@ test("blocked apply covers an empty sandbox passphrase in a mixed batch", async 
   let applyCalls = 0;
   const routing = await executeExcelApplyRouting({
     configs: [config("/input/one.xlsx"), config("/input/two.xlsx")],
-    pendingPaths: ["/input/one.xlsx", "/input/two.xlsx"],
+    pendingPaths: [
+      "/input/one.xlsx",
+      "/input/readme.txt",
+      "/input/one.ecmap",
+      "/input/two.xlsx",
+      "/input/report.pdf",
+      "/input/two.encrypted_src",
+    ],
     outputDir: "/safe/output",
     sandboxPassphrase: "",
     applyMasking: async () => {
@@ -273,6 +280,10 @@ test("blocked apply covers an empty sandbox passphrase in a mixed batch", async 
 
   assert.equal(applyCalls, 0, "an empty sandbox passphrase must invoke nothing");
   assert.deepEqual(routing.outputs, []);
+  assert.deepEqual(routing.normalQueuePaths, [
+    "/input/readme.txt",
+    "/input/report.pdf",
+  ]);
   assert.equal(routing.failureCount, 2);
   assert.equal(routing.firstErrorMessage, EXCEL_KEY_MATERIAL_MISSING_MESSAGE);
 });

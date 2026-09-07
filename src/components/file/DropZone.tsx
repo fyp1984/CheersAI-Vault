@@ -102,11 +102,12 @@ export async function executeExcelApplyRouting({
   // material. A blank-passphrase run must leave zero masked workbooks,
   // reports, `.ecmap` and `.encrypted_src` artifacts — including in a mixed
   // batch, where letting Rust reject per-config could still persist earlier
-  // successes. Nothing is invoked and nothing is routed in this state.
+  // successes. Excel inputs remain blocked, while unrelated regular inputs
+  // continue through the existing normal queue.
   if (isExcelKeyMaterialMissing(configs, sandboxPassphrase)) {
     return {
       outputs: [],
-      normalQueuePaths: [],
+      normalQueuePaths: regularInputsAfterExcelFlow(pendingPaths),
       failureCount: configs.length,
       firstErrorMessage: EXCEL_KEY_MATERIAL_MISSING_MESSAGE,
     };
