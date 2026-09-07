@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   DROPZONE_OUTPUT_FORMAT_NOTE,
   EXCEL_APPLY_FAILURE_MESSAGE,
+  EXCEL_KEY_MATERIAL_MISSING_MESSAGE,
   PROTECTED_EXCEL_ARTIFACT_INPUT_ERROR,
   executeExcelApplyRouting,
   isExcelFile,
@@ -229,4 +230,104 @@ test("successful Excel apply exposes no first error message", async () => {
   });
   assert.equal(routing.failureCount, 0);
   assert.equal(routing.firstErrorMessage, undefined);
+});
+
+// ---------------------------------------------------------------------
+// TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-8): a submission
+// whose selected key mode has no usable key material must fail closed before
+// any Rust invocation — zero artifacts, zero routing, fixed safe message.
+// ---------------------------------------------------------------------
+
+test("blocked SANDBOX_REUSED apply invokes nothing and reports the fixed safe message (zero artifacts)", async () => {
+  let applyCalls = 0;
+  const routing = await executeExcelApplyRouting({
+    configs: [config("/input/sample.xlsx")],
+    pendingPaths: ["/input/sample.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "   ",
+    applyMasking: async () => {
+      applyCalls += 1;
+      return appliedResult("sample");
+    },
+  });
+
+  assert.equal(applyCalls, 0, "no Rust apply invocation may happen without usable key material");
+  assert.deepEqual(routing.outputs, []);
+  assert.deepEqual(routing.normalQueuePaths, []);
+  assert.equal(routing.failureCount, 1);
+  assert.equal(routing.firstErrorMessage, EXCEL_KEY_MATERIAL_MISSING_MESSAGE);
+});
+
+test("blocked apply covers an empty sandbox passphrase in a mixed batch", async () => {
+  let applyCalls = 0;
+  const routing = await executeExcelApplyRouting({
+    configs: [config("/input/one.xlsx"), config("/input/two.xlsx")],
+    pendingPaths: ["/input/one.xlsx", "/input/two.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "",
+    applyMasking: async () => {
+      applyCalls += 1;
+      return appliedResult("sample");
+    },
+  });
+
+  assert.equal(applyCalls, 0, "an empty sandbox passphrase must invoke nothing");
+  assert.deepEqual(routing.outputs, []);
+  assert.equal(routing.failureCount, 2);
+  assert.equal(routing.firstErrorMessage, EXCEL_KEY_MATERIAL_MISSING_MESSAGE);
+});
+
+test("blocked apply covers an empty secondary passphrase in SECONDARY_PASSPHRASE mode", async () => {
+  let applyCalls = 0;
+  const blockedConfig: ExcelMaskingConfig = {
+    ...config("/input/sample.xlsx"),
+    key_mode: "SECONDARY_PASSPHRASE",
+    secondary_passphrase: "   ",
+  };
+  const routing = await executeExcelApplyRouting({
+    configs: [blockedConfig],
+    pendingPaths: ["/input/sample.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "fictional-test-passphrase",
+    applyMasking: async () => {
+      applyCalls += 1;
+      return appliedResult("sample");
+    },
+  });
+
+  assert.equal(applyCalls, 0);
+  assert.deepEqual(routing.outputs, []);
+  assert.equal(routing.failureCount, 1);
+  assert.equal(routing.firstErrorMessage, EXCEL_KEY_MATERIAL_MISSING_MESSAGE);
+});
+
+test("DEVICE_KEY routing never needs key material and still applies normally", async () => {
+  let applyCalls = 0;
+  const routing = await executeExcelApplyRouting({
+    configs: [{ ...config("/input/sample.xlsx"), key_mode: "DEVICE_KEY" }],
+    pendingPaths: ["/input/sample.xlsx"],
+    outputDir: "/safe/output",
+    sandboxPassphrase: "",
+    applyMasking: async () => {
+      applyCalls += 1;
+      return appliedResult("sample");
+    },
+  });
+
+  assert.equal(applyCalls, 1);
+  assert.equal(routing.failureCount, 0);
+  assert.equal(routing.firstErrorMessage, undefined);
+});
+
+test("EXCEL_KEY_MATERIAL_MISSING_MESSAGE is fixed safe copy that never echoes values or internals", () => {
+  const secret = "top-secret-passphrase";
+  assert.ok(!EXCEL_KEY_MATERIAL_MISSING_MESSAGE.includes(secret), "must not echo the passphrase");
+  assert.doesNotMatch(
+    EXCEL_KEY_MATERIAL_MISSING_MESSAGE,
+    /fileStore|passphrase|Error|invoke|stack|at \S+:\d+|\//
+  );
+  assert.match(EXCEL_KEY_MATERIAL_MISSING_MESSAGE, /未生成任何脱敏产物/);
+  assert.match(EXCEL_KEY_MATERIAL_MISSING_MESSAGE, /沙箱管理/);
+  assert.match(EXCEL_KEY_MATERIAL_MISSING_MESSAGE, /独立二级口令/);
+  assert.match(EXCEL_KEY_MATERIAL_MISSING_MESSAGE, /PIN/);
 });

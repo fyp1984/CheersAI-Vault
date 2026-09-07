@@ -317,6 +317,8 @@ pnpm tauri dev
   [`docs/enterprise/OPERATION_GUIDE.md`](./docs/enterprise/OPERATION_GUIDE.md)
 - 客户测试 API 参考：
   [`docs/enterprise/API_REFERENCE.md`](./docs/enterprise/API_REFERENCE.md)
+- Runtime API 测试资料（功能 17 项与本机性能基线）：
+  [`docs/testing/runtime-api/README.md`](./docs/testing/runtime-api/README.md)
 - 依赖与许可证清单：
   [`DEPENDENCIES.md`](./DEPENDENCIES.md)
 - 安全政策：

@@ -2,8 +2,7 @@
 
 > **适用范围**：本文档仅描述 Linux 内网客户测试部署中 `vault-runtime-api`
 > 对外提供的 **四项** HTTP API：批量提交、进度轮询（含失败信息）、结果下载、
-> 健康检查。这是老师针对本次客户测试明确圈定的首版范围（见
-> `.codex-local/规则/决策说明.md`），不是 Runtime 全部已实现的接口。
+> 健康检查。这是本次客户测试明确圈定的首版范围，不是 Runtime 全部已实现的接口。
 >
 > Runtime 实际还实现了 `GET /api/v1/batches`（列表）、
 > `POST /api/v1/files/{file_id}/retry`（重试）、
@@ -579,6 +578,11 @@ CSV 约束：
 `artifact_id` 和处理状态，不承担权限决策。
 
 ## 12. 联调测试方法与环境要求
+
+> 本仓库已归档一轮 Runtime API 功能（17 项断言）与本机并发性能（9 组矩阵）
+> 验收资料（测试方案、报告与安全化数据），见
+> [`../testing/runtime-api/README.md`](../testing/runtime-api/README.md)；
+> 其为本机 loopback 观察值，不代表生产环境结论。
 
 ### 12.1 联调环境要求
 
