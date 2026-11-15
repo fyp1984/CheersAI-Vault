@@ -70,6 +70,7 @@ const PORTABLE_TMP_CANDIDATE: &str =
 
 // --------------- public types ---------------
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvertError {
     ConverterUnavailable,
@@ -81,6 +82,7 @@ pub enum ConvertError {
 }
 
 impl ConvertError {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn error_code(self) -> &'static str {
         match self {
             Self::ConverterUnavailable => "LEGACY_CONVERTER_UNAVAILABLE",
