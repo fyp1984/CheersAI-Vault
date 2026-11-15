@@ -76,3 +76,7 @@ sdlc/docs/
 pnpm-local-install/
 # 本地 IDE / 脚本运行时临时 WIP snapshot / 过程性产物
 artifacts/
+# 本机构建缓存 / 工具链缓存 / Markdown 渲染中间目录
+.build-cache/*
+.cache/*
+docs/Marked/*

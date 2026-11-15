@@ -16,10 +16,21 @@ function assertExists(filePath, label) {
 }
 
 function runNodeScript(scriptPath, args = []) {
+  const env = { ...process.env };
+  if (
+    process.platform === "win32" &&
+    !env.TAURI_BUNDLER_TOOLS_GITHUB_MIRROR &&
+    !env.TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE
+  ) {
+    // Route Tauri bundler release downloads through a mirror when direct GitHub access is slow or blocked.
+    env.TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE =
+      "https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/<version>/<asset>";
+  }
+
   const result = spawnSync(process.execPath, [scriptPath, ...args], {
     cwd: rootDir,
     stdio: "inherit",
-    env: process.env,
+    env,
   });
 
   if (result.status !== 0) {
@@ -29,14 +40,17 @@ function runNodeScript(scriptPath, args = []) {
 
 function main() {
   const passthroughArgs = process.argv.slice(2);
+  const syncIconsPath = path.join(rootDir, "scripts", "sync-tauri-icons.mjs");
   const versionManagerPath = path.join(rootDir, "scripts", "version-manager.js");
   const tauriCliPath = path.join(rootDir, "node_modules", "@tauri-apps", "cli", "tauri.js");
   const finalizeScriptPath = path.join(rootDir, "scripts", "finalize-windows-installer.mjs");
 
+  assertExists(syncIconsPath, "Tauri icon sync script");
   assertExists(versionManagerPath, "Version manager script");
   assertExists(tauriCliPath, "Tauri CLI");
   assertExists(finalizeScriptPath, "Installer finalizer script");
 
+  runNodeScript(syncIconsPath);
   runNodeScript(versionManagerPath, ["prepare"]);
   runNodeScript(tauriCliPath, ["build", "--bundles", "nsis,msi"]);
   runNodeScript(finalizeScriptPath, passthroughArgs);

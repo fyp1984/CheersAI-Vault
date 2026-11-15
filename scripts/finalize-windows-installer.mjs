@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const bundleDir = path.join(rootDir, "src-tauri", "target", "release", "bundle");
 const defaultTargetDir = path.join(rootDir, "dist");
+const installerNameBase = "CheersAI-Desktop";
 
 function parseArgs(argv) {
   const args = {
@@ -98,52 +99,68 @@ function readPackagingMetadata() {
   };
 }
 
-function getOperatingSystemSegment() {
-  const platform = os.platform();
-  if (platform === "win32") {
-    return "windows";
-  }
-  if (platform === "darwin") {
-    return "macos";
-  }
-  if (platform === "linux") {
-    return "linux";
-  }
-  return sanitizeSegment(platform, "windows");
-}
-
-function getCpuSegment() {
+function getWindowsModelSegment() {
   const architecture = os.arch();
   if (architecture === "x64") {
-    return "x64";
-  }
-  if (architecture === "arm64") {
-    return "arm64";
+    return "win64";
   }
   if (architecture === "ia32") {
-    return "x86";
+    return "win32";
   }
-  return sanitizeSegment(architecture, "x64");
+  if (architecture === "arm64") {
+    return "win-arm64";
+  }
+  return `win-${sanitizeSegment(architecture, "x64")}`;
 }
 
-function findInstallerExe() {
-  const nsisDir = path.join(bundleDir, "nsis");
-  const exeCandidates = walkFiles(nsisDir)
-    .filter((filePath) => path.extname(filePath).toLowerCase() === ".exe")
-    .filter((filePath) => !filePath.toLowerCase().endsWith(".sig.exe"))
+function listBundleArtifacts(relativeDir, extension) {
+  const sourceDir = path.join(bundleDir, relativeDir);
+  return walkFiles(sourceDir)
+    .filter((filePath) => path.extname(filePath).toLowerCase() === extension)
+    .filter((filePath) => !filePath.toLowerCase().endsWith(`.sig${extension}`))
     .map((filePath) => ({
       filePath,
       stat: fs.statSync(filePath),
     }))
     .sort((left, right) => right.stat.mtimeMs - left.stat.mtimeMs);
+}
 
-  if (exeCandidates.length === 0) {
+function findInstallerArtifacts() {
+  const artifactGroups = [
+    {
+      relativeDir: "nsis",
+      extension: ".exe",
+      label: "NSIS installer exe",
+    },
+    {
+      relativeDir: "msi",
+      extension: ".msi",
+      label: "MSI installer",
+    },
+  ];
+
+  const artifacts = artifactGroups.flatMap(({ relativeDir, extension, label }) => {
+    const candidates = listBundleArtifacts(relativeDir, extension);
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        label,
+        extension,
+        sourcePath: candidates[0].filePath,
+      },
+    ];
+  });
+
+  if (artifacts.length === 0) {
     throw new Error(
-      `No NSIS installer exe was found under ${nsisDir}. Build the Windows installer successfully before archiving it.`
+      `No Windows installer artifacts were found under ${bundleDir}. Build the Windows installer successfully before archiving it.`
     );
   }
 
-  return exeCandidates[0].filePath;
+  return artifacts;
 }
 
 function hashFile(filePath) {
@@ -153,13 +170,11 @@ function hashFile(filePath) {
   return hash.digest("hex").toUpperCase();
 }
 
-function buildFileName({ productName, version, sourceHash }) {
-  const productSegment = sanitizeSegment(productName, "app");
-  const osSegment = getOperatingSystemSegment();
-  const cpuSegment = getCpuSegment();
-  const versionSegment = sanitizeSegment(`v${version}`, "v0.0.0");
+function buildFileName({ version, extension }) {
+  const windowsModelSegment = getWindowsModelSegment();
+  const versionSegment = `v${String(version ?? "").trim() || "0.0.0"}`;
 
-  return `${productSegment}-${osSegment}-${cpuSegment}-${versionSegment}.exe`;
+  return `${installerNameBase}-${windowsModelSegment}-${versionSegment}${extension}`;
 }
 
 function ensureReadableSource(sourcePath) {
@@ -174,23 +189,26 @@ function ensureReadableSource(sourcePath) {
   if (stat.size <= 0) {
     throw new Error(`Installer source file is empty: ${sourcePath}`);
   }
-  if (path.extname(sourcePath).toLowerCase() !== ".exe") {
-    throw new Error(`Installer source file must be an exe: ${sourcePath}`);
+  const extension = path.extname(sourcePath).toLowerCase();
+  if (![".exe", ".msi"].includes(extension)) {
+    throw new Error(`Installer source file must be an exe or msi: ${sourcePath}`);
   }
 
-  return stat;
+  return {
+    stat,
+    extension,
+  };
 }
 
 function archiveInstaller({
   sourcePath,
   targetDir,
-  productName,
   version,
   dryRun,
 }) {
-  const sourceStat = ensureReadableSource(sourcePath);
+  const { stat: sourceStat, extension } = ensureReadableSource(sourcePath);
   const sourceHash = hashFile(sourcePath);
-  const fileName = buildFileName({ productName, version, sourceHash });
+  const fileName = buildFileName({ version, extension });
   const finalPath = path.join(targetDir, fileName);
 
   if (dryRun) {
@@ -244,18 +262,20 @@ function archiveInstaller({
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const metadata = readPackagingMetadata();
-  const sourcePath = args.source ? path.resolve(args.source) : findInstallerExe();
   const targetDir = path.resolve(args.targetDir ?? defaultTargetDir);
-  const productName = args.productName ?? metadata.productName ?? metadata.packageName;
   const version = args.version ?? metadata.version;
+  const artifacts = args.source
+    ? [{ sourcePath: path.resolve(args.source) }]
+    : findInstallerArtifacts();
 
-  archiveInstaller({
-    sourcePath,
-    targetDir,
-    productName,
-    version,
-    dryRun: args.dryRun,
-  });
+  for (const artifact of artifacts) {
+    archiveInstaller({
+      sourcePath: artifact.sourcePath,
+      targetDir,
+      version,
+      dryRun: args.dryRun,
+    });
+  }
 }
 
 try {

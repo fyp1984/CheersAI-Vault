@@ -2,6 +2,7 @@ use component_runtime::{OcrComponentStatus, OcrConfig};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(target_os = "windows")]
@@ -458,7 +459,6 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
                 .args(&["-m", "pip", "install", "--no-warn-script-location", package])
                 .current_dir(python_dir)
                 .output()
-                .await
                 .map_err(|e| {
                     format!(
                         "Failed to install {}: {} (path may contain unsupported characters)",
@@ -493,8 +493,7 @@ async fn install_ocr_dependencies(python_dir: &PathBuf) -> Result<(), String> {
             .creation_flags(CREATE_NO_WINDOW)
             .args(&["-c", "import fitz; print('OK')"])
             .current_dir(python_dir)
-            .output()
-            .await;
+            .output();
 
         match verify_output {
             Ok(output) if output.status.success() => {}
