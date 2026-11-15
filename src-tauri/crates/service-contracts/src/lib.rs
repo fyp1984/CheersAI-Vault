@@ -110,6 +110,28 @@ pub struct BatchListResponse {
     pub batches: Vec<BatchSummary>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    Markdown,
+    ExcelBundleManifest,
+}
+
+impl ArtifactKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::ExcelBundleManifest => "excel_bundle_manifest",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Markdown, Self::ExcelBundleManifest]
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BatchFile {
     pub file_id: String,
@@ -119,6 +141,7 @@ pub struct BatchFile {
     pub attempt: usize,
     pub masked_entity_count: Option<usize>,
     pub artifact_id: Option<String>,
+    pub artifact_kind: Option<ArtifactKind>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     #[serde(default)]
@@ -136,6 +159,92 @@ pub struct RetryResponse {
     pub file_id: String,
     pub status: FileStatus,
     pub attempt: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcelArtifactMemberKind {
+    MaskedWorkbook,
+    Ecmap,
+    EncryptedSource,
+    Report,
+}
+
+impl ExcelArtifactMemberKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaskedWorkbook => "masked_workbook",
+            Self::Ecmap => "ecmap",
+            Self::EncryptedSource => "encrypted_source",
+            Self::Report => "report",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::MaskedWorkbook,
+            Self::Ecmap,
+            Self::EncryptedSource,
+            Self::Report,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcelPersistedFile {
+    pub kind: ExcelArtifactMemberKind,
+    pub display_name: String,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcelPersistArtifactsResponse {
+    pub batch_id: String,
+    pub file_id: String,
+    pub artifact_id: String,
+    pub persisted_files: Vec<ExcelPersistedFile>,
+    pub saved_directory_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcelArtifactMembersResponse {
+    pub artifact_id: String,
+    pub batch_id: String,
+    pub saved_directory_hint: String,
+    pub persisted_files: Vec<ExcelPersistedFile>,
+}
+
+/// The two supported enterprise Excel restore modes (R-closeout
+/// TASK-EXCEL-OUTPUT-RECOVERY-CONSISTENCY-CLOSEOUT-001, 工作包 C).
+///
+/// - `PathA`: the server already holds `masked + ecmap + encrypted_source`;
+///   the client only supplies the matching passphrase.
+/// - `PathB`: the server holds `masked + ecmap`; the client additionally
+///   uploads the original file and the matching passphrase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcelRestoreMode {
+    PathA,
+    PathB,
+}
+
+impl ExcelRestoreMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PathA => "path_a",
+            Self::PathB => "path_b",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "path_a" => Some(Self::PathA),
+            "path_b" => Some(Self::PathB),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

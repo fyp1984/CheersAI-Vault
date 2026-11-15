@@ -15,7 +15,8 @@ import {
   BookOpenText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getBuildVersion, getAppVersion } from "@/lib/version";
+import { getDisplayBuildVersion, getAppVersion } from "@/lib/version";
+import { formatDisplayVersion } from "@/lib/versionPolicy";
 import { useAppStore } from "@/store/appStore";
 import { useRuntimeHealthStore } from "@/store/runtimeStore";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -39,7 +40,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, activePreviewId } = useAppStore();
   const location = useLocation();
   const navigate = useNavigate();
-  const [appVersion, setAppVersion] = useState(`v${getBuildVersion()}`);
+  const [appVersion, setAppVersion] = useState(getDisplayBuildVersion());
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const isDesktop = isTauriHost();
   // 浏览器宿主：底部"Runtime 状态"来自单一事实源 store（与 MainLayout 同源），
@@ -51,7 +52,7 @@ export function Sidebar() {
 
     void getAppVersion().then((version) => {
       if (active) {
-        setAppVersion(`v${version}`);
+        setAppVersion(formatDisplayVersion(version));
       }
     });
 
@@ -199,6 +200,21 @@ export function Sidebar() {
               文档中心
             </button>
           </div>
+        )}
+
+        {sidebarCollapsed && (
+          <Tooltip delayDuration={100}>
+            <TooltipTrigger asChild>
+              <div className="mb-3 flex justify-center">
+                <div className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-medium text-slate-300">
+                  {appVersion}
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700 shadow-xl">
+              当前运行版本 {appVersion}
+            </TooltipContent>
+          </Tooltip>
         )}
         
         {/* Collapse toggle */}

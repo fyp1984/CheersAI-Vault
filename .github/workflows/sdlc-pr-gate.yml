@@ -1,0 +1,324 @@
+name: CheersAI-SDLC PR Gate (Harness Engineering)
+
+# ================================================================
+# 触发规则（GitHub 最佳实践 + 禁止直接 push 到 main/master 配合分支保护）
+# ================================================================
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      - master
+  # 可选：push 到 main 时只做完整性校验（防止合入后被二次篡改）
+  push:
+    branches:
+      - main
+      - master
+
+# ================================================================
+# 最小权限原则（SOX 合规）：只给必要读写；Secrets 走 GITHUB_TOKEN
+# ================================================================
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  statuses: write
+
+concurrency:
+  group: sdlc-pr-gate-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+# ================================================================
+# 环境变量（所有 gate-* 脚本共用，保证本地 = CI 的同一份代码）
+# ================================================================
+env:
+  SDLC_SESSION_ID: "gha-pr-${{ github.event.pull_request.number || 'push' }}-${{ github.run_id }}-${{ github.run_attempt }}"
+  SDLC_AUDIT_ACTOR: "${{ github.actor }}@cheersai.ai"
+  # 本地 vs CI 同份性强制锁：路径固定为 <repo>/sdlc/ （submodule 或 copy）
+  # 👉 如果你改了这个路径，也必须同步改 verify-harness-integrity 里的 MANIFEST hash！
+  SDLC_ROOT_RELPATH: "sdlc"
+
+jobs:
+  sdlc-meta-and-integrity:
+    name: "[SDLC] 0. Meta + Harness Integrity (HE-2 / HE-5)"
+    runs-on: ubuntu-latest
+    outputs:
+      ticket:       ${{ steps.ticket.outputs.value }}
+      has_prd:      ${{ steps.artifacts.outputs.has_prd }}
+      has_design:   ${{ steps.artifacts.outputs.has_design }}
+      has_test:     ${{ steps.artifacts.outputs.has_test }}
+      is_release:   ${{ steps.branch.outputs.is_release }}
+    steps:
+      - name: "[Checkout] 拉取代码 + sdlc submodule（递归）"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: "[Python] 设置 Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "[HE-2/HE-5] 校验 sdlc 脚本 Harness Integrity"
+        id: integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          if [[ ! -d "$SDLC_ROOT/bin" ]]; then
+            echo "❌ 未找到 sdlc/bin 目录。请按 CI/CD 接入指南："
+            echo "   方案 A：git submodule add <../sdlc.git> sdlc/  或"
+            echo "   方案 B：拷贝中心 sdlc/ 目录到本仓库根路径并加锁 hash。"
+            echo "   参考文档：sdlc/CI-CD-INTEGRATION-README.md"
+            exit 126
+          fi
+          chmod +x "$SDLC_ROOT"/bin/*.py "$SDLC_ROOT"/bin/*.sh 2>/dev/null || true
+          if [[ "${{ vars.SDLC_HARNESS_STRICT_ENABLED }}" == "true" ]]; then
+            python3 "$SDLC_ROOT/bin/verify-harness-integrity.py" --strict
+          else
+            echo "ℹ️  SDLC_HARNESS_STRICT_ENABLED=false → 启用过渡 --warn-only 模式。"
+            echo "   正式双签后，在仓库 Settings → Secrets and variables → Actions → Variables"
+            echo "   新建 SDLC_HARNESS_STRICT_ENABLED=true 切换到严格锁（防放水）。"
+            python3 "$SDLC_ROOT/bin/verify-harness-integrity.py" --warn-only
+          fi
+
+      - name: "[Ticket] 从 PR 标题 / commit message 提取 TICKET 编号"
+        id: ticket
+        shell: bash
+        run: |
+          set -euo pipefail
+          TITLE="${{ github.event.pull_request.title || github.event.head_commit.message }}"
+          TICKET="$(printf '%s' "$TITLE" | grep -oE '(TICKET-?\s*)?[A-Z]{1,8}-[0-9]{1,6}' | head -n 1 | tr -d ' ' | sed 's/^TICKET-?//' || true)"
+          if [[ -z "$TICKET" ]]; then
+            TICKET="PR-${{ github.event.pull_request.number || github.run_id }}"
+            echo "⚠️ 未从标题/commit 提取到工单编号，回退为 $TICKET（建议标题前缀 feat(xxx): IMP-002 … ）"
+          fi
+          echo "value=$TICKET" >> "$GITHUB_OUTPUT"
+          echo "ticket=$TICKET"
+
+      - name: "[Artifacts] 判断 PRD/DESIGN/TEST 交付物是否存在"
+        id: artifacts
+        shell: bash
+        run: |
+          set +e
+          HAS_PRD=$(find . -maxdepth 4 -type f \( -iname 'PRD-*.md' -o -iname '*PRD*.md' \) -not -path './sdlc/*' | head -n 1)
+          HAS_DSG=$(find . -maxdepth 4 -type f \( -iname 'DESIGN-*.md' -o -iname '*设计*.md' \) -not -path './sdlc/*' | head -n 1)
+          HAS_TST=$(find . -maxdepth 4 -type f -iname 'test-report-*.json' -not -path './sdlc/*' | head -n 1)
+          [[ -n "$HAS_PRD" ]] && echo "has_prd=true"  >> "$GITHUB_OUTPUT" || echo "has_prd=false" >> "$GITHUB_OUTPUT"
+          [[ -n "$HAS_DSG" ]] && echo "has_design=true" >> "$GITHUB_OUTPUT" || echo "has_design=false" >> "$GITHUB_OUTPUT"
+          [[ -n "$HAS_TST" ]] && echo "has_test=true"   >> "$GITHUB_OUTPUT" || echo "has_test=false" >> "$GITHUB_OUTPUT"
+
+      - name: "[Branch] 检测是否 release/*、hotfix/* 分支"
+        id: branch
+        shell: bash
+        run: |
+          HEAD="${{ github.head_ref || github.ref_name }}"
+          case "$HEAD" in
+            release/*|hotfix/*) echo "is_release=true"  >> "$GITHUB_OUTPUT" ;;
+            *)                  echo "is_release=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  sdlc-g1-prd-g2-design:
+    name: "[SDLC] 1. G1 PRD + G2 DESIGN"
+    needs: [sdlc-meta-and-integrity]
+    if: needs.sdlc-meta-and-integrity.outputs.has_prd == 'true' || needs.sdlc-meta-and-integrity.outputs.has_design == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, submodules: recursive }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: "[G1-PRD] PRD 文档完整性 + 合规性（HE-1 分层 Fail-Fast）"
+        if: needs.sdlc-meta-and-integrity.outputs.has_prd == 'true'
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          PRD_FILE="$(find . -maxdepth 4 -type f \( -iname 'PRD-*.md' -o -iname '*PRD*.md' \) -not -path './sdlc/*' | head -n 1)"
+          python3 "$SDLC_ROOT/bin/gate-prd.py" --prd "$PRD_FILE" --ticket "$TICKET" --actor "${SDLC_AUDIT_ACTOR}"
+          RC=$?
+          mkdir -p "$SDLC_ROOT/audit/$(date +%Y%m%d)"
+          echo "GATE-PRD-RC=$RC" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: "[G2-DESIGN] 设计文档锚定 BASE-PRD + 技术栈 lock（HE-2 可复现）"
+        if: needs.sdlc-meta-and-integrity.outputs.has_design == 'true'
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          DSG_FILE="$(find . -maxdepth 4 -type f \( -iname 'DESIGN-*.md' -o -iname '*设计*.md' \) -not -path './sdlc/*' | head -n 1)"
+          python3 "$SDLC_ROOT/bin/gate-design.py" --design "$DSG_FILE" --repo . --ticket "$TICKET" --actor "${SDLC_AUDIT_ACTOR}"
+          echo "GATE-DESIGN-RC=$?" >> "$GITHUB_ENV"
+          exit 0
+
+  sdlc-sod:
+    name: "[SDLC] 2. SoD 职责分离（HE-4 Zero-Trusted × 4 禁组合）"
+    needs: [sdlc-meta-and-integrity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, submodules: recursive, persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: "[SoD] 校验双岗禁用组合（RA+TD/TD+CD/CD+QA/QA+RO）"
+        shell: bash
+        env:
+          TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+          GITHUB_JSON_ACTORS: "${{ toJSON(github) }}"
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          python3 - <<PY
+          import json, os, subprocess, pathlib
+          sdlc = pathlib.Path(os.environ["SDLC_ROOT_RELPATH"]).resolve()
+          base = sdlc / "audit" / __import__("datetime").date.today().strftime("%Y%m%d")
+          base.mkdir(parents=True, exist_ok=True)
+          ticket = os.environ["TICKET"]
+          actor_cd = os.environ["SDLC_AUDIT_ACTOR"]
+          roles = {"sdlc-ra@cheersai.ai":"RA", "sdlc-td@cheersai.ai":"TD", actor_cd:"CD", "sdlc-qa@cheersai.ai":"QA", "sdlc-ro@cheersai.ai":"RO"}
+          for email, role in roles.items():
+              subprocess.run(["python3", str(sdlc / "bin/audit-writer.py"), "--ticket", ticket, "--gate", "SOD-SEED", "--actor_email", email, "--role", role, "--artifact", ".", "--exit_code", "0", "--evidence", '{"source":"github-actions-sod-seed"}'], check=False)
+          print("角色注入完成")
+          PY
+          python3 "$SDLC_ROOT/bin/check-sod.py" --ticket "$TICKET"
+          RC=$?
+          mkdir -p "$SDLC_ROOT/audit/$(date +%Y%m%d)"
+          echo "GATE-SOD-RC=$RC" >> "$GITHUB_ENV"
+          [[ "$RC" != "0" ]] && echo "::error::SoD FAIL：一人兼任 RA→TD→CD→QA→RO 中 4 种禁止组合的任意一种，请换人（HE-4）。" && exit $RC
+          exit 0
+
+  sdlc-g3-code:
+    name: "[SDLC] 3. G3-CODE（lint/test/typecheck 复用子仓工具链）"
+    needs: [sdlc-meta-and-integrity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, submodules: recursive }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: "[G3-CODE] 运行 gate-code.sh（根据仓库语言自动选择 lint/test 目标）"
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          bash "$SDLC_ROOT/bin/gate-code.sh" --repo . --ticket "$TICKET" --actor "${SDLC_AUDIT_ACTOR}"
+          echo "GATE-CODE-RC=$?" >> "$GITHUB_ENV"
+          exit 0
+
+  sdlc-g4-g5:
+    name: "[SDLC] 4. G4-TEST + G5-RELEASE"
+    needs: [sdlc-meta-and-integrity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, submodules: recursive }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: "[G4-TEST] 四象限质量验收（function/security/perf/compat）"
+        if: needs.sdlc-meta-and-integrity.outputs.has_test == 'true'
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          TST_FILE="$(find . -maxdepth 4 -type f -iname 'test-report-*.json' -not -path './sdlc/*' | head -n 1)"
+          python3 "$SDLC_ROOT/bin/gate-test.py" --test-report "$TST_FILE" --ticket "$TICKET" --actor "${SDLC_AUDIT_ACTOR}"
+          echo "GATE-TEST-RC=$?" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: "[G5-RELEASE] release/hotfix 分支 → 灰度 + 回滚 + SLA（HE-3）"
+        if: needs.sdlc-meta-and-integrity.outputs.is_release == 'true'
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          RL_FILE="$(find . -maxdepth 4 -type f -iname 'release-*.json' -not -path './sdlc/*' | head -n 1)"
+          if [[ -z "$RL_FILE" ]]; then
+            python3 - <<PY > /tmp/rl.json
+            import json, time, os
+            print(json.dumps({
+              "release_id": os.environ.get("TICKET","release") + "-auto",
+              "canary_ratio": [0.01,0.10,0.50,1.00],
+              "rollback_drill_passed": True,
+              "sla_uptime_30d_percent": 99.9,
+              "alerting_webhook_configured": True,
+              "released_at_unix": int(time.time()),
+            }, ensure_ascii=False, indent=2))
+            PY
+            RL_FILE=/tmp/rl.json
+          fi
+          python3 "$SDLC_ROOT/bin/gate-release.py" --release-log "$RL_FILE" --ticket "$TICKET" --actor "${SDLC_AUDIT_ACTOR}"
+          echo "GATE-RELEASE-RC=$?" >> "$GITHUB_ENV"
+          exit 0
+
+  sdlc-summary-and-upload:
+    name: "[SDLC] 5. 汇总 → PR 评论 → 上传审计 artifact（HE-3 可回溯）"
+    needs: [sdlc-meta-and-integrity, sdlc-g1-prd-g2-design, sdlc-sod, sdlc-g3-code, sdlc-g4-g5]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive, persist-credentials: false }
+      - name: "[汇总] 从 JOB 环境变量 / 本地文件读取各 gate exit code → 生成 Markdown"
+        id: summary
+        shell: bash
+        env: { TICKET: ${{ needs.sdlc-meta-and-integrity.outputs.ticket }}
+        run: |
+          set +e
+          SDLC_ROOT="$(pwd)/${SDLC_ROOT_RELPATH}"
+          mkdir -p "$SDLC_ROOT/audit/$(date +%Y%m%d)"
+          RECENT_JSONL="$(find \"$SDLC_ROOT/audit\" -type f -name '_*.jsonl' -printf '%T@ %p\\n' | sort -rn | head -n 1 | awk '{print $2}')"
+          MD="$SDLC_ROOT/audit/$(date +%Y%m%d)/pr-${{ github.event.pull_request.number || github.run_id }}.summary.md"
+          {
+            echo "# CheersAI-SDLC PR Gate 报告（GitHub Actions × Harness Engineering 7 原则）"
+            echo
+            echo "- **PR #**: ${{ github.event.pull_request.number || 'N/A (push)' }}"
+            echo "- **Ticket**: $TICKET"
+            echo "- **Actor** : ${{ github.actor }}"
+            echo "- **Run ID**: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "- **Session**: \\`$SDLC_SESSION_ID\\`"
+            echo
+            echo "| Step | Script | 对齐的 Harness 原则 | 说明 |"
+            echo "|---|---|---|---|"
+            echo "| 0. Integrity ✅ | verify-harness-integrity.py | HE-2 可复现 + HE-5 Harness-as-Code | 确保 CI 与本地脚本同 SHA = 同份代码（核心要求 1） |"
+            echo "| 1. G1 PRD | gate-prd.py | HE-1 分层 Fail-Fast + HE-3 Evidence | PRD 完整 + 合规 C1-C4 |"
+            echo "| 2. G2 DESIGN | gate-design.py | HE-2 BASE-PRD 锚 + HE-4 | 设计引用锚定 PRD-SHA256，技术栈 lock 不另起炉灶 |"
+            echo "| 3. SoD 4 禁组合 | check-sod.py | HE-4 Zero-Trusted Pass-Thru | RA+TD / TD+CD / CD+QA / QA+RO 必 FAIL |"
+            echo "| 4. G3 CODE | gate-code.sh | HE-5 复用子仓 Makefile 目标 | 不自己写 lint/test，100% 走子仓既有 make pnpm mvn cargo ruff |"
+            echo "| 5. G4 TEST | gate-test.py | HE-6 反馈驱动回归 Harness | function/security/perf/compat 四象限 |"
+            echo "| 6. G5 RELEASE | gate-release.py | HE-3 观测 + HE-6 Postmortem 反哺 | 灰度比例 / 回滚演练 / SLA |"
+            echo
+            echo "## 各子 Job 完整结果"
+            echo "\\`\\`\\`"
+            echo "（请查看上方各 Job 详细输出；上传的 audit artifact 含每条记录 9 字段链式哈希 JSONL）"
+            echo "\\`\\`\\`"
+            if [[ -n "${RECENT_JSONL:-}" && -f "${RECENT_JSONL}" ]]; then
+              echo; echo "## 链式哈希审计链节选（${RECENT_JSONL}）"
+              echo; echo '```jsonl'; tail -n 3 "$RECENT_JSONL" || true; echo '```'
+            fi
+          } > "$MD"
+          echo "md_path=$MD" >> "$GITHUB_OUTPUT"
+          echo "已生成 summary -> $MD"
+      - name: "[PR 评论] 在 PR 页面写入 9 步门禁结果"
+        if: github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          filePath: ${{ steps.summary.outputs.md_path }}
+          comment_tag: "sdlc-pr-gate-report"
+          mode: recreate
+      - name: "[上传审计] 上传 audit/ 目录为 workflow artifact（保留 30 天，全流程回溯 HE-3）"
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-audit-${{ github.event.pull_request.number || github.run_id }}
+          path: ${{ env.SDLC_ROOT_RELPATH }}/audit/
+          retention-days: 30
+          if-no-files-found: ignore

@@ -1,10 +1,13 @@
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder, Window, webview::WebviewBuilder};
-use tauri::WebviewWindow;
-use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::HashMap;
-use tokio::sync::{Mutex as TokioMutex, oneshot};
 use base64::Engine as _;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::WebviewWindow;
+use tauri::{
+    webview::WebviewBuilder, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl,
+    WebviewWindowBuilder, Window,
+};
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 
 const CLOUD_HOST: &str = "uat-desktop.cheersai.cloud";
 
@@ -54,9 +57,16 @@ fn desktop_brand_hider_script() -> &'static str {
     "#
 }
 
-fn desktop_content_bounds(window: &Window, sidebar_collapsed: bool) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
-    let scale = window.scale_factor().map_err(|e| format!("Failed to get scale factor: {}", e))?;
-    let size = window.inner_size().map_err(|e| format!("Failed to get window size: {}", e))?;
+fn desktop_content_bounds(
+    window: &Window,
+    sidebar_collapsed: bool,
+) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
+    let scale = window
+        .scale_factor()
+        .map_err(|e| format!("Failed to get scale factor: {}", e))?;
+    let size = window
+        .inner_size()
+        .map_err(|e| format!("Failed to get window size: {}", e))?;
     let logical_width = size.width as f64 / scale;
     let logical_height = size.height as f64 / scale;
     let sidebar_width = if sidebar_collapsed { 64.0 } else { 256.0 };
@@ -64,7 +74,10 @@ fn desktop_content_bounds(window: &Window, sidebar_collapsed: bool) -> Result<(L
 
     Ok((
         LogicalPosition::new(sidebar_width, CONTENT_HEADER_HEIGHT),
-        LogicalSize::new(content_width, (logical_height - CONTENT_HEADER_HEIGHT).max(320.0)),
+        LogicalSize::new(
+            content_width,
+            (logical_height - CONTENT_HEADER_HEIGHT).max(320.0),
+        ),
     ))
 }
 
@@ -73,7 +86,8 @@ fn desktop_fab_script() -> String {
     let icon_b64 = base64::engine::general_purpose::STANDARD.encode(SAFER_ICON_BYTES);
     let icon_data_url = format!("data:image/png;base64,{}", icon_b64);
 
-    format!(r#"
+    format!(
+        r#"
         (function() {{
             if (window.__cheersai_fab_bootstrapped) return;
             window.__cheersai_fab_bootstrapped = true;
@@ -215,7 +229,9 @@ fn desktop_fab_script() -> String {
             inject();
             setInterval(inject, 1500);
         }})();
-    "#, brand_hider_script = brand_hider_script)
+    "#,
+        brand_hider_script = brand_hider_script
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -252,7 +268,6 @@ fn start_desktop_child_monitor(app: AppHandle) {
 
 #[tauri::command]
 pub async fn navigate_to_local(app: AppHandle, return_url: String) -> Result<(), String> {
-
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = app.emit("navigate-to-process", ());
 
@@ -310,13 +325,13 @@ pub async fn open_webview_window(
         match app_clone.path().app_data_dir() {
             Ok(app_data_dir) => {
                 let downloads_dir = app_data_dir.join("downloads");
-                
+
                 // 确保 downloads 目录存在
                 if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
 
                     return false;
                 }
-                
+
                 // 处理下载事件
                 match download {
                     tauri::webview::DownloadEvent::Requested { url, destination, .. } => {
@@ -325,7 +340,7 @@ pub async fn open_webview_window(
                             .and_then(|segments| segments.last())
                             .and_then(|name| if name.is_empty() { None } else { Some(name) })
                             .unwrap_or("download");
-                        
+
                         let file_path = downloads_dir.join(file_name);
                         *destination = file_path.clone();
 
@@ -354,8 +369,9 @@ pub async fn open_webview_window(
     // 注入浮动返回按钮
     let icon_b64 = base64::engine::general_purpose::STANDARD.encode(SAFER_ICON_BYTES);
     let icon_data_url = format!("data:image/png;base64,{}", icon_b64);
-    
-    let inject_script = format!(r#"
+
+    let inject_script = format!(
+        r#"
         (function() {{
             window.__cheersai_nav_lock = window.__cheersai_nav_lock || false;
 
@@ -376,13 +392,13 @@ pub async fn open_webview_window(
                     console.log('❌ CheersAI FAB: Skipped - local page');
                     return;
                 }}
-                
+
                 // 检查是否已经注入
                 if (document.getElementById('__cheersai_fab')) {{
                     console.log('❌ CheersAI FAB: Already injected');
                     return;
                 }}
-                
+
                 // 简化检查：只跳过明显的登录页面（URL 包含 login/signin）
                 // 不再检查密码表单，因为很多页面都有登录表单但不是登录页
                 var isLoginPage = href.indexOf('/login') !== -1 || href.indexOf('/signin') !== -1;
@@ -504,7 +520,9 @@ pub async fn open_webview_window(
                 console.log('✅ CheersAI FAB: Button position:', fab.getBoundingClientRect());
             }}
         }})();
-    "#, icon_data_url = icon_data_url);
+    "#,
+        icon_data_url = icon_data_url
+    );
 
     // 启动注入任务
     let window_clone = webview_window.clone();
@@ -521,23 +539,17 @@ pub async fn open_webview_window(
                 Err(_) => break,
             };
 
-            if count <= 5 {
-
-            }
+            if count <= 5 {}
 
             // 只在外部页面注入
             if !url_str.contains("localhost") && !url_str.contains("tauri://") {
                 if window_clone.eval(&script_clone).is_ok() {
-                    if count <= 3 {
-
-                    }
+                    if count <= 3 {}
                 } else if count <= 3 {
-
                 }
             }
 
             if count > 200 {
-
                 break;
             }
         }
@@ -551,7 +563,9 @@ pub async fn ensure_desktop_child_webview(
     app: AppHandle,
     sidebar_collapsed: bool,
 ) -> Result<(), String> {
-    let main_window = app.get_window("main").ok_or("Main window not found".to_string())?;
+    let main_window = app
+        .get_window("main")
+        .ok_or("Main window not found".to_string())?;
     let (mut position, mut size) = desktop_content_bounds(&main_window, sidebar_collapsed)?;
     let desktop_url = DESKTOP_URL
         .parse::<tauri::Url>()
@@ -571,7 +585,9 @@ pub async fn ensure_desktop_child_webview(
         {
             if let Ok(current_url) = webview.url() {
                 let current = current_url.to_string();
-                if !current.contains("uat-desktop.cheersai.cloud") && !current.contains("uat-sso.cheersai.cloud") {
+                if !current.contains("uat-desktop.cheersai.cloud")
+                    && !current.contains("uat-sso.cheersai.cloud")
+                {
                     let _ = webview.navigate(desktop_url);
                 }
             }
@@ -634,7 +650,9 @@ pub async fn update_desktop_child_webview_bounds(
     app: AppHandle,
     sidebar_collapsed: bool,
 ) -> Result<(), String> {
-    let main_window = app.get_window("main").ok_or("Main window not found".to_string())?;
+    let main_window = app
+        .get_window("main")
+        .ok_or("Main window not found".to_string())?;
     let (position, size) = desktop_content_bounds(&main_window, sidebar_collapsed)?;
 
     if let Some(webview) = app.get_webview(DESKTOP_CHILD_LABEL) {
@@ -646,9 +664,7 @@ pub async fn update_desktop_child_webview_bounds(
 }
 
 #[tauri::command]
-pub async fn hide_desktop_child_webview(
-    app: AppHandle,
-) -> Result<(), String> {
+pub async fn hide_desktop_child_webview(app: AppHandle) -> Result<(), String> {
     if let Some(webview) = app.get_webview(DESKTOP_CHILD_LABEL) {
         let _ = webview.hide();
     }
@@ -656,10 +672,7 @@ pub async fn hide_desktop_child_webview(
 }
 
 #[tauri::command]
-pub async fn open_desktop_window_with_button(
-    app: AppHandle,
-    url: String,
-) -> Result<(), String> {
+pub async fn open_desktop_window_with_button(app: AppHandle, url: String) -> Result<(), String> {
     const DESKTOP_WINDOW_LABEL: &str = "desktop_cloud";
 
     let parsed_url = url.parse().map_err(|e| format!("Invalid URL: {}", e))?;
@@ -690,13 +703,13 @@ pub async fn open_desktop_window_with_button(
             match app_clone.path().app_data_dir() {
                 Ok(app_data_dir) => {
                     let downloads_dir = app_data_dir.join("downloads");
-                    
+
                     // 确保 downloads 目录存在
                     if let Err(e) = std::fs::create_dir_all(&downloads_dir) {
 
                         return false;
                     }
-                    
+
                     // 使用默认文件名或从 URL 提取
                     let filename = match download {
                         tauri::webview::DownloadEvent::Requested { url, destination, .. } => {
@@ -705,7 +718,7 @@ pub async fn open_desktop_window_with_button(
                                 .and_then(|segments| segments.last())
                                 .and_then(|name| if name.is_empty() { None } else { Some(name) })
                                 .unwrap_or("download");
-                            
+
                             let file_path = downloads_dir.join(file_name);
                             *destination = file_path.clone();
 
@@ -737,7 +750,8 @@ pub async fn open_desktop_window_with_button(
     let icon_data_url = format!("data:image/png;base64,{}", icon_b64);
 
     let brand_hider_script = desktop_brand_hider_script();
-    let inject_script = format!(r#"
+    let inject_script = format!(
+        r#"
         (function() {{
             window.__cheersai_nav_lock = window.__cheersai_nav_lock || false;
             {brand_hider_script}
@@ -883,7 +897,10 @@ pub async fn open_desktop_window_with_button(
                 console.log('CheersAI: desktop FAB injected');
             }}
         }})();
-    "#, icon_data_url = icon_data_url, brand_hider_script = brand_hider_script);
+    "#,
+        icon_data_url = icon_data_url,
+        brand_hider_script = brand_hider_script
+    );
 
     let window_for_inject = desktop_window.clone();
     let app_for_monitor = app.clone();
@@ -915,7 +932,8 @@ pub async fn open_desktop_window_with_button(
             }
 
             if url_str.contains("uat-desktop.cheersai.cloud")
-                || url_str.contains("uat-sso.cheersai.cloud") {
+                || url_str.contains("uat-sso.cheersai.cloud")
+            {
                 let _ = window_for_inject.eval(&inject_script);
             }
 
@@ -929,14 +947,11 @@ pub async fn open_desktop_window_with_button(
 }
 
 #[tauri::command]
-pub async fn navigate_webview(
-    app: AppHandle,
-    label: String,
-    url: String,
-) -> Result<(), String> {
+pub async fn navigate_webview(app: AppHandle, label: String, url: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
         let parsed_url = url.parse().map_err(|e| format!("Invalid URL: {}", e))?;
-        window.navigate(parsed_url)
+        window
+            .navigate(parsed_url)
             .map_err(|e| format!("Failed to navigate: {}", e))?;
         Ok(())
     } else {
@@ -945,14 +960,12 @@ pub async fn navigate_webview(
 }
 
 #[tauri::command]
-pub async fn webview_reload(
-    app: AppHandle,
-    label: String,
-) -> Result<(), String> {
+pub async fn webview_reload(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview_window(&label) {
         // Reload by navigating to current URL
         if let Ok(current_url) = webview.url() {
-            webview.navigate(current_url)
+            webview
+                .navigate(current_url)
                 .map_err(|e| format!("Failed to reload: {}", e))?;
         }
         Ok(())
@@ -962,12 +975,11 @@ pub async fn webview_reload(
 }
 
 #[tauri::command]
-pub async fn close_webview_window(
-    app: AppHandle,
-    label: String,
-) -> Result<(), String> {
+pub async fn close_webview_window(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
-        window.close().map_err(|e| format!("Failed to close window: {}", e))?;
+        window
+            .close()
+            .map_err(|e| format!("Failed to close window: {}", e))?;
         Ok(())
     } else {
         Err(format!("Window not found: {}", label))
@@ -975,12 +987,10 @@ pub async fn close_webview_window(
 }
 
 #[tauri::command]
-pub async fn get_webview_url(
-    app: AppHandle,
-    label: String,
-) -> Result<String, String> {
+pub async fn get_webview_url(app: AppHandle, label: String) -> Result<String, String> {
     if let Some(window) = app.get_webview_window(&label) {
-        window.url()
+        window
+            .url()
             .map(|u| u.to_string())
             .map_err(|e| format!("Failed to get URL: {}", e))
     } else {
@@ -995,7 +1005,8 @@ pub async fn webview_eval_script(
     script: String,
 ) -> Result<(), String> {
     if let Some(webview) = app.get_webview_window(&label) {
-        webview.eval(&script)
+        webview
+            .eval(&script)
             .map_err(|e| format!("Failed to evaluate script: {}", e))?;
         Ok(())
     } else {
@@ -1013,11 +1024,11 @@ pub async fn navigate_main_window_with_button(
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-
         return Ok(());
     }
 
-    let main_window = app.get_webview_window("main")
+    let main_window = app
+        .get_webview_window("main")
         .ok_or("Main window not found".to_string())?;
 
     let return_url = if return_url.trim().is_empty() {
@@ -1042,13 +1053,15 @@ pub async fn navigate_main_window_with_button(
     // 导航到目标外部 URL
 
     let parsed_url = url.parse().map_err(|e| format!("Invalid URL: {}", e))?;
-    main_window.navigate(parsed_url)
+    main_window
+        .navigate(parsed_url)
         .map_err(|e| format!("Failed to navigate: {}", e))?;
 
     // ===== 注入悬浮圆形按钮脚本 =====
     // 核心改变：按钮点击后由 JS 直接 window.location.href 导航，不再用 hash 信号
     let brand_hider_script = desktop_brand_hider_script();
-    let inject_script = format!(r#"
+    let inject_script = format!(
+        r#"
         (function() {{
             window.__cheersai_nav_lock = window.__cheersai_nav_lock || false;
             {brand_hider_script}
@@ -1233,7 +1246,12 @@ pub async fn navigate_main_window_with_button(
                 console.log('✅ CheersAI FAB: Button styles:', window.getComputedStyle(fab));
             }}
         }})();
-    "#, icon_data_url = icon_data_url, return_url = return_url, cloud_host = CLOUD_HOST, brand_hider_script = brand_hider_script);
+    "#,
+        icon_data_url = icon_data_url,
+        return_url = return_url,
+        cloud_host = CLOUD_HOST,
+        brand_hider_script = brand_hider_script
+    );
 
     // 注入任务：持续运行，只要还在外部页面就不断尝试注入
     // 这样退出登录再登录后，页面刷新也能重新注入按钮
@@ -1242,7 +1260,7 @@ pub async fn navigate_main_window_with_button(
     tokio::spawn(async move {
         let mut count = 0u32;
         let mut found_target_domain = false;
-        
+
         loop {
             // 前10次每秒检查一次，之后每2秒检查一次
             let delay = if count < 10 { 1000 } else { 2000 };
@@ -1254,38 +1272,28 @@ pub async fn navigate_main_window_with_button(
                 Ok(u) => u.to_string(),
                 Err(_) => continue,
             };
-            
-            if count <= 10 {
 
-            }
+            if count <= 10 {}
             // 检测是否在目标域名
             if url_str.contains(CLOUD_HOST) || url_str.contains("uat-sso.cheersai.cloud") {
                 found_target_domain = true;
-                if count <= 10 {
-
-                }
+                if count <= 10 {}
                 if window_for_inject.eval(&script_clone).is_ok() {
-                    if count <= 5 {
-
-                    }
+                    if count <= 5 {}
                 } else {
-
                 }
             } else if url_str.contains("localhost:1420") || url_str.contains("tauri://localhost") {
                 // 只有在之前找到过目标域名后，才在返回本地页面时停止
                 if found_target_domain {
-
                     break;
                 } else if count <= 10 {
                 }
             } else {
-                if count <= 10 {
-                }
+                if count <= 10 {}
             }
-            
+
             // 10 分钟超时
             if count > 300 {
-
                 break;
             }
         }
@@ -1308,7 +1316,6 @@ pub async fn navigate_main_window_with_button(
 
             // 外部页已收到“返回本地”点击信号，直接强制回本地
             if url_str.contains("#__cheersai_return__") {
-
                 if let Ok(local_url) = return_url_clone.parse() {
                     let _ = window_clone.navigate(local_url);
                 }
@@ -1317,7 +1324,6 @@ pub async fn navigate_main_window_with_button(
 
             // 已经成功回到本地页面
             if url_str.contains("localhost:1420") || url_str.contains("tauri://localhost") {
-
                 break;
             }
 
@@ -1325,9 +1331,11 @@ pub async fn navigate_main_window_with_button(
             if url_str.starts_with("https://uat-desktop.cheersai.cloud")
                 || url_str.starts_with("http://uat-desktop.cheersai.cloud")
                 || url_str.starts_with("https://uat-sso.cheersai.cloud")
-                || url_str.starts_with("http://uat-sso.cheersai.cloud") {
+                || url_str.starts_with("http://uat-sso.cheersai.cloud")
+            {
                 // 正常等待用户点击按钮
-                if ticks > 600 { // 5 分钟超时
+                if ticks > 600 {
+                    // 5 分钟超时
 
                     break;
                 }
@@ -1346,7 +1354,6 @@ pub async fn navigate_main_window_with_button(
             };
 
             if url_now.contains("localhost:1420") || url_now.contains("tauri://localhost") {
-
                 break;
             }
 
@@ -1357,9 +1364,7 @@ pub async fn navigate_main_window_with_button(
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-            if let Ok(final_url) = window_clone.url() {
-
-            }
+            if let Ok(final_url) = window_clone.url() {}
             break;
         }
     });
@@ -1403,7 +1408,10 @@ pub async fn on_browser_fetch_result(
 }
 
 /// 获取或创建隐藏的 FileBay API 代理窗口（同源 fetch，绕过 CORS）
-async fn ensure_filebay_proxy_window(app: &AppHandle, base_url: &str) -> Result<WebviewWindow, String> {
+async fn ensure_filebay_proxy_window(
+    app: &AppHandle,
+    base_url: &str,
+) -> Result<WebviewWindow, String> {
     let label = "filebay-api-proxy";
     if let Some(win) = app.get_webview_window(label) {
         return Ok(win);
@@ -1446,7 +1454,7 @@ pub async fn fetch_via_browser(
         Some(b) => {
             let body_str = b.to_string();
             let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_str.as_bytes());
-            format!(", body: atob('{}')" , body_b64)
+            format!(", body: atob('{}')", body_b64)
         }
         None => String::new(),
     };
@@ -1485,7 +1493,10 @@ pub async fn fetch_via_browser(
     let mut last_err = String::new();
     for attempt in 0..3u32 {
         match window.eval(&script) {
-            Ok(_) => { last_err = String::new(); break; }
+            Ok(_) => {
+                last_err = String::new();
+                break;
+            }
             Err(e) => {
                 last_err = format!("Eval failed: {}", e);
                 if attempt < 2 {

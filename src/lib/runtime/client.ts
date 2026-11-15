@@ -21,6 +21,9 @@ import type {
   RuntimeCreateBatchResponse,
   RuntimeCreatePreviewResponse,
   RuntimeCreateSensitiveTermRequest,
+  RuntimeExcelArtifactMembersResponse,
+  RuntimeExcelArtifactMemberKind,
+  RuntimeExcelPersistArtifactsResponse,
   RuntimeHealthResponse,
   RuntimeOcrStatusResponse,
   RuntimeOperationLogListResponse,
@@ -46,11 +49,17 @@ import type {
   RuntimeUnlockSandboxRequest,
   RuntimeUpdateSensitiveTermRequest,
 } from "@/types/runtime";
+import type { ExcelMaskingConfig } from "@/types/commands";
 import {
   classifyRuntimeFetchError,
   classifyRuntimeHttpResponse,
   parseRuntimeJsonResponse,
 } from "./errorClassification";
+import {
+  artifactDownloadName,
+  parseContentDispositionFilename,
+  restoreDownloadName,
+} from "./downloadName";
 
 function resolveBaseUrl(raw: string | undefined): string {
   if (!raw) {
@@ -68,7 +77,11 @@ function resolveBaseUrl(raw: string | undefined): string {
 }
 
 export const runtimeBaseUrl = resolveBaseUrl(
-  import.meta.env.VITE_RUNTIME_API_URL as string | undefined
+  // Optional chaining keeps this module importable under plain Node ESM
+  // (e.g. `tsx --test` for node:test suites) where `import.meta.env` is
+  // undefined; under Vite the env object is always present, so behavior is
+  // unchanged there.
+  import.meta.env?.VITE_RUNTIME_API_URL as string | undefined
 );
 
 export type RuntimeFetchResult<T> =
@@ -250,21 +263,6 @@ export async function cancelRuntimePreview(previewId: string): Promise<RuntimeAc
 }
 
 /**
- * 从文件名中提取一个安全的、不含路径分隔符或控制字符的“主干名”，
- * 用于拼装下载文件名——展示名视为不可信输入，不直接用作 HTML/路径/
- * `Content-Disposition` 指令的一部分。
- */
-function safeStem(displayName: string): string {
-  const withoutPath = displayName.replace(/^.*[\\/]/, "");
-  // eslint-disable-next-line no-control-regex
-  const withoutControlChars = withoutPath.replace(/[\x00-\x1f\x7f]/g, "");
-  const withoutReservedChars = withoutControlChars.replace(/[<>:"/\\|?*]/g, "_");
-  const dot = withoutReservedChars.lastIndexOf(".");
-  const stem = dot > 0 ? withoutReservedChars.slice(0, dot) : withoutReservedChars;
-  return stem.trim() || "artifact";
-}
-
-/**
  * 下载脱敏产物：`GET /api/v1/artifacts/{artifact_id}`，只使用编码后的
  * artifact ID，不接受或拼接任何服务器路径。下载后立即释放对象 URL。
  */
@@ -291,7 +289,71 @@ export async function downloadRuntimeArtifact(
   try {
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = `${safeStem(displayName)}.masked.md`;
+    anchor.download = artifactDownloadName(
+      displayName,
+      response.headers.get("content-disposition")
+    );
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  return { ok: true };
+}
+
+export function persistRuntimeExcelArtifacts(
+  file: File,
+  config: ExcelMaskingConfig,
+  ruleIds: string[]
+): Promise<RuntimeFetchResult<RuntimeExcelPersistArtifactsResponse>> {
+  const form = new FormData();
+  form.set("file", file, file.name);
+  form.set("config", JSON.stringify(config));
+  form.set("rule_ids", JSON.stringify(ruleIds));
+  return fetchRuntimeJson<RuntimeExcelPersistArtifactsResponse>("/api/v1/excel/jobs", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function fetchRuntimeExcelArtifactMembers(
+  artifactId: string
+): Promise<RuntimeFetchResult<RuntimeExcelArtifactMembersResponse>> {
+  return fetchRuntimeJson<RuntimeExcelArtifactMembersResponse>(
+    `/api/v1/artifacts/${encodeURIComponent(artifactId)}/members`
+  );
+}
+
+export async function downloadRuntimeExcelArtifactMember(
+  artifactId: string,
+  memberKind: RuntimeExcelArtifactMemberKind
+): Promise<RuntimeActionResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${runtimeBaseUrl}/api/v1/artifacts/${encodeURIComponent(artifactId)}/members/${encodeURIComponent(memberKind)}`,
+      {
+        credentials: "omit",
+        cache: "no-store",
+      }
+    );
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
+  }
+
+  if (!response.ok) {
+    return classifyRuntimeHttpResponse(response);
+  }
+
+  const contentDisposition = response.headers.get("content-disposition");
+  const filename = parseContentDispositionFilename(contentDisposition) ?? `${memberKind}`;
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
@@ -306,6 +368,68 @@ export type RuntimeRestoreResult =
   | { ok: false; reason: "network" }
   | { ok: false; reason: "http"; status: number; code?: string; message?: string; retryable?: boolean }
   | { ok: false; reason: "invalid-count" };
+
+/**
+ * 企业 Excel 恢复：`POST /api/v1/excel/artifacts/{artifact_id}/restore`。
+ * 只提交 artifact_id、恢复模式、口令（Path B 附带用户原件），从不提交或
+ * 拼接服务器路径。成功响应是 `application/octet-stream` 正文 +
+ * `X-Restored-Entity-Count` 头；该头必须是有限正整数才触发下载，否则视为
+ * 失败且不生成任何浏览器侧产物（零恢复、非法计数头与网络/HTTP 错误一律
+ * 不下载）。口令只存在于本次请求体内，不持久化、不写日志。
+ */
+export async function restoreRuntimeExcelArtifact(
+  artifactId: string,
+  displayName: string,
+  options: { mode: "path_a" | "path_b"; passphrase: string; userOriginal?: File }
+): Promise<RuntimeRestoreResult> {
+  const form = new FormData();
+  form.set("mode", options.mode);
+  form.set("passphrase", options.passphrase);
+  if (options.userOriginal) {
+    form.set("user_original", options.userOriginal, options.userOriginal.name);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${runtimeBaseUrl}/api/v1/excel/artifacts/${encodeURIComponent(artifactId)}/restore`,
+      {
+        method: "POST",
+        body: form,
+        credentials: "omit",
+        cache: "no-store",
+      }
+    );
+  } catch (error) {
+    return classifyRuntimeFetchError(error);
+  }
+
+  if (!response.ok) {
+    return classifyRuntimeHttpResponse(response);
+  }
+
+  const countHeader = response.headers.get("X-Restored-Entity-Count");
+  const count = countHeader === null ? Number.NaN : Number(countHeader);
+  if (!Number.isFinite(count) || !Number.isInteger(count) || count <= 0) {
+    return { ok: false, reason: "invalid-count" };
+  }
+
+  const contentDisposition = response.headers.get("content-disposition");
+  const filename = parseContentDispositionFilename(contentDisposition) ?? `${displayName}_还原`;
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  return { ok: true, count };
+}
 
 /**
  * 服务器内部映射恢复：`POST /api/v1/artifacts/{artifact_id}/restore`，只使用
@@ -344,7 +468,10 @@ export async function restoreRuntimeArtifact(
   try {
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = `${safeStem(displayName)}.restored.md`;
+    anchor.download = restoreDownloadName(
+      displayName,
+      response.headers.get("content-disposition")
+    );
     document.body.append(anchor);
     anchor.click();
     anchor.remove();

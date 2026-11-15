@@ -1,8 +1,11 @@
-use sqlx::{sqlite::{SqlitePool, SqlitePoolOptions}, Row};
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-use std::path::PathBuf;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::{
+    sqlite::{SqlitePool, SqlitePoolOptions},
+    Row,
+};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct LogEntry {
@@ -69,17 +72,17 @@ impl Database {
     /// 初始化数据库连接
     pub async fn new() -> Result<Self> {
         let db_path = get_database_path()?;
-        
-        
+
         // 确保数据库目录存在
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         // 使用绝对路径并转义特殊字符
         let database_url = format!("sqlite:{}?mode=rwc", db_path.to_string_lossy());
 
-        let pool = SqlitePool::connect(&database_url).await
+        let pool = SqlitePool::connect(&database_url)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))?;
 
         let db = Database { pool };
@@ -87,7 +90,7 @@ impl Database {
 
         Ok(db)
     }
-    
+
     /// 创建数据库表
     async fn init_tables(&self) -> Result<()> {
         // 日志表
@@ -108,7 +111,7 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 用户设置表
         sqlx::query(
             r#"
@@ -121,7 +124,7 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 处理历史表
         sqlx::query(
             r#"
@@ -141,7 +144,7 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 文件管理表
         sqlx::query(
             r#"
@@ -162,24 +165,26 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 创建索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)")
             .execute(&self.pool)
             .await?;
-            
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level)")
             .execute(&self.pool)
             .await?;
-            
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_processing_history_created_at ON processing_history(created_at)")
             .execute(&self.pool)
             .await?;
-            
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_managed_files_created_at ON managed_files(created_at)")
-            .execute(&self.pool)
-            .await?;
-        
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_managed_files_created_at ON managed_files(created_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // 敏感信息词库表
         sqlx::query(
             r#"
@@ -196,16 +201,20 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 创建敏感词索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sensitive_terms_category ON sensitive_terms(category)")
-            .execute(&self.pool)
-            .await?;
-            
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sensitive_terms_enabled ON sensitive_terms(enabled)")
-            .execute(&self.pool)
-            .await?;
-        
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sensitive_terms_category ON sensitive_terms(category)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sensitive_terms_enabled ON sensitive_terms(enabled)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // FileBay 配置表
         sqlx::query(
             r#"
@@ -223,15 +232,14 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     // === 日志操作 ===
-    
+
     /// 添加日志条目
     pub async fn add_log(&self, entry: &LogEntry) -> Result<()> {
-
         let result = sqlx::query(
             r#"
             INSERT INTO logs (id, timestamp, level, message, details, file_path, operation_type, user_id)
@@ -248,23 +256,23 @@ impl Database {
         .bind(&entry.user_id)
         .execute(&self.pool)
         .await;
-        
-        match result {
-            Ok(result) => {
-                Ok(())
-            },
-            Err(e) => {
 
-                Err(e.into())
-            }
+        match result {
+            Ok(result) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
-    
+
     /// 获取日志列表
-    pub async fn get_logs(&self, limit: Option<i32>, offset: Option<i32>, level_filter: Option<&str>) -> Result<Vec<LogEntry>> {
+    pub async fn get_logs(
+        &self,
+        limit: Option<i32>,
+        offset: Option<i32>,
+        level_filter: Option<&str>,
+    ) -> Result<Vec<LogEntry>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
-        
+
         let query = if let Some(level) = level_filter {
             sqlx::query(
                 r#"
@@ -290,9 +298,9 @@ impl Database {
             .bind(limit)
             .bind(offset)
         };
-        
+
         let rows = query.fetch_all(&self.pool).await?;
-        
+
         let mut logs = Vec::new();
         for row in rows {
             logs.push(LogEntry {
@@ -306,10 +314,10 @@ impl Database {
                 user_id: row.get("user_id"),
             });
         }
-        
+
         Ok(logs)
     }
-    
+
     /// 获取日志数量
     pub async fn get_logs_count(&self, level_filter: Option<&str>) -> Result<i64> {
         let count: i64 = if let Some(level) = level_filter {
@@ -322,30 +330,30 @@ impl Database {
                 .fetch_one(&self.pool)
                 .await?
         };
-        
+
         Ok(count)
     }
-    
+
     /// 清空日志
     pub async fn clear_logs(&self) -> Result<()> {
         sqlx::query("DELETE FROM logs").execute(&self.pool).await?;
         Ok(())
     }
-    
+
     /// 删除旧日志（保留最近N天）
     pub async fn cleanup_old_logs(&self, days: i32) -> Result<u64> {
         let cutoff = Utc::now() - chrono::Duration::days(days as i64);
-        
+
         let result = sqlx::query("DELETE FROM logs WHERE timestamp < ?")
             .bind(cutoff)
             .execute(&self.pool)
             .await?;
-            
+
         Ok(result.rows_affected())
     }
-    
+
     // === 用户设置操作 ===
-    
+
     /// 保存用户设置
     pub async fn save_setting(&self, key: &str, value: &str) -> Result<()> {
         sqlx::query(
@@ -359,26 +367,26 @@ impl Database {
         .bind(Utc::now())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// 获取用户设置
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let row = sqlx::query("SELECT value FROM user_settings WHERE key = ?")
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
-            
+
         Ok(row.map(|r| r.get("value")))
     }
-    
+
     /// 获取所有用户设置
     pub async fn get_all_settings(&self) -> Result<Vec<UserSetting>> {
         let rows = sqlx::query("SELECT key, value, updated_at FROM user_settings ORDER BY key")
             .fetch_all(&self.pool)
             .await?;
-            
+
         let mut settings = Vec::new();
         for row in rows {
             settings.push(UserSetting {
@@ -387,22 +395,22 @@ impl Database {
                 updated_at: row.get("updated_at"),
             });
         }
-        
+
         Ok(settings)
     }
-    
+
     /// 删除用户设置
     pub async fn delete_setting(&self, key: &str) -> Result<()> {
         sqlx::query("DELETE FROM user_settings WHERE key = ?")
             .bind(key)
             .execute(&self.pool)
             .await?;
-            
+
         Ok(())
     }
-    
+
     // === 处理历史操作 ===
-    
+
     /// 添加处理历史记录
     pub async fn add_processing_history(&self, history: &ProcessingHistory) -> Result<()> {
         sqlx::query(
@@ -424,15 +432,19 @@ impl Database {
         .bind(&history.created_at)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// 获取处理历史
-    pub async fn get_processing_history(&self, limit: Option<i32>, offset: Option<i32>) -> Result<Vec<ProcessingHistory>> {
+    pub async fn get_processing_history(
+        &self,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<Vec<ProcessingHistory>> {
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
-        
+
         let rows = sqlx::query(
             r#"
             SELECT id, file_path, output_path, rule_ids, file_size, masked_count, 
@@ -446,7 +458,7 @@ impl Database {
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut history = Vec::new();
         for row in rows {
             history.push(ProcessingHistory {
@@ -462,12 +474,15 @@ impl Database {
                 created_at: row.get("created_at"),
             });
         }
-        
+
         Ok(history)
     }
 
     /// Resolve one processing record for the FileBay upload boundary.
-    pub async fn get_processing_history_by_id(&self, id: &str) -> Result<Option<ProcessingHistory>> {
+    pub async fn get_processing_history_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<ProcessingHistory>> {
         let row = sqlx::query(
             r#"SELECT id, file_path, output_path, rule_ids, file_size, masked_count,
                       processing_time_ms, status, error_message, created_at
@@ -490,36 +505,38 @@ impl Database {
             created_at: row.get("created_at"),
         }))
     }
-    
+
     /// 获取统计信息
     pub async fn get_statistics(&self) -> Result<serde_json::Value> {
         // 总处理文件数
         let total_files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM processing_history")
             .fetch_one(&self.pool)
             .await?;
-            
+
         // 成功处理文件数
-        let successful_files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM processing_history WHERE status = 'success'")
-            .fetch_one(&self.pool)
-            .await?;
-            
+        let successful_files: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM processing_history WHERE status = 'success'")
+                .fetch_one(&self.pool)
+                .await?;
+
         // 总脱敏数量
         let total_masked: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(masked_count), 0) FROM processing_history WHERE status = 'success'")
             .fetch_one(&self.pool)
             .await?;
-            
+
         // 总处理时间
         let total_time: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(processing_time_ms), 0) FROM processing_history WHERE status = 'success'")
             .fetch_one(&self.pool)
             .await?;
-            
+
         // 最近7天的处理数量
         let recent_cutoff = Utc::now() - chrono::Duration::days(7);
-        let recent_files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM processing_history WHERE created_at > ?")
-            .bind(recent_cutoff)
-            .fetch_one(&self.pool)
-            .await?;
-        
+        let recent_files: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM processing_history WHERE created_at > ?")
+                .bind(recent_cutoff)
+                .fetch_one(&self.pool)
+                .await?;
+
         Ok(serde_json::json!({
             "totalFiles": total_files,
             "successfulFiles": successful_files,
@@ -530,9 +547,9 @@ impl Database {
             "successRate": if total_files > 0 { successful_files as f64 / total_files as f64 * 100.0 } else { 0.0 }
         }))
     }
-    
+
     // === 敏感词库操作 ===
-    
+
     /// 添加敏感词
     pub async fn add_sensitive_term(&self, term: &SensitiveTerm) -> Result<()> {
         sqlx::query(
@@ -550,14 +567,14 @@ impl Database {
         .bind(&term.updated_at)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// 批量添加敏感词
     pub async fn add_sensitive_terms_batch(&self, terms: &[SensitiveTerm]) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        
+
         for term in terms {
             sqlx::query(
                 r#"
@@ -575,13 +592,20 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         }
-        
+
         tx.commit().await?;
         Ok(())
     }
-    
+
     /// 更新敏感词
-    pub async fn update_sensitive_term(&self, id: &str, term: &str, category: &str, description: Option<&str>, enabled: bool) -> Result<()> {
+    pub async fn update_sensitive_term(
+        &self,
+        id: &str,
+        term: &str,
+        category: &str,
+        description: Option<&str>,
+        enabled: bool,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE sensitive_terms 
@@ -597,103 +621,99 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// 删除敏感词
     pub async fn delete_sensitive_term(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM sensitive_terms WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
-            
+
         Ok(())
     }
-    
+
     /// 批量删除敏感词
     pub async fn delete_sensitive_terms_batch(&self, ids: &[String]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-        
+
         let mut tx = self.pool.begin().await?;
-        
+
         for id in ids {
             sqlx::query("DELETE FROM sensitive_terms WHERE id = ?")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
         }
-        
+
         tx.commit().await?;
         Ok(())
     }
-    
+
     /// 获取所有敏感词
-    pub async fn get_sensitive_terms(&self, category_filter: Option<&str>, enabled_only: bool) -> Result<Vec<SensitiveTerm>> {
+    pub async fn get_sensitive_terms(
+        &self,
+        category_filter: Option<&str>,
+        enabled_only: bool,
+    ) -> Result<Vec<SensitiveTerm>> {
         let query = match (category_filter, enabled_only) {
-            (Some(category), true) => {
-                sqlx::query_as::<_, SensitiveTerm>(
-                    r#"
+            (Some(category), true) => sqlx::query_as::<_, SensitiveTerm>(
+                r#"
                     SELECT id, term, category, description, enabled, created_at, updated_at
                     FROM sensitive_terms 
                     WHERE category = ? AND enabled = 1
                     ORDER BY category, term
                     "#,
-                )
-                .bind(category)
-            },
-            (Some(category), false) => {
-                sqlx::query_as::<_, SensitiveTerm>(
-                    r#"
+            )
+            .bind(category),
+            (Some(category), false) => sqlx::query_as::<_, SensitiveTerm>(
+                r#"
                     SELECT id, term, category, description, enabled, created_at, updated_at
                     FROM sensitive_terms 
                     WHERE category = ?
                     ORDER BY category, term
                     "#,
-                )
-                .bind(category)
-            },
-            (None, true) => {
-                sqlx::query_as::<_, SensitiveTerm>(
-                    r#"
+            )
+            .bind(category),
+            (None, true) => sqlx::query_as::<_, SensitiveTerm>(
+                r#"
                     SELECT id, term, category, description, enabled, created_at, updated_at
                     FROM sensitive_terms 
                     WHERE enabled = 1
                     ORDER BY category, term
                     "#,
-                )
-            },
-            (None, false) => {
-                sqlx::query_as::<_, SensitiveTerm>(
-                    r#"
+            ),
+            (None, false) => sqlx::query_as::<_, SensitiveTerm>(
+                r#"
                     SELECT id, term, category, description, enabled, created_at, updated_at
                     FROM sensitive_terms 
                     ORDER BY category, term
                     "#,
-                )
-            },
+            ),
         };
-        
+
         let terms = query.fetch_all(&self.pool).await?;
         Ok(terms)
     }
-    
+
     /// 获取敏感词分类列表
     pub async fn get_sensitive_term_categories(&self) -> Result<Vec<String>> {
         let rows = sqlx::query("SELECT DISTINCT category FROM sensitive_terms ORDER BY category")
             .fetch_all(&self.pool)
             .await?;
-            
+
         let categories: Vec<String> = rows.iter().map(|row| row.get("category")).collect();
         Ok(categories)
     }
-    
+
     /// 搜索敏感词
     pub async fn search_sensitive_terms(&self, keyword: &str) -> Result<Vec<SensitiveTerm>> {
         let search_pattern = format!("%{}%", keyword);
-        
+
         let terms = sqlx::query_as::<_, SensitiveTerm>(
             r#"
             SELECT id, term, category, description, enabled, created_at, updated_at
@@ -706,24 +726,25 @@ impl Database {
         .bind(&search_pattern)
         .fetch_all(&self.pool)
         .await?;
-        
+
         Ok(terms)
     }
-    
+
     /// 获取敏感词统计
     pub async fn get_sensitive_terms_stats(&self) -> Result<serde_json::Value> {
-
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms")
             .fetch_one(&self.pool)
             .await?;
 
-        let enabled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms WHERE enabled = 1")
-            .fetch_one(&self.pool)
-            .await?;
+        let enabled: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sensitive_terms WHERE enabled = 1")
+                .fetch_one(&self.pool)
+                .await?;
 
-        let categories: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT category) FROM sensitive_terms")
-            .fetch_one(&self.pool)
-            .await?;
+        let categories: i64 =
+            sqlx::query_scalar("SELECT COUNT(DISTINCT category) FROM sensitive_terms")
+                .fetch_one(&self.pool)
+                .await?;
 
         let result = serde_json::json!({
             "total": total,
@@ -734,9 +755,9 @@ impl Database {
 
         Ok(result)
     }
-    
+
     // === FileBay 配置操作 ===
-    
+
     /// 获取 FileBay 配置
     pub async fn get_filebay_config(&self) -> Result<Option<FileBayConfig>> {
         let config = sqlx::query_as::<_, FileBayConfig>(
@@ -748,10 +769,10 @@ impl Database {
         )
         .fetch_optional(&self.pool)
         .await?;
-        
+
         Ok(config)
     }
-    
+
     /// 保存或更新 FileBay 配置
     pub async fn save_filebay_config(
         &self,
@@ -761,11 +782,6 @@ impl Database {
         repo: &str,
         enabled: bool,
     ) -> Result<()> {
-
-
-
-
-
         // 使用 UPSERT (INSERT OR REPLACE)
         sqlx::query(
             r#"
@@ -796,11 +812,10 @@ impl Database {
     /// Read a legacy token only for the one-time migration path.  Callers
     /// must immediately move it to the OS credential store and clear it.
     pub async fn get_legacy_filebay_token(&self) -> Result<Option<String>> {
-        let token: Option<String> = sqlx::query_scalar(
-            "SELECT token FROM filebay_config WHERE id = 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let token: Option<String> =
+            sqlx::query_scalar("SELECT token FROM filebay_config WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(token.filter(|value| !value.trim().is_empty()))
     }
 
@@ -810,7 +825,7 @@ impl Database {
             .await?;
         Ok(())
     }
-    
+
     /// 更新 FileBay 启用状态
     pub async fn update_filebay_enabled(&self, enabled: bool) -> Result<()> {
         sqlx::query(
@@ -823,16 +838,16 @@ impl Database {
         .bind(enabled)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// 删除 FileBay 配置
     pub async fn delete_filebay_config(&self) -> Result<()> {
         sqlx::query("DELETE FROM filebay_config WHERE id = 1")
             .execute(&self.pool)
             .await?;
-        
+
         Ok(())
     }
 }
@@ -842,12 +857,12 @@ pub fn get_database_path() -> Result<PathBuf> {
     // 将数据库放在系统临时目录中，避免触发 Tauri 开发模式的文件监控
     let temp_dir = std::env::temp_dir();
     let db_path = temp_dir.join("cheersai-vault").join("cheersai-vault.db");
-    
+
     // 确保目录存在
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     Ok(db_path)
 }
 
@@ -856,24 +871,26 @@ fn get_cross_platform_app_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         dirs_next::data_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())))
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string()))
+            })
             .join("CheersAI-Vault")
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         dirs_next::data_dir()
             .unwrap_or_else(|| PathBuf::from("~/Library/Application Support"))
             .join("CheersAI-Vault")
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         dirs_next::config_dir()
             .unwrap_or_else(|| PathBuf::from("~/.config"))
             .join("CheersAI-Vault")
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         PathBuf::from("./CheersAI-Vault")
@@ -887,7 +904,6 @@ pub async fn migrate_from_old_database() -> Result<()> {
     if !old_db_path.exists() {
         return Ok(());
     }
-
 
     // 连接到旧数据库
     let old_db_url = format!("sqlite:{}?mode=ro", old_db_path.display());
@@ -907,9 +923,7 @@ pub async fn migrate_from_old_database() -> Result<()> {
     .await?;
 
     for log in logs {
-        if let Err(e) = new_db.add_log(&log).await {
-
-        }
+        if let Err(e) = new_db.add_log(&log).await {}
     }
 
     // 迁移处理历史数据
@@ -920,22 +934,17 @@ pub async fn migrate_from_old_database() -> Result<()> {
     .await?;
 
     for history in histories {
-        if let Err(e) = new_db.add_processing_history(&history).await {
-
-        }
+        if let Err(e) = new_db.add_processing_history(&history).await {}
     }
 
     // 迁移用户设置数据
-    let settings = sqlx::query_as::<_, UserSetting>(
-        "SELECT key, value, updated_at FROM user_settings"
-    )
-    .fetch_all(&old_pool)
-    .await?;
+    let settings =
+        sqlx::query_as::<_, UserSetting>("SELECT key, value, updated_at FROM user_settings")
+            .fetch_all(&old_pool)
+            .await?;
 
     for setting in settings {
-        if let Err(e) = new_db.save_setting(&setting.key, &setting.value).await {
-
-        }
+        if let Err(e) = new_db.save_setting(&setting.key, &setting.value).await {}
     }
 
     old_pool.close().await;
@@ -943,7 +952,6 @@ pub async fn migrate_from_old_database() -> Result<()> {
     // 备份旧数据库文件
     let backup_path = old_db_path.with_extension("db.backup");
     if let Err(e) = std::fs::rename(&old_db_path, &backup_path) {
-
     } else {
     }
 

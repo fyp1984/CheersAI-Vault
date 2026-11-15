@@ -32,7 +32,6 @@ const MAX_PPTX_UNCOMPRESSED_BYTES: u64 = 1024 * 1024 * 1024;
 const PPTX_SLIDE_RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentFormat {
@@ -74,7 +73,10 @@ pub fn parse_input(bytes: &[u8], format: InputFormat) -> Result<ParsedDocument, 
 
 fn parse_text(bytes: &[u8], input_format: InputFormat) -> Result<ParsedDocument, AppError> {
     if looks_like_binary_document(bytes) {
-        return Err(error("INPUT_CORRUPTED", "Text input has an invalid binary signature"));
+        return Err(error(
+            "INPUT_CORRUPTED",
+            "Text input has an invalid binary signature",
+        ));
     }
     let markdown = std::str::from_utf8(bytes)
         .map_err(|_| error("INPUT_CORRUPTED", "Input is not valid UTF-8 text"))?
@@ -92,7 +94,10 @@ fn parse_csv(bytes: &[u8]) -> Result<ParsedDocument, AppError> {
         return Err(error("INPUT_NO_CONTENT", "CSV input is empty"));
     }
     if bytes.len() > MAX_CSV_BYTES {
-        return Err(error("INPUT_LIMIT_EXCEEDED", "CSV input exceeds the size limit"));
+        return Err(error(
+            "INPUT_LIMIT_EXCEEDED",
+            "CSV input exceeds the size limit",
+        ));
     }
 
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
@@ -149,27 +154,40 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
     };
     let push_row = |row: &mut Vec<Vec<u8>>,
                     rows: &mut Vec<Vec<String>>,
-                    expected_columns: &mut Option<usize>| -> Result<(), AppError> {
+                    expected_columns: &mut Option<usize>|
+     -> Result<(), AppError> {
         if row.is_empty() {
             return Err(error("INPUT_CORRUPTED", "CSV record has no fields"));
         }
         if row.len() > MAX_CSV_COLUMNS {
-            return Err(error("INPUT_LIMIT_EXCEEDED", "CSV column count exceeds the limit"));
+            return Err(error(
+                "INPUT_LIMIT_EXCEEDED",
+                "CSV column count exceeds the limit",
+            ));
         }
         if let Some(expected) = *expected_columns {
             if row.len() != expected {
-                return Err(error("INPUT_CORRUPTED", "CSV records have inconsistent column counts"));
+                return Err(error(
+                    "INPUT_CORRUPTED",
+                    "CSV records have inconsistent column counts",
+                ));
             }
         } else {
             *expected_columns = Some(row.len());
         }
         let converted = row
             .drain(..)
-            .map(|value| String::from_utf8(value).map_err(|_| error("INPUT_CORRUPTED", "CSV field is not valid UTF-8")))
+            .map(|value| {
+                String::from_utf8(value)
+                    .map_err(|_| error("INPUT_CORRUPTED", "CSV field is not valid UTF-8"))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         rows.push(converted);
         if rows.len() > MAX_CSV_RECORDS {
-            return Err(error("INPUT_LIMIT_EXCEEDED", "CSV record count exceeds the limit"));
+            return Err(error(
+                "INPUT_LIMIT_EXCEEDED",
+                "CSV record count exceeds the limit",
+            ));
         }
         Ok(())
     };
@@ -186,7 +204,10 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
                 }
                 b'\r' => {
                     if bytes.get(index + 1) != Some(&b'\n') {
-                        return Err(error("INPUT_CORRUPTED", "CSV contains an invalid line ending"));
+                        return Err(error(
+                            "INPUT_CORRUPTED",
+                            "CSV contains an invalid line ending",
+                        ));
                     }
                     push_field(&mut field, &mut row);
                     push_row(&mut row, &mut rows, &mut expected_columns)?;
@@ -210,7 +231,10 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
                 }
                 b'\r' => {
                     if bytes.get(index + 1) != Some(&b'\n') {
-                        return Err(error("INPUT_CORRUPTED", "CSV contains an invalid line ending"));
+                        return Err(error(
+                            "INPUT_CORRUPTED",
+                            "CSV contains an invalid line ending",
+                        ));
                     }
                     push_field(&mut field, &mut row);
                     push_row(&mut row, &mut rows, &mut expected_columns)?;
@@ -239,18 +263,29 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
                 }
                 b'\r' => {
                     if bytes.get(index + 1) != Some(&b'\n') {
-                        return Err(error("INPUT_CORRUPTED", "CSV contains an invalid line ending"));
+                        return Err(error(
+                            "INPUT_CORRUPTED",
+                            "CSV contains an invalid line ending",
+                        ));
                     }
                     push_field(&mut field, &mut row);
                     push_row(&mut row, &mut rows, &mut expected_columns)?;
                     state = State::FieldStart;
                     index += 1;
                 }
-                _ => return Err(error("INPUT_CORRUPTED", "CSV contains data after a closing quote")),
+                _ => {
+                    return Err(error(
+                        "INPUT_CORRUPTED",
+                        "CSV contains data after a closing quote",
+                    ))
+                }
             },
         }
         if field.len() > MAX_CSV_FIELD_BYTES {
-            return Err(error("INPUT_LIMIT_EXCEEDED", "CSV field exceeds the size limit"));
+            return Err(error(
+                "INPUT_LIMIT_EXCEEDED",
+                "CSV field exceeds the size limit",
+            ));
         }
         index += 1;
     }
@@ -258,7 +293,13 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
     match state {
         State::Quoted => return Err(error("INPUT_CORRUPTED", "CSV contains an unclosed quote")),
         State::AfterQuote | State::Unquoted | State::FieldStart => {
-            if !field.is_empty() || !row.is_empty() || state == State::FieldStart && index > 0 && bytes.last() != Some(&b'\n') && bytes.last() != Some(&b'\r') {
+            if !field.is_empty()
+                || !row.is_empty()
+                || state == State::FieldStart
+                    && index > 0
+                    && bytes.last() != Some(&b'\n')
+                    && bytes.last() != Some(&b'\r')
+            {
                 push_field(&mut field, &mut row);
                 push_row(&mut row, &mut rows, &mut expected_columns)?;
             }
@@ -272,7 +313,10 @@ fn parse_csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, AppError> {
 }
 
 fn render_csv_row(row: &[String]) -> String {
-    let cells = row.iter().map(|value| escape_markdown_cell(value)).collect::<Vec<_>>();
+    let cells = row
+        .iter()
+        .map(|value| escape_markdown_cell(value))
+        .collect::<Vec<_>>();
     format!("| {} |", cells.join(" | "))
 }
 
@@ -330,7 +374,10 @@ fn parse_excel_inner(bytes: &[u8]) -> Result<ParsedDocument, AppError> {
                         "INPUT_ENCRYPTED",
                         "Encrypted Excel files are not supported",
                     )),
-                    Err(_) => Err(error("INPUT_CORRUPTED", "XLS structure or content is invalid")),
+                    Err(_) => Err(error(
+                        "INPUT_CORRUPTED",
+                        "XLS structure or content is invalid",
+                    )),
                 };
             }
         }
@@ -628,9 +675,9 @@ fn parse_powerpoint_inner(bytes: &[u8]) -> Result<ParsedDocument, AppError> {
     let mut has_any_text = false;
     for (index, slide_rid) in slide_ids.iter().enumerate() {
         let slide_number = index + 1;
-        let target = slide_rels.get(slide_rid).ok_or_else(|| {
-            error("INPUT_CORRUPTED", "PPTX slide relationship is missing")
-        })?;
+        let target = slide_rels
+            .get(slide_rid)
+            .ok_or_else(|| error("INPUT_CORRUPTED", "PPTX slide relationship is missing"))?;
         let slide_xml = read_zip_entry_to_string(&mut archive, target)?;
         let slide_text = extract_slide_text(&slide_xml)?;
         if slide_text.len() > MAX_PPTX_TEXT_BLOCK_BYTES {
@@ -658,10 +705,7 @@ fn parse_powerpoint_inner(bytes: &[u8]) -> Result<ParsedDocument, AppError> {
     }
 
     if !has_any_text {
-        return Err(error(
-            "INPUT_NO_CONTENT",
-            "PPTX contains no readable text",
-        ));
+        return Err(error("INPUT_NO_CONTENT", "PPTX contains no readable text"));
     }
 
     let mut warnings = Vec::new();
@@ -700,8 +744,9 @@ fn read_presentation_slide_rels<R: Read + Seek>(
                 let mut rel_type = None;
                 let mut target = None;
                 for attribute in event.attributes() {
-                    let attribute = attribute
-                        .map_err(|_| error("INPUT_CORRUPTED", "PPTX relationship XML is invalid"))?;
+                    let attribute = attribute.map_err(|_| {
+                        error("INPUT_CORRUPTED", "PPTX relationship XML is invalid")
+                    })?;
                     let name = attribute.key.as_ref();
                     if name.eq_ignore_ascii_case(b"Id") {
                         id = Some(String::from_utf8_lossy(&attribute.value).to_string());
@@ -1009,7 +1054,12 @@ fn table_to_markdown(rows: &[Vec<String>]) -> String {
     let columns = rows.iter().map(Vec::len).max().unwrap_or(1);
     let render = |row: &[String]| {
         let cells = (0..columns)
-            .map(|index| row.get(index).map(String::as_str).unwrap_or("").replace('|', "\\|"))
+            .map(|index| {
+                row.get(index)
+                    .map(String::as_str)
+                    .unwrap_or("")
+                    .replace('|', "\\|")
+            })
             .collect::<Vec<_>>();
         format!("| {} |", cells.join(" | "))
     };
@@ -1092,7 +1142,10 @@ fn parse_pdf(bytes: &[u8]) -> Result<ParsedDocument, AppError> {
         }
         let pages = extract_pdf_text_by_pages(bytes)?;
         if pages.iter().all(|page| page.trim().is_empty()) {
-            return Err(error("OCR_COMPONENT_REQUIRED", "PDF has no readable text layer"));
+            return Err(error(
+                "OCR_COMPONENT_REQUIRED",
+                "PDF has no readable text layer",
+            ));
         }
         let markdown = pages
             .iter()
@@ -1136,7 +1189,10 @@ mod tests {
         for (filename, logical_format, enterprise_supported) in cases {
             let definition = FormatCatalog::from_filename(filename).unwrap();
             assert_eq!(definition.logical_format, logical_format, "{filename}");
-            assert_eq!(definition.enterprise_supported, enterprise_supported, "{filename}");
+            assert_eq!(
+                definition.enterprise_supported, enterprise_supported,
+                "{filename}"
+            );
         }
         assert!(FormatCatalog::from_filename("fixture.json").is_none());
         assert!(FormatCatalog::from_filename(".txt").is_none());
@@ -1186,8 +1242,12 @@ mod tests {
 
     #[test]
     fn csv_parser_escapes_markdown_structure_without_parsing_or_masking_values() {
-        let parsed = parse_input(br#"a|b,c\d,e`f
-1|2,3\4,5`6"#, InputFormat::Csv).unwrap();
+        let parsed = parse_input(
+            br#"a|b,c\d,e`f
+1|2,3\4,5`6"#,
+            InputFormat::Csv,
+        )
+        .unwrap();
         assert_eq!(
             parsed.markdown,
             r#"| Column 1 | Column 2 | Column 3 |
@@ -1353,7 +1413,9 @@ mod tests {
         let bytes = writer.finish().unwrap().into_inner();
         let parsed = parse_document(&bytes, DocumentFormat::Docx).unwrap();
         assert!(parsed.markdown.contains("Phone 13900000000"));
-        assert!(parsed.markdown.contains("| Email | fixture@example.invalid |"));
+        assert!(parsed
+            .markdown
+            .contains("| Email | fixture@example.invalid |"));
     }
 
     #[test]
@@ -1594,7 +1656,11 @@ mod tests {
     fn pdf_type0_unembedded_cid_font_chinese_extracts_text() {
         let parsed = parse_document(&pdf_type0_unembedded_unigb_chinese(), DocumentFormat::Pdf)
             .expect("Type0/unembedded/UniGB-UTF16-H PDF must not be reported as corrupted");
-        assert!(parsed.markdown.contains("13988889999"), "{}", parsed.markdown);
+        assert!(
+            parsed.markdown.contains("13988889999"),
+            "{}",
+            parsed.markdown
+        );
         assert!(parsed.markdown.contains("田十三"), "{}", parsed.markdown);
     }
 
@@ -1602,7 +1668,11 @@ mod tests {
     fn pdf_type0_embedded_identity_h_chinese_extracts_text() {
         let parsed = parse_document(&pdf_type0_embedded_identityh_chinese(), DocumentFormat::Pdf)
             .expect("Type0/embedded/Identity-H (Chinese) PDF must not be reported as corrupted");
-        assert!(parsed.markdown.contains("13988889999"), "{}", parsed.markdown);
+        assert!(
+            parsed.markdown.contains("13988889999"),
+            "{}",
+            parsed.markdown
+        );
         assert!(parsed.markdown.contains("田十三"), "{}", parsed.markdown);
     }
 
@@ -1610,14 +1680,22 @@ mod tests {
     fn pdf_type0_embedded_identity_h_ascii_extracts_text() {
         let parsed = parse_document(&pdf_type0_embedded_identityh_ascii(), DocumentFormat::Pdf)
             .expect("Type0/embedded/Identity-H (ASCII body) PDF must not be reported as corrupted");
-        assert!(parsed.markdown.contains("13988889999"), "{}", parsed.markdown);
+        assert!(
+            parsed.markdown.contains("13988889999"),
+            "{}",
+            parsed.markdown
+        );
     }
 
     #[test]
     fn pdf_simple_truetype_chinese_still_extracts_text() {
         let parsed = parse_document(&pdf_simple_truetype_chinese(), DocumentFormat::Pdf)
             .expect("simple TrueType/Type1 PDF must keep working");
-        assert!(parsed.markdown.contains("13988889999"), "{}", parsed.markdown);
+        assert!(
+            parsed.markdown.contains("13988889999"),
+            "{}",
+            parsed.markdown
+        );
         assert!(parsed.markdown.contains("田十三"), "{}", parsed.markdown);
     }
 
@@ -1667,8 +1745,12 @@ mod tests {
         let parsed = parse_input(&scrambled_pptx(), InputFormat::Powerpoint).unwrap();
         assert_eq!(parsed.page_count, Some(4));
         let markdown = parsed.markdown;
-        let hidden_pos = markdown.find("Hidden slide content").expect("slide 4 content first");
-        let title_pos = markdown.find("项目启动会议").expect("slide 1 content second");
+        let hidden_pos = markdown
+            .find("Hidden slide content")
+            .expect("slide 4 content first");
+        let title_pos = markdown
+            .find("项目启动会议")
+            .expect("slide 1 content second");
         let agenda_pos = markdown.find("议程安排").expect("slide 3 content last");
         assert!(
             hidden_pos < title_pos && title_pos < agenda_pos,
@@ -1703,10 +1785,7 @@ mod tests {
         ] {
             let error = parse_input(bytes, InputFormat::Powerpoint).unwrap_err();
             assert!(
-                matches!(
-                    error.code.as_str(),
-                    "INPUT_CORRUPTED" | "INPUT_ENCRYPTED"
-                ),
+                matches!(error.code.as_str(), "INPUT_CORRUPTED" | "INPUT_ENCRYPTED"),
                 "unexpected code {} for {:?}",
                 error.code,
                 bytes
@@ -1738,11 +1817,15 @@ mod tests {
         let options = zip::write::FileOptions::default();
         writer.start_file("[Content_Types].xml", options).unwrap();
         writer.write_all(b"<Types/>").unwrap();
-        writer.start_file("ppt/_rels/presentation.xml.rels", options).unwrap();
+        writer
+            .start_file("ppt/_rels/presentation.xml.rels", options)
+            .unwrap();
         writer.write_all(b"<Relationships/>").unwrap();
         writer.start_file("ppt/presentation.xml", options).unwrap();
         writer
-            .write_all(b"<p:presentation xmlns:p=\"p\" xmlns:r=\"r\"><p:sldIdLst/></p:presentation>")
+            .write_all(
+                b"<p:presentation xmlns:p=\"p\" xmlns:r=\"r\"><p:sldIdLst/></p:presentation>",
+            )
             .unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         let error = parse_input(&bytes, InputFormat::Powerpoint).unwrap_err();
@@ -1786,7 +1869,9 @@ mod tests {
         let options = zip::write::FileOptions::default();
         writer.start_file("[Content_Types].xml", options).unwrap();
         writer.write_all(b"<Types/>").unwrap();
-        writer.start_file("ppt/_rels/presentation.xml.rels", options).unwrap();
+        writer
+            .start_file("ppt/_rels/presentation.xml.rels", options)
+            .unwrap();
         writer.write_all(b"<Relationships/>").unwrap();
         writer.start_file("ppt/presentation.xml", options).unwrap();
         let mut ids = String::new();

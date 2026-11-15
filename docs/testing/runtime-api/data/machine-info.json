@@ -1,0 +1,14 @@
+{
+  "system": "Darwin",
+  "release": "25.6.0",
+  "machine": "arm64",
+  "model": "Mac14,2",
+  "chip": "Apple M2",
+  "logical_cpu": 8,
+  "physical_memory_bytes": 17179869184,
+  "disk_total_bytes": 494384795648,
+  "disk_free_bytes_at_start": 172954263552,
+  "runtime_binary_sha256": "4598762941a761f54216dd477f72ce30eec24a3ebd4f54eeb5847a4b3f220909",
+  "runtime_binary_size": 91597200,
+  "python": "3.13.3"
+}

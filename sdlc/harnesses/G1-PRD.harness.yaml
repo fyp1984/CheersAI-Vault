@@ -1,0 +1,64 @@
+# G1-PRD Harness 驱动定义（Harness Engineering 完整工装 ≠ G1-PRD.spec.yaml 阈值 spec）
+harness_id: G1-PRD
+harness_version: v2.0
+related_he_principles: [HE-1, HE-2, HE-3, HE-4, HE-5]
+
+# --- HE-1 显式分层：本 Harness 的作用域 ---
+scope:
+  phase: requirement-analysis
+  actor: RA (需求分析)
+  input_artifact: "sdlc/docs/PRD-<TICKET>.md"
+  output_signals: [prd_completeness_pct, prd_compliance_pct, prd_sha256, prd_has_pii, prd_has_masking]
+  forbidden_upstream_bypass: [TD, CD, QA, RO]   # 其他 4 角色不得绕过本 Harness
+
+# --- HE-2 确定性可复现：命令行 + 环境变量固定 ---
+deterministic:
+  command_template: "python3 {{sdlc_root}}/bin/gate-prd.py --prd {{prd_path}} --ticket {{ticket}} --actor {{actor_email}}"
+  required_env: [SDLC_SESSION_ID]
+  idempotent: true        # 同一输入多次执行 → 同一 exit_code + 同一 evidence 数值
+  allow_impure_env: false # 禁止读取除 SDLC_SESSION_ID 外的业务侧环境变量
+
+# --- HE-3 观测优先：结构化观测点（写入 audit chain JSONL 9 字段） ---
+observability:
+  trace_9_fields_required: [ticket, gate, ts_unix, actor_email, role, artifact_sha256, exit_code, evidence, prev_hash]
+  mandatory_metrics:
+    - name: prd_completeness_pct
+      spec: "6 大必填章节是否齐全；100 = 全齐"
+      allowed_range: [0, 100]
+    - name: prd_compliance_pct
+      spec: "若包含 PII，是否逐字段标注脱敏/加密；100 = 合规"
+      allowed_range: [0, 100]
+    - name: prd_sha256
+      spec: "sha256(PRD 文件内容)"
+      format: "[0-9a-f]{64}"
+  alert_on_evidence_anomaly: true
+
+# --- HE-4 零信任过站：退出码映射 & 阻断条件 ---
+zerotrust_gate:
+  exit_code_map:
+    0: PASS              # 准入，输出 BASE-PRD 锚点
+    1: PRD_FILE_MISSING  # 阻断，需 RA 补 PRD
+    3: COMPLIANCE_OR_COMPLETENESS_FAIL  # 阻断，需 RA 补章节
+  immediate_terminate_on_nonzero: true   # 下一阶段不允许启动
+
+# --- HE-5 Harness-as-Code：本 Harness 自身 hash 入 verify-harness-integrity 白名单 ---
+hac:
+  file_globs_included_in_manifest:
+    - "sdlc/harnesses/G1-PRD.harness.yaml"
+    - "sdlc/gates/G1-PRD.spec.yaml"
+    - "sdlc/bin/gate-prd.py"
+    - "sdlc/templates/PRD-TEMPLATE.md"
+  change_require_approvals: [TD, RO]   # 改阈值/脚本必须 TD+RO 双签
+
+# --- HE-6 反馈驱动回归：本 Harness 历史 FAIL 条目自动反哺 ---
+regression_registry:
+  auto_ingest_fail_evidence_to: "sdlc/audit/{date}/regression-harness-registry.jsonl"
+  minimum_regression_samples_before_tuning: 3
+  tuning_policy:
+    - trigger: 连续 3 次 FAIL 同一条证据
+      action: 在 PRD-TEMPLATE 顶部追加显性警告 + 在 gate-prd.py 增加 blacklist check
+
+# --- HE-7 Harness 覆盖率计算 ---
+coverage:
+  min_triggers_per_sprint: 1     # 每个 Sprint 至少 1 次触发
+  weight_in_overall_coverage: 0.2

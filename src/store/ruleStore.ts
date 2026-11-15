@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { MaskRule } from "@/types/rules";
 
 const DEFAULT_RULES: MaskRule[] = [
-  { id: "id_card", name: "身份证号", pattern: "", replacement: "***IDCARD***", replacement_template: "***IDCARD***", use_counter: true, enabled: true, builtin: true, description: "匹配18位中国居民身份证号" },
+  { id: "id_card", name: "身份证号", pattern: "", replacement: "***IDCARD***", replacement_template: "***IDCARD***", use_counter: true, enabled: true, builtin: true, description: "匹配15位或18位中国居民身份证号" },
   { id: "phone", name: "手机号", pattern: "", replacement: "***PHONE***", replacement_template: "***PHONE***", use_counter: true, enabled: true, builtin: true, description: "匹配1开头的11位手机号" },
   { id: "email", name: "电子邮箱", pattern: "", replacement: "***EMAIL***", replacement_template: "***EMAIL***", use_counter: true, enabled: true, builtin: true, description: "匹配标准电子邮件地址" },
   { id: "bank_card", name: "银行卡号", pattern: "", replacement: "***BANKCARD***", replacement_template: "***BANKCARD***", use_counter: true, enabled: true, builtin: true, description: "匹配16-19位银行卡号" },

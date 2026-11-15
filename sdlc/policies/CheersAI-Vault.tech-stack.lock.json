@@ -1,0 +1,14 @@
+{
+  "repo": "CheersAI-Vault",
+  "lock_version": "v1.0",
+  "languages_primary": ["typescript", "rust", "css"],
+  "frontend_framework_allowed": ["react-18", "vite-5", "tailwindcss-3"],
+  "ui_lib_allowed": ["@radix-ui", "shadcn/ui", "lucide-react", "clsx", "tailwind-merge"],
+  "runtime_allowed": ["rust-1.80+", "tauri-2"],
+  "state_allowed": ["zustand", "pinia-not-allowed"],
+  "test_allowed": ["vitest", "playwright", "@testing-library/react"],
+  "http_client_allowed": ["axios", "fetch"],
+  "forbidden_frameworks": ["vue", "angular", "nextjs", "nuxt", "svelte", "nestjs"],
+  "forbidden_languages": ["java", "go", "python-as-frontend"],
+  "notes": "CheersAI-Vault 是 Tauri 桌面 + Browser 双宿主产品，前端固定 React+Vite，后端 Runtime 走 Rust。"
+}

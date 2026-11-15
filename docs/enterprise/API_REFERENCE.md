@@ -2,8 +2,7 @@
 
 > **适用范围**：本文档仅描述 Linux 内网客户测试部署中 `vault-runtime-api`
 > 对外提供的 **四项** HTTP API：批量提交、进度轮询（含失败信息）、结果下载、
-> 健康检查。这是老师针对本次客户测试明确圈定的首版范围（见
-> `.codex-local/规则/决策说明.md`），不是 Runtime 全部已实现的接口。
+> 健康检查。这是本次客户测试明确圈定的首版范围，不是 Runtime 全部已实现的接口。
 >
 > Runtime 实际还实现了 `GET /api/v1/batches`（列表）、
 > `POST /api/v1/files/{file_id}/retry`（重试）、
@@ -27,7 +26,7 @@
 - 错误响应经过消毒：不包含脱敏前原文、SQL、服务器文件路径、堆栈或内部命令
   （见 §5）。
 - 不提供 `.cmap`（映射文件）下载接口；`GET /api/v1/artifacts/{artifact_id}`
-  只返回脱敏后的 Markdown。
+  只返回脱敏后的 Markdown，且下载文件名会沿用已脱敏的展示名。
 
 ## 1. 基础信息
 
@@ -55,7 +54,12 @@ Runtime 端口默认 `8787`，只监听 `127.0.0.1`；客户内网系统**必须
 | `rule_ids` | 否 | JSON 字符串数组（如 `["id_card","phone","email"]`），也接受逗号分隔字符串作为兼容格式；至少一个受支持规则 ID |
 
 支持的 `rule_ids` 值：`id_card`、`phone`、`email`、`bank_card`、`ipv4`、
-`passport`、`use_sensitive_terms`（启用已配置的敏感词库，无需逐词列出）。
+`passport`、`chinese_name`、`use_sensitive_terms`（启用已配置的敏感词库，无需逐词列出）。
+
+说明：
+
+- `filename` 不仅用于安全展示名生成；当文件名中命中启用的脱敏规则时，Runtime 会在入库前同步对文件名做脱敏处理。
+- 因此后续 `batch/files[].display_name`、预览文件名、下载文件名都会使用脱敏后的展示名，而不是原始上传文件名。
 
 ```bash
 curl -sS -X POST "http://<Nginx地址>/api/v1/batches" \
@@ -183,7 +187,7 @@ curl -sS -o masked-report.md \
 
 ```
 Content-Type: text/markdown; charset=utf-8
-Content-Disposition: attachment; filename="masked-a1....md"
+Content-Disposition: attachment; filename="姓名1-PHONE2_脱敏.md"
 ```
 
 响应体是脱敏后的 Markdown 纯文本。
@@ -574,6 +578,11 @@ CSV 约束：
 `artifact_id` 和处理状态，不承担权限决策。
 
 ## 12. 联调测试方法与环境要求
+
+> 本仓库已归档一轮 Runtime API 功能（17 项断言）与本机并发性能（9 组矩阵）
+> 验收资料（测试方案、报告与安全化数据），见
+> [`../testing/runtime-api/README.md`](../testing/runtime-api/README.md)；
+> 其为本机 loopback 观察值，不代表生产环境结论。
 
 ### 12.1 联调环境要求
 

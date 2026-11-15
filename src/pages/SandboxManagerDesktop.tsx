@@ -31,6 +31,7 @@ import {
 import { useSandboxStore } from "@/store/sandboxStore";
 import { useFileStore } from "@/store/fileStore";
 import { tauriCommands } from "@/lib/tauri";
+import SettingsPrivacySection from "@/components/settings/SettingsPrivacySection";
 import { getDisplayPath, validatePath, getDefaultDocumentsPath } from "@/lib/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { PlatformContext } from "@/types/commands";
@@ -122,13 +123,6 @@ export default function SandboxManagerDesktop() {
   // 初始化：如果不记住口令，清空已保存的口令
   useEffect(() => {
     console.log("=== SandboxManager 初始化 ===");
-    console.log("Passphrase loaded:", passphrase ? `"${passphrase}"` : "(空)");
-    console.log("Remember passphrase:", rememberPassphrase);
-    console.log("Passphrase length:", passphrase.length);
-
-    // 检查 localStorage
-    const stored = localStorage.getItem("file-store");
-    console.log("LocalStorage file-store:", stored ? JSON.parse(stored) : "(无)");
 
     if (!rememberPassphrase && passphrase) {
       console.log("Clearing passphrase because rememberPassphrase is false");
@@ -525,6 +519,12 @@ export default function SandboxManagerDesktop() {
               </div>
             </CardContent>
           </Card>
+
+          <Separator className="my-6" />
+          <div>
+            <Label className="text-sm font-semibold">隐私与 Excel 自动脱敏设置</Label>
+            <div className="mt-2"><SettingsPrivacySection /></div>
+          </div>
 
         </div>
       </div>

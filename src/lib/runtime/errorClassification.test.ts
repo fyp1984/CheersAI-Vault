@@ -13,14 +13,20 @@ function response(body: string | null, status: number, contentType?: string): Re
   });
 }
 
-test("413 non-JSON is HTTP status-only", async () => {
+test("413 non-JSON maps to the fixed safe PAYLOAD_TOO_LARGE contract", async () => {
   const result = await classifyRuntimeHttpResponse(
     response("<html>fake upstream body</html>", 413, "text/html")
   );
-  assert.deepEqual(result, { ok: false, reason: "http", status: 413 });
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "http",
+    status: 413,
+    code: "PAYLOAD_TOO_LARGE",
+    message: "上传文件大小超过限制，请拆分或压缩后重试。",
+  });
 });
 
-test("502 HTML never exposes token, path, or stack text", async () => {
+test("502 HTML maps to BAD_GATEWAY without leaking token, path, or stack text", async () => {
   const result = await classifyRuntimeHttpResponse(
     response(
       "token=FAKE_TOKEN_ONLY path=/fake/server/private stack=Error: fake\\n at fake.js:1:1",
@@ -29,25 +35,39 @@ test("502 HTML never exposes token, path, or stack text", async () => {
     )
   );
   const serialized = JSON.stringify(result);
-  assert.deepEqual(result, { ok: false, reason: "http", status: 502 });
+  assert.deepEqual(result, {
+    ok: false,
+    reason: "http",
+    status: 502,
+    code: "BAD_GATEWAY",
+    message: "本地 Runtime 网关不可达，请确认服务已启动后重试。",
+  });
   assert.equal(serialized.includes("FAKE_TOKEN_ONLY"), false);
   assert.equal(serialized.includes("/fake/server/private"), false);
   assert.equal(serialized.includes("fake.js:1:1"), false);
 });
 
-test("503 plain text and empty body are HTTP status-only", async () => {
+test("503 plain text and empty body map to the fixed SERVICE_UNAVAILABLE contract", async () => {
   assert.deepEqual(
     await classifyRuntimeHttpResponse(response("upstream unavailable", 503, "text/plain")),
-    { ok: false, reason: "http", status: 503 }
+    {
+      ok: false,
+      reason: "http",
+      status: 503,
+      code: "SERVICE_UNAVAILABLE",
+      message: "本地 Runtime 暂不可用，请确认服务已启动后重试。",
+    }
   );
   assert.deepEqual(await classifyRuntimeHttpResponse(response(null, 503)), {
     ok: false,
     reason: "http",
     status: 503,
+    code: "SERVICE_UNAVAILABLE",
+    message: "本地 Runtime 暂不可用，请确认服务已启动后重试。",
   });
 });
 
-test("complete JSON error preserves only the safe contract fields", async () => {
+test("complete JSON error preserves code/retryable and sanitizes English message", async () => {
   assert.deepEqual(
     await classifyRuntimeHttpResponse(
       response(
@@ -56,20 +76,39 @@ test("complete JSON error preserves only the safe contract fields", async () => 
         "application/json"
       )
     ),
-    { ok: false, reason: "http", status: 400, code: "INVALID_QUERY", message: "safe message", retryable: false }
+    {
+      ok: false,
+      reason: "http",
+      status: 400,
+      code: "INVALID_QUERY",
+      message: "请求参数或上传文件无效，请校验后重试。",
+      retryable: false,
+    }
   );
 });
 
-test("invalid JSON and incomplete JSON errors keep only status", async () => {
+test("invalid JSON and incomplete JSON errors map to status-based fallbacks", async () => {
   assert.deepEqual(
     await classifyRuntimeHttpResponse(response("{not-json", 502, "application/json")),
-    { ok: false, reason: "http", status: 502 }
+    {
+      ok: false,
+      reason: "http",
+      status: 502,
+      code: "BAD_GATEWAY",
+      message: "本地 Runtime 网关不可达，请确认服务已启动后重试。",
+    }
   );
   assert.deepEqual(
     await classifyRuntimeHttpResponse(
       response(JSON.stringify({ code: "MISSING_RETRYABLE", message: "not complete" }), 400, "application/json")
     ),
-    { ok: false, reason: "http", status: 400 }
+    {
+      ok: false,
+      reason: "http",
+      status: 400,
+      code: "BAD_REQUEST",
+      message: "请求参数或上传文件无效，请校验后重试。",
+    }
   );
 });
 

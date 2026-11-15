@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use crate::core::database::{Database, LogEntry, ProcessingHistory};
 use chrono::Utc;
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 // 全局数据库实例
 static DATABASE: LazyLock<Mutex<Option<Database>>> = LazyLock::new(|| Mutex::new(None));
@@ -11,18 +11,20 @@ static DATABASE: LazyLock<Mutex<Option<Database>>> = LazyLock::new(|| Mutex::new
 /// 初始化数据库
 async fn get_database() -> Result<Database, String> {
     let mut db_guard = DATABASE.lock().await;
-    
+
     if db_guard.is_none() {
-        let db = Database::new().await.map_err(|e| format!("Failed to initialize database: {}", e))?;
+        let db = Database::new()
+            .await
+            .map_err(|e| format!("Failed to initialize database: {}", e))?;
         *db_guard = Some(db);
     }
-    
+
     // 返回数据库实例的克隆
     match db_guard.as_ref() {
         Some(db) => {
             // 由于 SqlitePool 实现了 Clone，我们可以克隆数据库实例
             Ok(db.clone())
-        },
+        }
         None => Err("Database not initialized".to_string()),
     }
 }
@@ -60,7 +62,7 @@ pub struct ProcessingHistoryRequest {
 #[tauri::command]
 pub async fn add_log_entry(request: LogEntryRequest) -> Result<(), String> {
     let db = get_database().await?;
-    
+
     let entry = LogEntry {
         id: Uuid::new_v4().to_string(),
         timestamp: Utc::now(),
@@ -71,26 +73,26 @@ pub async fn add_log_entry(request: LogEntryRequest) -> Result<(), String> {
         operation_type: request.operation_type,
         user_id: None, // 可以后续添加用户系统
     };
-    
-    db.add_log(&entry).await.map_err(|e| format!("Failed to add log: {}", e))?;
+
+    db.add_log(&entry)
+        .await
+        .map_err(|e| format!("Failed to add log: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_logs(params: LogQueryParams) -> Result<Vec<LogEntry>, String> {
     let db = get_database().await?;
-    
-    db.get_logs(
-        params.limit, 
-        params.offset, 
-        params.level_filter.as_deref()
-    ).await.map_err(|e| format!("Failed to get logs: {}", e))
+
+    db.get_logs(params.limit, params.offset, params.level_filter.as_deref())
+        .await
+        .map_err(|e| format!("Failed to get logs: {}", e))
 }
 
 #[tauri::command]
 pub async fn get_logs_count(level_filter: Option<String>) -> Result<i64, String> {
     let db = get_database().await?;
-    
+
     db.get_logs_count(level_filter.as_deref())
         .await
         .map_err(|e| format!("Failed to count logs: {}", e))
@@ -99,14 +101,18 @@ pub async fn get_logs_count(level_filter: Option<String>) -> Result<i64, String>
 #[tauri::command]
 pub async fn clear_all_logs() -> Result<(), String> {
     let db = get_database().await?;
-    db.clear_logs().await.map_err(|e| format!("Failed to clear logs: {}", e))?;
+    db.clear_logs()
+        .await
+        .map_err(|e| format!("Failed to clear logs: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn cleanup_old_logs(days: i32) -> Result<u64, String> {
     let db = get_database().await?;
-    db.cleanup_old_logs(days).await.map_err(|e| format!("Failed to cleanup logs: {}", e))
+    db.cleanup_old_logs(days)
+        .await
+        .map_err(|e| format!("Failed to cleanup logs: {}", e))
 }
 
 // === 用户设置相关命令 ===
@@ -114,26 +120,34 @@ pub async fn cleanup_old_logs(days: i32) -> Result<u64, String> {
 #[tauri::command]
 pub async fn save_user_setting(key: String, value: String) -> Result<(), String> {
     let db = get_database().await?;
-    db.save_setting(&key, &value).await.map_err(|e| format!("Failed to save setting: {}", e))?;
+    db.save_setting(&key, &value)
+        .await
+        .map_err(|e| format!("Failed to save setting: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_user_setting(key: String) -> Result<Option<String>, String> {
     let db = get_database().await?;
-    db.get_setting(&key).await.map_err(|e| format!("Failed to get setting: {}", e))
+    db.get_setting(&key)
+        .await
+        .map_err(|e| format!("Failed to get setting: {}", e))
 }
 
 #[tauri::command]
 pub async fn get_all_user_settings() -> Result<Vec<crate::core::database::UserSetting>, String> {
     let db = get_database().await?;
-    db.get_all_settings().await.map_err(|e| format!("Failed to get all settings: {}", e))
+    db.get_all_settings()
+        .await
+        .map_err(|e| format!("Failed to get all settings: {}", e))
 }
 
 #[tauri::command]
 pub async fn delete_user_setting(key: String) -> Result<(), String> {
     let db = get_database().await?;
-    db.delete_setting(&key).await.map_err(|e| format!("Failed to delete setting: {}", e))?;
+    db.delete_setting(&key)
+        .await
+        .map_err(|e| format!("Failed to delete setting: {}", e))?;
     Ok(())
 }
 
@@ -142,7 +156,7 @@ pub async fn delete_user_setting(key: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn add_processing_history(request: ProcessingHistoryRequest) -> Result<(), String> {
     let db = get_database().await?;
-    
+
     let history = ProcessingHistory {
         id: Uuid::new_v4().to_string(),
         file_path: request.file_path,
@@ -155,21 +169,30 @@ pub async fn add_processing_history(request: ProcessingHistoryRequest) -> Result
         error_message: request.error_message,
         created_at: Utc::now(),
     };
-    
-    db.add_processing_history(&history).await.map_err(|e| format!("Failed to add processing history: {}", e))?;
+
+    db.add_processing_history(&history)
+        .await
+        .map_err(|e| format!("Failed to add processing history: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_processing_history(limit: Option<i32>, offset: Option<i32>) -> Result<Vec<ProcessingHistory>, String> {
+pub async fn get_processing_history(
+    limit: Option<i32>,
+    offset: Option<i32>,
+) -> Result<Vec<ProcessingHistory>, String> {
     let db = get_database().await?;
-    db.get_processing_history(limit, offset).await.map_err(|e| format!("Failed to get processing history: {}", e))
+    db.get_processing_history(limit, offset)
+        .await
+        .map_err(|e| format!("Failed to get processing history: {}", e))
 }
 
 #[tauri::command]
 pub async fn get_statistics() -> Result<serde_json::Value, String> {
     let db = get_database().await?;
-    db.get_statistics().await.map_err(|e| format!("Failed to get statistics: {}", e))
+    db.get_statistics()
+        .await
+        .map_err(|e| format!("Failed to get statistics: {}", e))
 }
 
 // === 数据库维护命令 ===
@@ -183,23 +206,20 @@ pub async fn initialize_database() -> Result<(), String> {
 #[tauri::command]
 pub async fn get_database_info() -> Result<serde_json::Value, String> {
     let db = get_database().await?;
-    
+
     // 获取数据库路径
     let db_path = crate::core::database::get_database_path()
         .map_err(|e| format!("Failed to get database path: {}", e))?;
-    
+
     // 检查数据库文件是否存在
     let db_exists = db_path.exists();
-    
+
     // 获取各表的记录数
     let log_count = match db.get_logs_count(None).await {
         Ok(count) => count,
-        Err(e) => {
-
-            -1
-        }
+        Err(e) => -1,
     };
-        
+
     Ok(serde_json::json!({
         "status": "connected",
         "database_path": db_path.to_string_lossy(),

@@ -1,0 +1,28 @@
+{
+  "generated_by": "verify-harness-integrity.py",
+  "generated_at": "MANUAL-SEED-BY-AGENT (run `python3 sdlc/bin/verify-harness-integrity.py --regen-hashes` 后，由 TD+RO 双签 PR 覆盖本文件)",
+  "files": {
+    "bin/audit-writer.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/check-sod.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/collect-harness-coverage.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/demo-bootstrap.sh": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/gate-code.sh": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/gate-design.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/gate-prd.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/gate-release.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/gate-test.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/retrospective-feedback.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/verify-harness-integrity.py": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "bin/run-pipeline.sh": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "gates/G1-PRD.spec.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "gates/G2-DESIGN.spec.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "gates/G3-CODE.spec.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "gates/G4-TEST.spec.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "gates/G5-RELEASE.spec.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "harnesses/G1-PRD.harness.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "harnesses/G2-DESIGN.harness.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "harnesses/G3-CODE.harness.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "harnesses/G4-TEST.harness.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF",
+    "harnesses/G5-RELEASE.harness.yaml": "SEED-SHA256-REGEN-AFTER-DOUBLE-SIGN-OFF"
+  }
+}

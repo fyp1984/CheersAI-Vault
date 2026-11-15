@@ -143,7 +143,7 @@ export default function SensitiveTermsBrowser() {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     void loadData();
   }, [selectedCategory]);

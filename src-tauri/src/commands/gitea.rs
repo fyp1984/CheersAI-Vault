@@ -553,7 +553,7 @@ pub async fn upload_to_gitea(
         &remote_path,
         message
             .as_deref()
-            .unwrap_or("CheersAI Vault deidentified artifact upload"),
+            .unwrap_or("CheersAI Desktop deidentified artifact upload"),
     )
     .await
     {
@@ -672,7 +672,7 @@ pub async fn delete_from_gitea(
             &remote_path,
             message
                 .as_deref()
-                .unwrap_or("CheersAI Vault deidentified artifact delete"),
+                .unwrap_or("CheersAI Desktop deidentified artifact delete"),
         )
         .await
         .map(|_| "FILEBAY_DELETE_OK".to_string())

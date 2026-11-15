@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { isTauriHost } from "@/lib/runtime/host";
+import { VersionUpdateManager } from "@/components/version/VersionUpdateManager";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
   "/cloud": {
@@ -145,6 +146,7 @@ export function MainLayout() {
   return (
     <TooltipProvider>
       <div className="flex h-screen w-screen overflow-hidden bg-gray-50">
+        <VersionUpdateManager />
         <Sidebar />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white">
           {!isDocsRoute && (

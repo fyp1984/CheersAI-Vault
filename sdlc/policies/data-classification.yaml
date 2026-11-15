@@ -1,0 +1,32 @@
+classification:
+  C1_PUBLIC:
+    description: 公开/匿名可访问，无任何个人隐私
+    examples: [产品名称、公开文档、首页文案、开源许可声明]
+    required_masking: none
+  C2_INTERNAL:
+    description: 企业内部员工可见，非机密
+    examples: [内部 OA 流程、团队 wiki、非敏感周报]
+    required_masking: none (可内部脱敏按业务)
+  C3_SENSITIVE:
+    description: 个人敏感信息 PII / 财务类字段
+    examples: [真实姓名, 手机号, 身份证号, 邮箱, 银行卡号, 护照号, 家庭住址, 办公地址, IP地址, UDID/设备ID]
+    required_masking: at-rest encryption + in-transit TLS1.3 + default-mask when shared
+  C4_CRITICAL:
+    description: 核心机密/密钥/支付凭据
+    examples: [JWT_SECRET, DB_PASSWORD, Stripe sk_, RSA 私钥, AES 密钥, MFA TOTP 种子]
+    required_masking: HSM/KMS + zero-access policy; 严禁写入日志
+pii_required_rules:
+  - id: phone
+  - id: id_card
+  - id: email
+  - id: bank_card
+  - id: passport
+  - id: address
+masking_output:
+  default_formats:
+    phone: "***PHONE***<seq>"
+    id_card: "***IDCARD***<seq>"
+    email: "***EMAIL***<seq>"
+    bank_card: "***BANKCARD***<seq>"
+    passport: "***PASSPORT***<seq>"
+    address: "***ADDRESS***<seq>"

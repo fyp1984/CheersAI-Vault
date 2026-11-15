@@ -16,6 +16,9 @@ run_pnpm() {
   fi
 }
 
+echo "==> [版本锚点检查] 调用既有 version-manager check（沿用旧规范，不重造流程）"
+run_pnpm version:check
+
 PNPM_SHIM_DIR=""
 
 ensure_pnpm_command() {
@@ -430,3 +433,10 @@ echo "==> Portable DMG created"
 echo "PATH: $OUTPUT_DMG"
 shasum -a 256 "$OUTPUT_DMG"
 print_acceptance_checklist
+
+echo ""
+echo "==> 下一步（沿用固化后的桌面端打包 skill）:"
+echo "    1. 自动 10 项校验：  corepack pnpm verify:dmg --version $VERSION --arch $CURRENT_ARCH_LABEL"
+echo "    2. 若 Trae/IDE 沙箱禁止 hdiutil 访问 /dev/rdisk* 导致构建只产出 .app，"
+echo "       请在真终端执行快速封装（不重新编译）：  corepack pnpm build:dmg:quick --version $VERSION"
+echo ""

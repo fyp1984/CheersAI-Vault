@@ -53,7 +53,7 @@ async fn create_preview_handler(
     runtime: Runtime,
 ) -> Result<impl Reply, Rejection> {
     let _ = runtime.store.sweep_expired_previews().await;
-    let (uploads, rules, _restore_mode) = crate::parse_form(form, &runtime.limits).await?;
+    let (uploads, rules, _restore_mode) = crate::parse_form(form, &runtime).await?;
     let response = runtime
         .store
         .create_preview(uploads, rules, runtime.preview_ttl)

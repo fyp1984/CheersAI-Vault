@@ -1,0 +1,10 @@
+{
+  "repo": "CheersAI-Desktop",
+  "lock_version": "v1.0",
+  "languages_primary": ["python", "typescript", "react-18"],
+  "backend_framework_allowed": ["django-5", "celery", "fastapi-submodules"],
+  "frontend_framework_allowed": ["nextjs-14", "react-18", "typescript"],
+  "forbidden_frameworks": ["spring-boot", "gin", "django-as-frontend"],
+  "test_allowed": ["pytest", "playwright", "ruff"],
+  "notes": "Desktop = Django 后端 (API/Scheduler) + Next.js 14 前端。"
+}

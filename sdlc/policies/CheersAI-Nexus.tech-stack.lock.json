@@ -1,0 +1,10 @@
+{
+  "repo": "CheersAI-Nexus",
+  "lock_version": "v1.0",
+  "languages_primary": ["java", "typescript", "vue-3"],
+  "backend_framework_allowed": ["spring-boot-3.5.x", "mybatis-flex-1.11.x", "flyway-11"],
+  "frontend_framework_allowed": ["vue-3", "vite-5", "element-plus-2.7", "pinia-2.1"],
+  "forbidden_frameworks": ["nestjs", "gin", "nextjs-on-nexus-frontend"],
+  "test_allowed": ["junit5", "spring-boot-test"],
+  "notes": "Nexus 微服务后端 Spring Boot 全家桶 + 前端 Vue3 + Vite + Element Plus。"
+}

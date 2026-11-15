@@ -4,10 +4,12 @@ use std::time::Duration;
 use chrono::Utc;
 use engine_core::SensitiveTermDefinition;
 use service_contracts::{
-    BatchDetail, BatchFile, BatchStatus, BatchSummary, CreateBatchResponse, CreatePreviewResponse,
-    CreatedFile, CreatedPreviewFile, FileStatus, OperationLogEntry, OperationLogLevel,
-    OperationLogStatistics, OperationLogStorageStatus, PreviewDetail, PreviewFile,
-    PreviewFileStatus, PreviewSessionStatus, RetryResponse, SensitiveTerm, SensitiveTermsStats,
+    ArtifactKind, BatchDetail, BatchFile, BatchStatus, BatchSummary, CreateBatchResponse,
+    CreatePreviewResponse, CreatedFile, CreatedPreviewFile, ExcelArtifactMemberKind,
+    ExcelArtifactMembersResponse, ExcelPersistArtifactsResponse, ExcelPersistedFile, FileStatus,
+    OperationLogEntry, OperationLogLevel, OperationLogStatistics, OperationLogStorageStatus,
+    PreviewDetail, PreviewFile, PreviewFileStatus, PreviewSessionStatus, RetryResponse,
+    SensitiveTerm, SensitiveTermsStats,
 };
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use tokio::fs;
@@ -82,6 +84,45 @@ pub struct PendingJob {
 #[derive(Debug)]
 pub struct ArtifactRecord {
     pub object_key: String,
+    pub display_name: String,
+    pub artifact_kind: ArtifactKind,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExcelArtifactMemberRecord {
+    pub kind: ExcelArtifactMemberKind,
+    pub object_key: String,
+    pub display_name: String,
+    pub size_bytes: usize,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExcelArtifactManifestRecord {
+    pub artifact_id: String,
+    pub batch_id: String,
+    pub saved_directory_hint: String,
+    pub input_display_name_hash8: String,
+    pub ascii_stem: String,
+    pub members: Vec<ExcelArtifactMemberRecord>,
+}
+
+#[derive(Debug)]
+pub struct ExcelArtifactMemberPayload {
+    pub kind: ExcelArtifactMemberKind,
+    pub display_name: String,
+    pub bytes: Vec<u8>,
+    pub sha256: String,
+}
+
+/// Server-held materials for an enterprise Excel restore, always resolved
+/// from the artifact manifest — never from client-supplied paths.
+#[derive(Debug)]
+pub struct ExcelRestoreMaterials {
+    pub display_name: String,
+    pub masked_bytes: Vec<u8>,
+    pub ecmap_bytes: Vec<u8>,
+    pub encrypted_source_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -144,7 +185,7 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, status TEXT NOT NULL, rules_json TEXT NOT NULL, restore_mode TEXT NOT NULL DEFAULT 'disabled', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS batch_files (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE, display_name TEXT NOT NULL, input_format TEXT NOT NULL, input_object_key TEXT NOT NULL, mapping_object_key TEXT, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 1, masked_entity_count INTEGER, artifact_id TEXT, error_code TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "CREATE INDEX IF NOT EXISTS idx_batch_files_pending ON batch_files(status, created_at)",
-            "CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE, file_id TEXT NOT NULL UNIQUE REFERENCES batch_files(id) ON DELETE CASCADE, object_key TEXT NOT NULL UNIQUE, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE, file_id TEXT NOT NULL UNIQUE REFERENCES batch_files(id) ON DELETE CASCADE, object_key TEXT NOT NULL UNIQUE, size_bytes INTEGER NOT NULL, artifact_kind TEXT NOT NULL DEFAULT 'markdown', created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS job_events (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, file_id TEXT, event_type TEXT NOT NULL, status TEXT NOT NULL, error_code TEXT, created_at TEXT NOT NULL)",
             "CREATE INDEX IF NOT EXISTS idx_job_events_file_created ON job_events(file_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_job_events_batch_created ON job_events(batch_id, created_at)",
@@ -175,6 +216,7 @@ impl Store {
             "ALTER TABLE batch_files ADD COLUMN mapping_object_key TEXT",
             "ALTER TABLE batches ADD COLUMN sensitive_terms_snapshot_json TEXT",
             "ALTER TABLE previews ADD COLUMN sensitive_terms_snapshot_json TEXT",
+            "ALTER TABLE artifacts ADD COLUMN artifact_kind TEXT NOT NULL DEFAULT 'markdown'",
         ] {
             let _ = sqlx::query(statement).execute(&self.pool).await;
         }
@@ -367,6 +409,89 @@ impl Store {
         })
     }
 
+    pub async fn create_excel_job(
+        &self,
+        upload: NewUpload,
+        rules: Vec<String>,
+    ) -> Result<PendingJob, StoreError> {
+        let batch_id = Uuid::new_v4().to_string();
+        let file_id = Uuid::new_v4().to_string();
+        let object_key = format!("input/{batch_id}/{file_id}.input");
+        let path = self.controlled_path(&object_key)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&path, &upload.bytes).await?;
+
+        let now = Utc::now().to_rfc3339();
+        let write_result = async {
+            let mut tx = self.pool.begin().await?;
+            let snapshot_json = Self::snapshot_json_for_rules(&mut tx, &rules).await?;
+            sqlx::query("INSERT INTO batches (id, status, rules_json, restore_mode, sensitive_terms_snapshot_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                .bind(&batch_id)
+                .bind(BatchStatus::Running.as_str())
+                .bind(serde_json::to_string(&rules).map_err(|_| StoreError::Storage)?)
+                .bind("disabled")
+                .bind(&snapshot_json)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT INTO batch_files (id, batch_id, display_name, input_format, input_object_key, status, attempt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)")
+                .bind(&file_id)
+                .bind(&batch_id)
+                .bind(&upload.display_name)
+                .bind(&upload.input_format)
+                .bind(&object_key)
+                .bind(FileStatus::Processing.as_str())
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+            insert_event(
+                &mut tx,
+                &batch_id,
+                Some(&file_id),
+                "Queued",
+                FileStatus::Pending.as_str(),
+                None,
+                &now,
+            )
+            .await?;
+            insert_event(
+                &mut tx,
+                &batch_id,
+                Some(&file_id),
+                "ProcessingStarted",
+                FileStatus::Processing.as_str(),
+                None,
+                &now,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok::<Option<String>, StoreError>(snapshot_json)
+        }
+        .await;
+
+        let snapshot_json = match write_result {
+            Ok(snapshot_json) => snapshot_json,
+            Err(error) => {
+                let _ = fs::remove_file(path).await;
+                return Err(error);
+            }
+        };
+
+        Ok(PendingJob {
+            batch_id,
+            file_id,
+            display_name: upload.display_name,
+            input_format: upload.input_format,
+            input_object_key: object_key,
+            restore_mode: "disabled".to_string(),
+            rules: Self::expand_rules_with_snapshot(rules, snapshot_json),
+        })
+    }
+
     pub async fn claim_next_pending(&self) -> Result<Option<PendingJob>, StoreError> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
@@ -470,12 +595,13 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let result = async {
             let mut tx = self.pool.begin().await?;
-            sqlx::query("INSERT INTO artifacts (id, batch_id, file_id, object_key, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT INTO artifacts (id, batch_id, file_id, object_key, size_bytes, artifact_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
                 .bind(artifact_id)
                 .bind(&job.batch_id)
                 .bind(&job.file_id)
                 .bind(&object_key)
                 .bind(markdown.len() as i64)
+                .bind(ArtifactKind::Markdown.as_str())
                 .bind(&now)
                 .execute(&mut *tx)
                 .await?;
@@ -516,26 +642,243 @@ impl Store {
         Ok(artifact_id.to_string())
     }
 
-    /// Read markdown + mapping for a completed artifact (restore).
-    pub async fn artifact_with_mapping(
+    pub async fn write_excel_completed(
+        &self,
+        job: &PendingJob,
+        artifact_id: &str,
+        ascii_stem: &str,
+        input_display_name_hash8: &str,
+        masked_entity_count: usize,
+        members: Vec<ExcelArtifactMemberPayload>,
+    ) -> Result<ExcelPersistArtifactsResponse, StoreError> {
+        let saved_directory_hint = format!("sandbox/output/excel/{}/{artifact_id}", job.batch_id);
+        let final_dir_path = self.controlled_path(&saved_directory_hint)?;
+        let tmp_dir_key = format!("tmp/excel-{}", Uuid::new_v4());
+        let tmp_dir_path = self.controlled_path(&tmp_dir_key)?;
+        fs::create_dir_all(&tmp_dir_path).await?;
+
+        let mut manifest_members = Vec::with_capacity(members.len());
+        let mut persisted_files = Vec::with_capacity(members.len());
+        for member in members {
+            let object_key = format!("{saved_directory_hint}/{}", member.display_name);
+            let member_path = tmp_dir_path.join(&member.display_name);
+            fs::write(&member_path, &member.bytes).await?;
+            manifest_members.push(ExcelArtifactMemberRecord {
+                kind: member.kind,
+                object_key,
+                display_name: member.display_name.clone(),
+                size_bytes: member.bytes.len(),
+                sha256: member.sha256,
+            });
+            persisted_files.push(ExcelPersistedFile {
+                kind: member.kind,
+                display_name: member.display_name,
+                size_bytes: manifest_members
+                    .last()
+                    .map(|item| item.size_bytes)
+                    .unwrap_or(0),
+            });
+        }
+
+        let manifest = ExcelArtifactManifestRecord {
+            artifact_id: artifact_id.to_string(),
+            batch_id: job.batch_id.clone(),
+            saved_directory_hint: saved_directory_hint.clone(),
+            input_display_name_hash8: input_display_name_hash8.to_string(),
+            ascii_stem: ascii_stem.to_string(),
+            members: manifest_members,
+        };
+        let manifest_bytes =
+            serde_json::to_vec_pretty(&manifest).map_err(|_| StoreError::Storage)?;
+        fs::write(tmp_dir_path.join("manifest.json"), &manifest_bytes).await?;
+
+        if let Some(parent) = final_dir_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        if let Err(error) = fs::rename(&tmp_dir_path, &final_dir_path).await {
+            let _ = fs::remove_dir_all(&tmp_dir_path).await;
+            return Err(error.into());
+        }
+
+        let manifest_key = format!("{saved_directory_hint}/manifest.json");
+        let now = Utc::now().to_rfc3339();
+        let result = async {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("INSERT INTO artifacts (id, batch_id, file_id, object_key, size_bytes, artifact_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                .bind(artifact_id)
+                .bind(&job.batch_id)
+                .bind(&job.file_id)
+                .bind(&manifest_key)
+                .bind(manifest_bytes.len() as i64)
+                .bind(ArtifactKind::ExcelBundleManifest.as_str())
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE batch_files SET status = ?, masked_entity_count = ?, artifact_id = ?, mapping_object_key = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND status = ?")
+                .bind(FileStatus::Completed.as_str())
+                .bind(masked_entity_count as i64)
+                .bind(artifact_id)
+                .bind(&now)
+                .bind(&job.file_id)
+                .bind(FileStatus::Processing.as_str())
+                .execute(&mut *tx)
+                .await?;
+            insert_event(
+                &mut tx,
+                &job.batch_id,
+                Some(&job.file_id),
+                "Completed",
+                FileStatus::Completed.as_str(),
+                None,
+                &now,
+            )
+            .await?;
+            insert_event(
+                &mut tx,
+                &job.batch_id,
+                Some(&job.file_id),
+                "ArtifactPersisted",
+                FileStatus::Completed.as_str(),
+                None,
+                &now,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok::<(), StoreError>(())
+        }
+        .await;
+
+        if let Err(error) = result {
+            let _ = fs::remove_dir_all(&final_dir_path).await;
+            return Err(error);
+        }
+
+        self.refresh_batch(&job.batch_id).await?;
+        Ok(ExcelPersistArtifactsResponse {
+            batch_id: job.batch_id.clone(),
+            file_id: job.file_id.clone(),
+            artifact_id: artifact_id.to_string(),
+            persisted_files,
+            saved_directory_hint,
+        })
+    }
+
+    async fn read_excel_artifact_manifest(
         &self,
         artifact_id: &str,
-    ) -> Result<(Vec<u8>, Vec<u8>), StoreError> {
+    ) -> Result<ExcelArtifactManifestRecord, StoreError> {
         let row = sqlx::query(
-            "SELECT a.object_key, f.mapping_object_key FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?",
+            "SELECT a.object_key FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ? AND COALESCE(a.artifact_kind, 'markdown') = ?",
         )
         .bind(artifact_id)
         .bind(FileStatus::Completed.as_str())
+        .bind(ArtifactKind::ExcelBundleManifest.as_str())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let object_key: String = row.get("object_key");
+        let bytes = fs::read(self.controlled_path(&object_key)?).await?;
+        serde_json::from_slice::<ExcelArtifactManifestRecord>(&bytes)
+            .map_err(|_| StoreError::InvalidState)
+    }
+
+    pub async fn excel_artifact_members(
+        &self,
+        artifact_id: &str,
+    ) -> Result<ExcelArtifactMembersResponse, StoreError> {
+        let manifest = self.read_excel_artifact_manifest(artifact_id).await?;
+        Ok(ExcelArtifactMembersResponse {
+            artifact_id: manifest.artifact_id,
+            batch_id: manifest.batch_id,
+            saved_directory_hint: manifest.saved_directory_hint,
+            persisted_files: manifest
+                .members
+                .into_iter()
+                .map(|member| ExcelPersistedFile {
+                    kind: member.kind,
+                    display_name: member.display_name,
+                    size_bytes: member.size_bytes,
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn excel_artifact_member(
+        &self,
+        artifact_id: &str,
+        kind: ExcelArtifactMemberKind,
+    ) -> Result<(ExcelArtifactMemberRecord, Vec<u8>), StoreError> {
+        let manifest = self.read_excel_artifact_manifest(artifact_id).await?;
+        let member = manifest
+            .members
+            .into_iter()
+            .find(|member| member.kind == kind)
+            .ok_or(StoreError::NotFound)?;
+        let bytes = fs::read(self.controlled_path(&member.object_key)?).await?;
+        Ok((member, bytes))
+    }
+
+    /// All server-held materials for an enterprise Excel restore, resolved
+    /// strictly through the artifact manifest (never from client-supplied
+    /// paths). Fails closed with `NotFound` for anything that is not a
+    /// `Completed` Excel bundle manifest — the Markdown restore path stays
+    /// fully separate (no cross-routing).
+    pub async fn excel_restore_materials(
+        &self,
+        artifact_id: &str,
+    ) -> Result<ExcelRestoreMaterials, StoreError> {
+        let manifest = self.read_excel_artifact_manifest(artifact_id).await?;
+        let mut masked_workbook: Option<Vec<u8>> = None;
+        let mut ecmap: Option<Vec<u8>> = None;
+        let mut encrypted_source: Option<Vec<u8>> = None;
+        for member in &manifest.members {
+            let bytes = fs::read(self.controlled_path(&member.object_key)?).await?;
+            match member.kind {
+                ExcelArtifactMemberKind::MaskedWorkbook => masked_workbook = Some(bytes),
+                ExcelArtifactMemberKind::Ecmap => ecmap = Some(bytes),
+                ExcelArtifactMemberKind::EncryptedSource => encrypted_source = Some(bytes),
+                ExcelArtifactMemberKind::Report => {}
+            }
+        }
+        let masked_bytes = masked_workbook.ok_or(StoreError::InvalidState)?;
+        let ecmap_bytes = ecmap.ok_or(StoreError::InvalidState)?;
+        let display_name = sqlx::query_scalar::<_, String>(
+            "SELECT display_name FROM batch_files WHERE id = (SELECT file_id FROM artifacts WHERE id = ?)",
+        )
+        .bind(artifact_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or_default();
+        Ok(ExcelRestoreMaterials {
+            display_name,
+            masked_bytes,
+            ecmap_bytes,
+            encrypted_source_bytes: encrypted_source,
+        })
+    }
+
+    /// Read markdown + mapping + display name for a completed artifact (restore).
+    pub async fn artifact_with_mapping(
+        &self,
+        artifact_id: &str,
+    ) -> Result<(String, Vec<u8>, Vec<u8>), StoreError> {
+        let row = sqlx::query(
+            "SELECT a.object_key, f.mapping_object_key, f.display_name FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ? AND COALESCE(a.artifact_kind, 'markdown') = ?",
+        )
+        .bind(artifact_id)
+        .bind(FileStatus::Completed.as_str())
+        .bind(ArtifactKind::Markdown.as_str())
         .fetch_optional(&self.pool)
         .await?
         .ok_or(StoreError::NotFound)?;
         let object_key: String = row.get("object_key");
         let mapping_key: Option<String> = row.get("mapping_object_key");
+        let display_name: String = row.get("display_name");
         let markdown = fs::read(self.controlled_path(&object_key)?).await?;
         match mapping_key {
             Some(key) => {
                 let mapping = fs::read(self.controlled_path(&key)?).await?;
-                Ok((markdown, mapping))
+                Ok((display_name, markdown, mapping))
             }
             None => Err(StoreError::NotFound),
         }
@@ -593,7 +936,7 @@ impl Store {
         .await?
         .ok_or(StoreError::NotFound)?;
         let batch = summary_from_row(summary_row)?;
-        let rows = sqlx::query("SELECT id, display_name, input_format, status, attempt, masked_entity_count, artifact_id, mapping_object_key, error_code, error_message FROM batch_files WHERE batch_id = ? ORDER BY created_at, id")
+        let rows = sqlx::query("SELECT f.id, f.display_name, f.input_format, f.status, f.attempt, f.masked_entity_count, f.artifact_id, COALESCE(a.artifact_kind, 'markdown') AS artifact_kind, f.mapping_object_key, f.error_code, f.error_message FROM batch_files f LEFT JOIN artifacts a ON a.id = f.artifact_id WHERE f.batch_id = ? ORDER BY f.created_at, f.id")
             .bind(batch_id)
             .fetch_all(&self.pool)
             .await?;
@@ -602,6 +945,10 @@ impl Store {
             .map(|row| {
                 let status_value: String = row.get("status");
                 let mapping_key: Option<String> = row.get("mapping_object_key");
+                let artifact_kind = row
+                    .get::<Option<String>, _>("artifact_id")
+                    .map(|_| row.get::<String, _>("artifact_kind"))
+                    .and_then(|value| ArtifactKind::parse(&value));
                 Ok(BatchFile {
                     file_id: row.get("id"),
                     display_name: row.get("display_name"),
@@ -612,9 +959,21 @@ impl Store {
                         .get::<Option<i64>, _>("masked_entity_count")
                         .map(|value| value as usize),
                     artifact_id: row.get("artifact_id"),
+                    artifact_kind,
                     error_code: row.get("error_code"),
                     error_message: row.get("error_message"),
-                    restore_available: mapping_key.is_some(),
+                    // R-closeout (工作包 C): restore availability must be
+                    // projected from the actual artifact kind, not only from
+                    // the Markdown `mapping_object_key` (which is explicitly
+                    // NULL for Excel manifests). A completed Excel bundle
+                    // manifest always carries masked_workbook + ecmap, so
+                    // restore is available; Path A additionally needs
+                    // encrypted_source, which callers discover via the
+                    // manifest members endpoint.
+                    restore_available: match artifact_kind {
+                        Some(ArtifactKind::ExcelBundleManifest) => true,
+                        _ => mapping_key.is_some(),
+                    },
                 })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
@@ -679,7 +1038,7 @@ impl Store {
         &self,
         artifact_id: &str,
     ) -> Result<(ArtifactRecord, Vec<u8>), StoreError> {
-        let row = sqlx::query("SELECT a.object_key FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?")
+        let row = sqlx::query("SELECT a.object_key, f.display_name, COALESCE(a.artifact_kind, 'markdown') AS artifact_kind FROM artifacts a JOIN batch_files f ON f.id = a.file_id WHERE a.id = ? AND f.status = ?")
             .bind(artifact_id)
             .bind(FileStatus::Completed.as_str())
             .fetch_optional(&self.pool)
@@ -687,6 +1046,9 @@ impl Store {
             .ok_or(StoreError::NotFound)?;
         let record = ArtifactRecord {
             object_key: row.get("object_key"),
+            display_name: row.get("display_name"),
+            artifact_kind: ArtifactKind::parse(&row.get::<String, _>("artifact_kind"))
+                .ok_or(StoreError::InvalidState)?,
         };
         let bytes = fs::read(self.controlled_path(&record.object_key)?).await?;
         Ok((record, bytes))
@@ -708,10 +1070,11 @@ impl Store {
         let rows = sqlx::query(
             "SELECT a.id AS artifact_id, f.display_name AS display_name \
              FROM artifacts a JOIN batch_files f ON f.id = a.file_id \
-             WHERE a.batch_id = ? AND f.status = ? ORDER BY a.created_at",
+             WHERE a.batch_id = ? AND f.status = ? AND COALESCE(a.artifact_kind, 'markdown') = ? ORDER BY a.created_at",
         )
         .bind(batch_id)
         .bind(FileStatus::Completed.as_str())
+        .bind(ArtifactKind::Markdown.as_str())
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -733,10 +1096,11 @@ impl Store {
         let row = sqlx::query(
             "SELECT a.batch_id AS batch_id, a.object_key AS object_key, f.display_name AS display_name \
              FROM artifacts a JOIN batch_files f ON f.id = a.file_id \
-             WHERE a.id = ? AND f.status = ?",
+             WHERE a.id = ? AND f.status = ? AND COALESCE(a.artifact_kind, 'markdown') = ?",
         )
         .bind(artifact_id)
         .bind(FileStatus::Completed.as_str())
+        .bind(ArtifactKind::Markdown.as_str())
         .fetch_optional(&self.pool)
         .await?
         .ok_or(StoreError::NotFound)?;
@@ -1530,12 +1894,13 @@ impl Store {
                         .and_then(|path| std::fs::metadata(path).ok())
                         .map(|meta| meta.len() as i64)
                         .unwrap_or(0);
-                    sqlx::query("INSERT INTO artifacts (id, batch_id, file_id, object_key, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+                    sqlx::query("INSERT INTO artifacts (id, batch_id, file_id, object_key, size_bytes, artifact_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
                         .bind(artifact_id)
                         .bind(&batch_id)
                         .bind(&file.file_id)
                         .bind(output_key)
                         .bind(size_bytes)
+                        .bind(ArtifactKind::Markdown.as_str())
                         .bind(&now)
                         .execute(&mut *tx)
                         .await?;
@@ -1595,6 +1960,17 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Total number of restore security events (success + failure) — used by
+    /// tests to assert that restore attempts are always logged with safe
+    /// metadata only.
+    #[allow(dead_code)]
+    pub async fn restore_event_count(&self) -> Result<usize, StoreError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM restore_events")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as usize)
     }
 
     /// Browser operation-log projection (FR-007 minimal-exposure mode):

@@ -1,6 +1,6 @@
 [package]
 name = "cheersai-vault"
-version = "0.1.41"
+version = "0.1.42"
 description = "CheersAI Vault - Secure Data Masking Desktop Application"
 authors = ["CheersAI Team"]
 edition = "2021"
@@ -20,6 +20,7 @@ engine-core = { path = "crates/engine-core" }
 component-runtime = { path = "crates/component-runtime" }
 sandbox-core = { path = "crates/sandbox-core" }
 filebay-core = { path = "crates/filebay-core" }
+excel-style-core = { path = "crates/excel-style-core" }
 tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-dialog = "2.7.0"
@@ -30,10 +31,12 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 aes-gcm = "0.10"
 pbkdf2 = "0.12"
+hkdf = "0.12"
 hmac = "0.12"
 regex = "1"
 csv = "1"
 calamine = "0.24"
+keyring = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.8"
 sha2 = "0.10"
@@ -56,6 +59,7 @@ url = "2.4"
 lopdf = "0.32"
 warp = "0.3"
 hyper = "0.14"
+tauri-plugin-updater = "2.10.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }

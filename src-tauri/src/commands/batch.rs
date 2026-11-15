@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use crate::core::batch;
 use crate::commands::masking::CustomRule;
+use crate::core::batch;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BatchJobOptions {
@@ -26,15 +26,15 @@ pub struct BatchStatus {
 #[tauri::command]
 pub async fn start_batch_job(options: BatchJobOptions) -> Result<String, String> {
     let job_id = batch::create_job(options.file_paths.len());
-    
+
     // 启动后台任务处理文件
     let job_id_clone = job_id.clone();
     let options_clone = options;
-    
+
     tokio::spawn(async move {
         batch::process_batch_job(job_id_clone, options_clone).await;
     });
-    
+
     Ok(job_id)
 }
 

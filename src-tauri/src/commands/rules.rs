@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::core::masking_engine;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaskRule {
@@ -25,7 +25,7 @@ pub async fn get_rules() -> Result<Vec<MaskRule>, String> {
             builtin: r.builtin,
         })
         .collect();
-    
+
     Ok(rules)
 }
 

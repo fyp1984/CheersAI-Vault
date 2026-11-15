@@ -1,0 +1,20 @@
+gate_id: G4-TEST
+name: TEST 质量门禁（测试验收 → 发布运维）
+rationale: 缺陷修复率 + 核心场景通过率双准入
+thresholds:
+  functional:
+    p0_pass_rate: 1.00         # 核心场景 = 100% 通过
+    p1_pass_rate: 1.00
+    p2_pass_rate: 0.90         # Should-case 90%+ 即可
+  defects:
+    p0_fix_rate: 1.00          # 零 P0 遗留
+    p1_fix_rate: 1.00          # 零 P1 遗留
+    p2_max_leftover: 3         # 遗留 P2 ≤ 3，且签署延期审批
+  security:
+    sast_critical_zero: true
+    sca_critical_zero: true
+    dast_high_zero: true
+  performance:
+    tp99_regression_ratio: 1.1 # 不允许比基线慢 > 10%（接口级）
+sign_off_evidence:
+  - gate-test.py exit 0 + test-report.json signed by QA actor

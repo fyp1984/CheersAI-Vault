@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use engine_core::{OcrResult, validate_ocr_result};
+use engine_core::{validate_ocr_result, OcrResult};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -30,7 +30,7 @@ use tokio::time::timeout;
 // ---------------------------------------------------------------------------
 
 const MAX_STDOUT_BYTES: usize = 10 * 1024 * 1024; // 10 MB
-const MAX_STDERR_BYTES: usize = 1024 * 1024;      // 1 MB
+const MAX_STDERR_BYTES: usize = 1024 * 1024; // 1 MB
 const DEFAULT_DPI: u64 = 300;
 
 // ---------------------------------------------------------------------------
@@ -251,8 +251,7 @@ fn user_ocr_installation_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         env::var_os("HOME").map(|home| {
-            PathBuf::from(home)
-                .join("Library/Application Support/com.cheersai.vault/ocr-package")
+            PathBuf::from(home).join("Library/Application Support/com.cheersai.vault/ocr-package")
         })
     }
     #[cfg(target_os = "linux")]
@@ -264,7 +263,8 @@ fn user_ocr_installation_dir() -> Option<PathBuf> {
     }
     #[cfg(target_os = "windows")]
     {
-        env::var_os("APPDATA").map(|base| PathBuf::from(base).join("com.cheersai.vault/ocr-package"))
+        env::var_os("APPDATA")
+            .map(|base| PathBuf::from(base).join("com.cheersai.vault/ocr-package"))
     }
 }
 
@@ -334,8 +334,7 @@ pub async fn acquire_ocr_permit() -> tokio::sync::SemaphorePermit<'static> {
 /// Only `Ready` outcomes are stored.  Failed outcomes are never cached, so
 /// changing an invalid configuration and re-running `preflight_check` will
 /// re-evaluate the new configuration from scratch.
-static DEEP_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, OcrComponentStatus>>> =
-    OnceLock::new();
+static DEEP_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, OcrComponentStatus>>> = OnceLock::new();
 
 /// Run the full preflight chain:
 ///
@@ -454,7 +453,9 @@ except Exception as e:
         .output()
         .ok();
 
-    let Some(output) = result else { return OcrComponentStatus::Invalid };
+    let Some(output) = result else {
+        return OcrComponentStatus::Invalid;
+    };
     if !output.status.success() {
         return OcrComponentStatus::Invalid;
     }
@@ -518,10 +519,14 @@ pub async fn run_ocr(
     let mut cmd = Command::new(python);
     cmd.arg(&config.script_path)
         .arg(&input_path)
-        .arg("--max-pages").arg(config.max_pages.to_string())
-        .arg("--max-pixels-per-page").arg(config.max_pixels_per_page.to_string())
-        .arg("--max-total-pixels").arg(config.max_total_pixels.to_string())
-        .arg("--dpi").arg(DEFAULT_DPI.to_string())
+        .arg("--max-pages")
+        .arg(config.max_pages.to_string())
+        .arg("--max-pixels-per-page")
+        .arg(config.max_pixels_per_page.to_string())
+        .arg("--max-total-pixels")
+        .arg(config.max_total_pixels.to_string())
+        .arg("--dpi")
+        .arg(DEFAULT_DPI.to_string())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
@@ -537,20 +542,18 @@ pub async fn run_ocr(
     }
 
     // --- spawn ---
-    let mut child = cmd.spawn().map_err(|e| {
-        OcrError::ComponentUnavailable(format!("cannot spawn OCR process: {e}"))
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| OcrError::ComponentUnavailable(format!("cannot spawn OCR process: {e}")))?;
 
     // --- drain stdout/stderr CONCURRENTLY with wait (R8) ---
     let stdout_handle = child.stdout.take();
     let stderr_handle = child.stderr.take();
 
-    let stdout_task = tokio::spawn(async move {
-        read_pipe_bounded(stdout_handle, MAX_STDOUT_BYTES).await
-    });
-    let stderr_task = tokio::spawn(async move {
-        read_pipe_bounded(stderr_handle, MAX_STDERR_BYTES).await
-    });
+    let stdout_task =
+        tokio::spawn(async move { read_pipe_bounded(stdout_handle, MAX_STDOUT_BYTES).await });
+    let stderr_task =
+        tokio::spawn(async move { read_pipe_bounded(stderr_handle, MAX_STDERR_BYTES).await });
 
     // --- wait with timeout ---
     let deadline = timeout(config.timeout, child.wait());
@@ -663,11 +666,12 @@ pub fn parse_ocr_json(json_text: &str) -> Result<OcrResult, OcrError> {
         return Err(OcrError::Internal("empty OCR output".into()));
     }
 
-    let result: OcrResult =
-        serde_json::from_str(text).map_err(|e| OcrError::Internal(format!(
+    let result: OcrResult = serde_json::from_str(text).map_err(|e| {
+        OcrError::Internal(format!(
             "OCR JSON parse error: {e}. First 200 chars: {}",
             &text[..text.len().min(200)]
-        )))?;
+        ))
+    })?;
 
     // Validate schema version
     if result.schema_version != "1.0" {
@@ -690,7 +694,9 @@ async fn read_pipe_bounded<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
     pipe: Option<R>,
     max_bytes: usize,
 ) -> String {
-    let Some(handle) = pipe else { return String::new() };
+    let Some(handle) = pipe else {
+        return String::new();
+    };
     let mut buf = Vec::with_capacity(max_bytes.min(4096));
     let mut limited = handle.take(max_bytes as u64);
     let _ = limited.read_to_end(&mut buf).await;
@@ -900,7 +906,10 @@ mod tests {
         // mode and not fall back to automatic discovery.
         env::set_var(ENV_OCR_PYTHON, "/definitely/missing/ocr-venv/bin/python3");
         let config = resolve_ocr_config().expect("explicit mode must return a config");
-        assert_eq!(config.python_path, PathBuf::from("/definitely/missing/ocr-venv/bin/python3"));
+        assert_eq!(
+            config.python_path,
+            PathBuf::from("/definitely/missing/ocr-venv/bin/python3")
+        );
         assert!(config.script_path.as_os_str().is_empty());
 
         restore_env(ENV_OCR_PYTHON, saved_python);
@@ -919,7 +928,10 @@ mod tests {
         // Basename `python3` almost certainly exists on PATH, but the explicit
         // path itself does not.  Preflight must not silently substitute PATH.
         env::set_var(ENV_OCR_PYTHON, "/definitely/missing/ocr-venv/bin/python3");
-        env::set_var(ENV_OCR_SCRIPT, "/definitely/missing/ocr-venv/bin/pdf_ocr.py");
+        env::set_var(
+            ENV_OCR_SCRIPT,
+            "/definitely/missing/ocr-venv/bin/pdf_ocr.py",
+        );
         let config = resolve_ocr_config().unwrap();
         let status = preflight_check(&config);
         assert_eq!(status, OcrComponentStatus::Unavailable);
@@ -1082,7 +1094,10 @@ mod tests {
             config.max_pixels_per_page < a3,
             "default must still reject A3 ({a3} px) to preserve the resource guard"
         );
-        assert!(config.max_pixels_per_page > 0, "the limit must never be disabled");
+        assert!(
+            config.max_pixels_per_page > 0,
+            "the limit must never be disabled"
+        );
     }
 
     // --------------- error codes ---------------
@@ -1160,7 +1175,10 @@ mod tests {
             "expected LimitExceeded, got {err:?}"
         );
         assert_eq!(err.error_code(), "INPUT_LIMIT_EXCEEDED");
-        assert!(!err.is_retryable(), "limit-exceeded input must not be retried");
+        assert!(
+            !err.is_retryable(),
+            "limit-exceeded input must not be retried"
+        );
     }
 
     #[tokio::test]
@@ -1185,7 +1203,10 @@ mod tests {
             "expected Internal, got {err:?}"
         );
         assert_eq!(err.error_code(), "OCR_COMPONENT_INVALID");
-        assert!(err.is_retryable(), "unrecognised internal failures remain retryable");
+        assert!(
+            err.is_retryable(),
+            "unrecognised internal failures remain retryable"
+        );
     }
 
     // --------------- sanitise_error ---------------
@@ -1326,22 +1347,18 @@ mod tests {
     async fn concurrency_is_limited_to_one() {
         // Two fake OCR tasks: only one should hold the permit at a time.
         let permit1 = acquire_ocr_permit().await;
-        let attempt2 = tokio::time::timeout(
-            Duration::from_millis(100),
-            acquire_ocr_permit(),
-        );
+        let attempt2 = tokio::time::timeout(Duration::from_millis(100), acquire_ocr_permit());
         // Second acquire should time out while first permit is held.
-        assert!(attempt2.await.is_err(),
-            "second concurrent OCR permit should time out");
+        assert!(
+            attempt2.await.is_err(),
+            "second concurrent OCR permit should time out"
+        );
         drop(permit1);
 
         // After releasing, acquiring should succeed immediately.
-        let _permit2 = tokio::time::timeout(
-            Duration::from_millis(100),
-            acquire_ocr_permit(),
-        )
-        .await
-        .expect("permit should be available after release");
+        let _permit2 = tokio::time::timeout(Duration::from_millis(100), acquire_ocr_permit())
+            .await
+            .expect("permit should be available after release");
     }
 
     // --------------- validate_ocr_result: failed_pages (R7) ---------------
@@ -1385,19 +1402,20 @@ mod tests {
         let stdout_handle = child.stdout.take();
         let stderr_handle = child.stderr.take();
 
-        let stdout_task = tokio::spawn(async move {
-            read_pipe_bounded(stdout_handle, 200_000).await
-        });
-        let stderr_task = tokio::spawn(async move {
-            read_pipe_bounded(stderr_handle, 200_000).await
-        });
+        let stdout_task =
+            tokio::spawn(async move { read_pipe_bounded(stdout_handle, 200_000).await });
+        let stderr_task =
+            tokio::spawn(async move { read_pipe_bounded(stderr_handle, 200_000).await });
 
         let status = child.wait().await.expect("wait failed");
         assert!(status.success());
 
         let stdout = stdout_task.await.unwrap_or_default();
         let stderr = stderr_task.await.unwrap_or_default();
-        assert!(stdout.len() >= 100_000, "stdout should contain large output");
+        assert!(
+            stdout.len() >= 100_000,
+            "stdout should contain large output"
+        );
         assert_eq!(stderr.len(), 0, "stderr should be empty");
     }
 

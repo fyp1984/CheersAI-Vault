@@ -15,6 +15,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 interface SandboxFile {
   name: string;
@@ -98,8 +99,8 @@ export function FileManagerDesktop() {
       setLoading(true);
       const result = await invoke<SandboxFile[]>('list_files_in_directory', { directory: outputDir });
 
-      // 过滤掉 .cmap 对照文件
-      const filteredFiles = result.filter(file => !file.name.endsWith('.cmap'));
+      // 过滤掉旧版 .cmap 对照文件（保留 Excel 专属 .ecmap 和 .encrypted_src）
+      const filteredFiles = result.filter((file) => !file.name.endsWith('.cmap'));
 
       // 按修改时间降序排序（最新的文件在最上面）
       filteredFiles.sort((a, b) => {
@@ -589,11 +590,21 @@ export function FileManagerDesktop() {
                     />
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
                       {(file.name.includes('masked') || file.name.includes('_脱敏')) && (
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 flex-shrink-0">
                           脱敏
                         </span>
+                      )}
+                      {file.name.endsWith('.ecmap') && (
+                        <Badge className="bg-blue-100 text-blue-700 border-blue-200 flex-shrink-0">
+                          映射对照 v1.2
+                        </Badge>
+                      )}
+                      {file.name.endsWith('.encrypted_src') && (
+                        <Badge className="bg-purple-100 text-purple-700 border-purple-200 flex-shrink-0">
+                          加密源
+                        </Badge>
                       )}
                       <span
                         className="truncate max-w-xl"

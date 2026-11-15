@@ -1,0 +1,32 @@
+gate_id: G3-CODE
+name: CODE 质量门禁（程序开发 → 测试验收）
+rationale: Harness Engineering SoD (TD ≠ CD, HE-4 Zero-Trusted) + lint/type/test 三重关卡 (HE-1 分层)
+thresholds:
+  per_language_targets:
+    go:
+      lint_target: "make lint-go exit 0"
+      fmt_target:  "make fmt exit 0"
+      tidy_target: "make tidy exit 0 (only if go.mod changed)"
+      min_coverage: 0.70
+    typescript_react:
+      lint_target: "make lint-js exit 0"
+      type_target: "pnpm typecheck exit 0"
+      min_coverage: 0.70
+    java_spring:
+      checkstyle_target: "mvn -q checkstyle:check exit 0"
+      test_target:       "mvn test exit 0"
+      min_coverage: 0.70
+    python:
+      ruff_target:   "ruff check exit 0"
+      pytest_target: "pytest exit 0"
+      min_coverage: 0.80
+    rust:
+      clippy_target: "cargo clippy -- -D warnings exit 0"
+      test_target:   "cargo test exit 0"
+      min_coverage: 0.70
+  code_review:
+    min_approvals: 1
+    forbid_self_approve: true
+sign_off_evidence:
+  - All per-language targets exit 0
+  - PR/MR approval API verified

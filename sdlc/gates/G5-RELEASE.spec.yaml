@@ -1,0 +1,19 @@
+gate_id: G5-RELEASE
+name: RELEASE 质量门禁（发布运维 → Postmortem/反馈）
+thresholds:
+  canary:
+    stages: [0.01, 0.10, 0.50]   # 1% → 10% → 50% 三阶段灰度
+    min_observation_minutes_per_stage: 60
+    max_error_rate_per_stage: 0.001
+  monitoring:
+    red_method_dashboard: true    # Rate/Error/Duration 必须可视化
+    use_method_dashboard: true    # Utilization/Saturation/Errors
+  alerting_sla:
+    p0_response_minutes: 15
+    p1_response_minutes: 60
+  rollback:
+    one_click_drill_passed: true  # 预演环境必须回滚成功 ≥ 1 次
+  overall_sla:
+    target: 0.999                 # 99.9%
+sign_off_evidence:
+  - gate-release.py exit 0 + release-log.jsonl (chain-hashed)

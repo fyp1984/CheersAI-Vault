@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { CheckCircle2, ChevronLeft, Unlock, WifiOff } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Key, Unlock, UploadCloud, WifiOff } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge, Button, Card, Loading, Message } from "@/components/ui/cheersai-ui";
-import { fetchRuntimeBatch, fetchRuntimeBatches, restoreRuntimeArtifact } from "@/lib/runtime/client";
+import {
+  fetchRuntimeBatch,
+  fetchRuntimeBatches,
+  fetchRuntimeExcelArtifactMembers,
+  restoreRuntimeArtifact,
+  restoreRuntimeExcelArtifact,
+} from "@/lib/runtime/client";
+import { excelRestoreErrorMessage } from "@/lib/runtime/excelClient";
 import { runtimeFormatLabel } from "@/lib/runtime/formatCatalog";
-import type { RuntimeBatchDetail, RuntimeBatchFile, RuntimeBatchSummary } from "@/types/runtime";
+import type {
+  RuntimeBatchDetail,
+  RuntimeBatchFile,
+  RuntimeBatchSummary,
+  RuntimeExcelPersistedFile,
+} from "@/types/runtime";
 
 /** 安全展示用的文件名/ID：只做控制字符清理，不解释为路径。 */
 function safeDisplayName(name: string): string {
@@ -88,6 +100,38 @@ export default function FileUnmaskBrowser() {
   const [restoreState, setRestoreState] = useState<RestoreState>({ kind: "idle" });
   const restoreGenerationRef = useRef(0);
   const restoreIdentityRef = useRef(`${batchId ?? ""}:${artifactId ?? ""}`);
+  // R-closeout (工作包 C): enterprise Excel restore state (Path A/B).
+  const [excelRestoreMode, setExcelRestoreMode] = useState<"path_a" | "path_b">("path_a");
+  const [excelPassphrase, setExcelPassphrase] = useState("");
+  const [excelUserOriginal, setExcelUserOriginal] = useState<File | null>(null);
+  const [excelMembers, setExcelMembers] = useState<
+    RuntimeExcelPersistedFile[] | "loading" | "error" | undefined
+  >(undefined);
+  const [excelMembersArtifactId, setExcelMembersArtifactId] = useState<string | null>(null);
+
+  // React 官方「prop 变化时渲染期调整 state」模式：仅当 artifactId 变化时一次性
+  // 重置 Excel 恢复会话（清单加载态/口令/用户原件/恢复路径），并记录已处理过的
+  // artifactId，避免在 effect 体内同步 setState（react-hooks/set-state-in-effect）。
+  if ((artifactId ?? null) !== excelMembersArtifactId) {
+    setExcelMembersArtifactId(artifactId ?? null);
+    setExcelMembers("loading");
+    setExcelPassphrase("");
+    setExcelUserOriginal(null);
+    setExcelRestoreMode("path_a");
+  }
+
+  // 合并后的单 effect：只做异步成员清单 fetch，不在 effect 体内同步 setState。
+  useEffect(() => {
+    if (!artifactId) return;
+    let cancelled = false;
+    void fetchRuntimeExcelArtifactMembers(artifactId).then((result) => {
+      if (cancelled) return;
+      setExcelMembers(result.ok ? result.data.persisted_files : "error");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactId]);
 
   const invalidateRestore = (identity = "") => {
     restoreGenerationRef.current += 1;
@@ -195,6 +239,46 @@ export default function FileUnmaskBrowser() {
       });
       return;
     }
+    setRestoreState({ kind: "success", count: result.count });
+  };
+
+  const startExcelRestore = async (file: RuntimeBatchFile) => {
+    if (!file.artifact_id || visibleRestoreState.kind === "restoring") return;
+    if (!excelPassphrase.trim()) {
+      setRestoreState({ kind: "error", message: "请输入解密口令后再试。" });
+      return;
+    }
+    if (excelRestoreMode === "path_b" && !excelUserOriginal) {
+      setRestoreState({ kind: "error", message: "路径 B 需要上传用户原件，请选择文件后再试。" });
+      return;
+    }
+    const requestGeneration = restoreGenerationRef.current;
+    const requestIdentity = `${batchId ?? ""}:${file.artifact_id}`;
+    setRestoreState({ kind: "restoring" });
+    const result = await restoreRuntimeExcelArtifact(file.artifact_id, file.display_name, {
+      mode: excelRestoreMode,
+      passphrase: excelPassphrase,
+      userOriginal: excelRestoreMode === "path_b" ? excelUserOriginal ?? undefined : undefined,
+    });
+    if (
+      requestGeneration !== restoreGenerationRef.current ||
+      requestIdentity !== restoreIdentityRef.current
+    ) {
+      return;
+    }
+    if (!result.ok) {
+      setRestoreState({
+        kind: "error",
+        message: excelRestoreErrorMessage(
+          result.reason,
+          "code" in result ? result.code : undefined,
+          "message" in result ? result.message : undefined
+        ),
+      });
+      return;
+    }
+    setExcelPassphrase("");
+    setExcelUserOriginal(null);
     setRestoreState({ kind: "success", count: result.count });
   };
 
@@ -375,12 +459,21 @@ export default function FileUnmaskBrowser() {
 
   // 步骤三：已校验通过的文件，等待用户明确点击后才发起恢复请求。
   const file = selectedFile as RuntimeBatchFile;
+  const isExcelArtifact = file.artifact_kind === "excel_bundle_manifest";
+  const hasEncryptedSource =
+    Array.isArray(excelMembers) &&
+    excelMembers.some((member) => member.kind === "encrypted_source");
+  const excelMembersReady = Array.isArray(excelMembers);
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
         title="反脱敏"
-        description="服务器使用内部映射恢复原始内容；本页不显示、不上传、不下载映射或口令。"
+        description={
+          isExcelArtifact
+            ? "企业 Excel 恢复：口令只存在于本次请求，服务器按产物清单核验材料。"
+            : "服务器使用内部映射恢复原始内容；本页不显示、不上传、不下载映射或口令。"
+        }
         actions={
           <Button variant="secondary" size="sm" icon={ChevronLeft} onClick={backToFileList}>
             返回文件列表
@@ -412,6 +505,92 @@ export default function FileUnmaskBrowser() {
                 </div>
               </div>
             </Card>
+          ) : isExcelArtifact ? (
+            excelMembers === "loading" ? (
+              <Card className="p-5">
+                <Loading text="正在核对产物清单…" />
+              </Card>
+            ) : excelMembers === "error" || !excelMembersReady ? (
+              <Card className="p-5">
+                <Message type="error">
+                  产物清单加载失败，暂时无法恢复。请返回文件列表后重新选择。
+                </Message>
+              </Card>
+            ) : (
+              <Card className="p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-gray-500" />
+                  <span className="text-sm font-medium text-gray-900">恢复路径</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={!hasEncryptedSource}
+                    onClick={() => setExcelRestoreMode("path_a")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
+                      excelRestoreMode === "path_a"
+                        ? "border-primary bg-primary/5 text-primary"
+                        : hasEncryptedSource
+                          ? "border-gray-200 text-gray-700 hover:bg-gray-50"
+                          : "border-gray-200 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    路径 A：加密源
+                    {!hasEncryptedSource && (
+                      <span className="block text-xs text-gray-400">未保留加密源</span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExcelRestoreMode("path_b")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
+                      excelRestoreMode === "path_b"
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    路径 B：用户原件
+                  </button>
+                </div>
+
+                {excelRestoreMode === "path_b" && (
+                  <label className="block">
+                    <span className="text-xs text-gray-500">用户原件（与脱敏前文件完全一致）</span>
+                    <span className="mt-1 flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">
+                      <UploadCloud className="w-4 h-4" />
+                      {excelUserOriginal ? excelUserOriginal.name : "选择用户原件文件"}
+                    </span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(event) => setExcelUserOriginal(event.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                )}
+
+                <label className="block">
+                  <span className="text-xs text-gray-500">解密口令</span>
+                  <input
+                    type="password"
+                    value={excelPassphrase}
+                    onChange={(event) => setExcelPassphrase(event.target.value)}
+                    placeholder="输入创建映射时使用的口令"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="w-full"
+                  icon={Unlock}
+                  loading={visibleRestoreState.kind === "restoring"}
+                  onClick={() => void startExcelRestore(file)}
+                >
+                  {visibleRestoreState.kind === "restoring" ? "正在恢复…" : "开始反脱敏"}
+                </Button>
+              </Card>
+            )
           ) : (
             <Button
               variant="primary"

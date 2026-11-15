@@ -163,7 +163,7 @@ export default function OperationLogBrowser() {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     void loadData(1);
   }, [levelFilter, appliedStatus, appliedBatchId]);

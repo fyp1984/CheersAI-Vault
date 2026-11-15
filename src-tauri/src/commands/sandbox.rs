@@ -66,7 +66,9 @@ pub async fn set_pin(pin: String) -> Result<(), String> {
 /// 清除 PIN。桌面端沿用原有调用参数：不要求提供当前 PIN，与迁移前行为一致。
 #[tauri::command]
 pub async fn clear_pin() -> Result<(), String> {
-    dpapi::DesktopPinBackend.clear_pin().map_err(|e| e.to_string())
+    dpapi::DesktopPinBackend
+        .clear_pin()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -74,15 +76,15 @@ pub async fn list_sandbox_files() -> Result<Vec<SandboxFile>, String> {
     // 获取沙箱输出目录
     let temp_dir = std::env::temp_dir();
     let output_dir = temp_dir.join("cheersai-vault").join("output");
-    
+
     // 如果目录不存在，创建它
     if !output_dir.exists() {
         std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
         return Ok(vec![]);
     }
-    
+
     let mut files = Vec::new();
-    
+
     match std::fs::read_dir(&output_dir) {
         Ok(entries) => {
             for entry in entries {
@@ -90,25 +92,25 @@ pub async fn list_sandbox_files() -> Result<Vec<SandboxFile>, String> {
                     Ok(entry) => {
                         let path = entry.path();
                         if path.is_file() {
-                            let name = path.file_name()
+                            let name = path
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("unknown")
                                 .to_string();
-                            
+
                             let size = match entry.metadata() {
                                 Ok(metadata) => metadata.len(),
                                 Err(_) => 0,
                             };
-                            
-                            let modified = match entry.metadata()
-                                .and_then(|m| m.modified()) {
+
+                            let modified = match entry.metadata().and_then(|m| m.modified()) {
                                 Ok(time) => {
                                     let datetime: chrono::DateTime<chrono::Utc> = time.into();
                                     datetime.to_rfc3339()
-                                },
+                                }
                                 Err(_) => chrono::Utc::now().to_rfc3339(),
                             };
-                            
+
                             files.push(SandboxFile {
                                 name,
                                 path: path.to_string_lossy().to_string(),
@@ -116,39 +118,42 @@ pub async fn list_sandbox_files() -> Result<Vec<SandboxFile>, String> {
                                 modified,
                             });
                         }
-                    },
+                    }
                     Err(_) => continue,
                 }
             }
-        },
+        }
         Err(e) => return Err(format!("Failed to read directory: {}", e)),
     }
-    
+
     // 按修改时间倒序排序（最新的在前面）
     files.sort_by(|a, b| b.modified.cmp(&a.modified));
-    
+
     Ok(files)
 }
 
 #[tauri::command]
 pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFile>, String> {
     println!("📂 [list_files_in_directory] 读取目录: {}", directory);
-    println!("📂 [list_files_in_directory] 目录字节: {:?}", directory.as_bytes());
-    
+    println!(
+        "📂 [list_files_in_directory] 目录字节: {:?}",
+        directory.as_bytes()
+    );
+
     let dir_path = Path::new(&directory);
-    
+
     if !dir_path.exists() {
         println!("⚠️ [list_files_in_directory] 目录不存在: {}", directory);
         return Ok(vec![]);
     }
-    
+
     if !dir_path.is_dir() {
         println!("❌ [list_files_in_directory] 路径不是目录: {}", directory);
         return Err("Path is not a directory".to_string());
     }
-    
+
     let mut files = Vec::new();
-    
+
     match std::fs::read_dir(dir_path) {
         Ok(entries) => {
             let mut entry_count = 0;
@@ -159,14 +164,18 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                         let path = entry.path();
                         let is_file = path.is_file();
                         let is_dir = path.is_dir();
-                        println!("  📄 发现条目: {:?}, 是文件: {}, 是目录: {}", path, is_file, is_dir);
-                        
+                        println!(
+                            "  📄 发现条目: {:?}, 是文件: {}, 是目录: {}",
+                            path, is_file, is_dir
+                        );
+
                         if is_file {
-                            let name = path.file_name()
+                            let name = path
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("unknown")
                                 .to_string();
-                            
+
                             let size = match entry.metadata() {
                                 Ok(metadata) => metadata.len(),
                                 Err(e) => {
@@ -174,21 +183,18 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                                     0
                                 }
                             };
-                            
-                            let modified = match entry.metadata()
-                                .and_then(|m| m.modified()) {
-                                Ok(time) => {
-                                    match time.duration_since(std::time::UNIX_EPOCH) {
-                                        Ok(duration) => {
-                                            let timestamp = duration.as_secs();
-                                            format_timestamp(timestamp)
-                                        },
-                                        Err(_) => "Unknown".to_string(),
+
+                            let modified = match entry.metadata().and_then(|m| m.modified()) {
+                                Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
+                                    Ok(duration) => {
+                                        let timestamp = duration.as_secs();
+                                        format_timestamp(timestamp)
                                     }
+                                    Err(_) => "Unknown".to_string(),
                                 },
                                 Err(_) => "Unknown".to_string(),
                             };
-                            
+
                             println!("  ✅ 添加文件: {} ({}字节)", name, size);
                             files.push(SandboxFile {
                                 name,
@@ -197,30 +203,38 @@ pub async fn list_files_in_directory(directory: String) -> Result<Vec<SandboxFil
                                 modified,
                             });
                         }
-                    },
+                    }
                     Err(e) => {
                         println!("  ⚠️ 读取条目失败: {}", e);
                         continue;
                     }
                 }
             }
-            println!("📊 [list_files_in_directory] 总共发现 {} 个条目，其中 {} 个文件", entry_count, files.len());
-        },
+            println!(
+                "📊 [list_files_in_directory] 总共发现 {} 个条目，其中 {} 个文件",
+                entry_count,
+                files.len()
+            );
+        }
         Err(e) => {
             println!("❌ [list_files_in_directory] 读取目录失败: {}", e);
             return Err(format!("Failed to read directory: {}", e));
         }
     }
-    
+
     // 按名称排序
     files.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     println!("✅ [list_files_in_directory] 返回 {} 个文件", files.len());
     Ok(files)
 }
 
 #[tauri::command]
-pub async fn export_sandbox(_file_name: String, _dest_path: String, _passphrase: String) -> Result<(), String> {
+pub async fn export_sandbox(
+    _file_name: String,
+    _dest_path: String,
+    _passphrase: String,
+) -> Result<(), String> {
     // TODO: 实现文件导出功能
     Err("Export functionality not implemented yet".to_string())
 }
@@ -234,46 +248,37 @@ pub async fn import_sandbox(_src_path: String, _passphrase: String) -> Result<Sa
 /// 删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
-
-
     let path = Path::new(&file_path);
-    
+
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| format!("删除文件失败: {}", e))?;
 
         // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
-        let file_name = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        let parent_dir = path.parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or(".");
-        
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let parent_dir = path.parent().and_then(|p| p.to_str()).unwrap_or(".");
+
         // 模式1: {file_path}.cmap (mask_file 创建的)
         let cmap_path1 = format!("{}.cmap", file_path);
 
         if Path::new(&cmap_path1).exists() {
             match std::fs::remove_file(&cmap_path1) {
-                Ok(_) => {},
-                Err(_e) => {},
+                Ok(_) => {}
+                Err(_e) => {}
             }
         } else {
-            
             // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
-            let file_stem = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
 
             if Path::new(&cmap_path2).exists() {
                 match std::fs::remove_file(&cmap_path2) {
-                    Ok(_) => {},
-                    Err(_e) => {},
+                    Ok(_) => {}
+                    Err(_e) => {}
                 }
             } else {
             }
         }
-        
+
         Ok("文件已删除".to_string())
     } else {
         Err("文件不存在".to_string())
@@ -283,66 +288,59 @@ pub async fn delete_sandbox_file(file_path: String) -> Result<String, String> {
 /// 批量删除沙箱文件
 #[tauri::command]
 pub async fn delete_sandbox_files(file_paths: Vec<String>) -> Result<String, String> {
-    
     let mut deleted_count = 0;
     let mut errors = Vec::new();
-    
-    for file_path in file_paths {
 
+    for file_path in file_paths {
         let path = Path::new(&file_path);
-        
+
         if path.exists() {
             match std::fs::remove_file(path) {
                 Ok(_) => {
                     deleted_count += 1;
 
                     // 尝试删除对应的 .cmap 对照文件（支持两种命名模式）
-                    let file_name = path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    let parent_dir = path.parent()
-                        .and_then(|p| p.to_str())
-                        .unwrap_or(".");
-                    
+                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    let parent_dir = path.parent().and_then(|p| p.to_str()).unwrap_or(".");
+
                     // 模式1: {file_path}.cmap (mask_file 创建的)
                     let cmap_path1 = format!("{}.cmap", file_path);
 
                     if Path::new(&cmap_path1).exists() {
                         match std::fs::remove_file(&cmap_path1) {
-                            Ok(_) => {},
-                            Err(_e) => {},
+                            Ok(_) => {}
+                            Err(_e) => {}
                         }
                     } else {
-                        
                         // 模式2: masked_{filename}.cmap (save_preview_result 创建的)
-                        let file_stem = path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
+                        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                         let cmap_path2 = format!("{}/masked_{}.cmap", parent_dir, file_stem);
 
                         if Path::new(&cmap_path2).exists() {
                             match std::fs::remove_file(&cmap_path2) {
-                                Ok(_) => {},
-                                Err(_e) => {},
+                                Ok(_) => {}
+                                Err(_e) => {}
                             }
                         } else {
                         }
                     }
-                },
+                }
                 Err(e) => {
-
                     errors.push(format!("删除失败: {}", e));
-                },
+                }
             }
         } else {
-
         }
     }
-    
+
     if errors.is_empty() {
         Ok(format!("成功删除 {} 个文件", deleted_count))
     } else {
-        Ok(format!("删除了 {} 个文件，{} 个失败", deleted_count, errors.len()))
+        Ok(format!(
+            "删除了 {} 个文件，{} 个失败",
+            deleted_count,
+            errors.len()
+        ))
     }
 }
 
@@ -351,12 +349,12 @@ pub async fn delete_sandbox_files(file_paths: Vec<String>) -> Result<String, Str
 pub async fn get_sandbox_dir_path() -> Result<String, String> {
     let temp_dir = std::env::temp_dir();
     let output_dir = temp_dir.join("cheersai-vault").join("output");
-    
+
     // 确保目录存在
     if !output_dir.exists() {
         std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
     }
-    
+
     Ok(output_dir.to_string_lossy().to_string())
 }
 
@@ -365,24 +363,24 @@ pub async fn get_sandbox_dir_path() -> Result<String, String> {
 pub async fn open_sandbox_dir() -> Result<String, String> {
     let temp_dir = std::env::temp_dir();
     let output_dir = temp_dir.join("cheersai-vault").join("output");
-    
+
     // 确保目录存在
     if !output_dir.exists() {
         std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         std::process::Command::new("explorer")
             .creation_flags(CREATE_NO_WINDOW)
             .arg(&output_dir)
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
@@ -390,7 +388,7 @@ pub async fn open_sandbox_dir() -> Result<String, String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
@@ -398,7 +396,7 @@ pub async fn open_sandbox_dir() -> Result<String, String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     Ok("已打开沙箱目录".to_string())
 }
 
@@ -407,21 +405,21 @@ pub async fn open_sandbox_dir() -> Result<String, String> {
 pub async fn clear_sandbox_dir() -> Result<String, String> {
     let temp_dir = std::env::temp_dir();
     let output_dir = temp_dir.join("cheersai-vault").join("output");
-    
+
     if output_dir.exists() {
         let entries = std::fs::read_dir(&output_dir).map_err(|e| e.to_string())?;
         let mut deleted_count = 0;
-        
+
         for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
-            
+
             if path.is_file() {
                 std::fs::remove_file(path).map_err(|e| e.to_string())?;
                 deleted_count += 1;
             }
         }
-        
+
         Ok(format!("已清空沙箱目录，删除了 {} 个文件", deleted_count))
     } else {
         Ok("沙箱目录不存在".to_string())
@@ -441,7 +439,7 @@ pub async fn lock_sandbox_files(directory: String) -> Result<String, String> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         if let Ok(entries) = std::fs::read_dir(dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -487,7 +485,7 @@ pub async fn unlock_sandbox_files(directory: String) -> Result<String, String> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         if let Ok(entries) = std::fs::read_dir(dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -523,9 +521,9 @@ pub async fn unlock_sandbox_files(directory: String) -> Result<String, String> {
 /// 格式化时间戳为可读格式
 fn format_timestamp(timestamp: u64) -> String {
     use std::time::UNIX_EPOCH;
-    
+
     let system_time = UNIX_EPOCH + std::time::Duration::from_secs(timestamp);
-    
+
     // 简单的时间格式化（实际应用中可能需要更复杂的格式化）
     match system_time.elapsed() {
         Ok(elapsed) => {
@@ -545,7 +543,7 @@ fn format_timestamp(timestamp: u64) -> String {
                     }
                 }
             }
-        },
+        }
         Err(_) => {
             // 时间戳在未来，直接显示日期
             "未来时间".to_string()

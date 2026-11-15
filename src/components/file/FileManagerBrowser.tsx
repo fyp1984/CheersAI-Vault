@@ -15,17 +15,22 @@ import { Button, Message, Badge, Card, Loading, Input } from "@/components/ui/ch
 import {
   confirmRuntimeFileBayUploads,
   downloadRuntimeArtifact,
+  downloadRuntimeExcelArtifactMember as downloadRuntimeExcelArtifactMemberRequest,
   fetchRuntimeBatch,
   fetchRuntimeBatches,
+  fetchRuntimeExcelArtifactMembers,
   fetchRuntimeFileBayCandidates,
   fetchRuntimeFileBayStatus,
 } from "@/lib/runtime/client";
+import { EXCEL_ARTIFACT_ACTION_LABELS, excelMemberActionsForKinds } from "@/lib/runtime/excelClient";
 import { runtimeFormatLabel } from "@/lib/runtime/formatCatalog";
 import type {
   RuntimeBatchDetail,
   RuntimeBatchFile,
   RuntimeBatchStatus,
   RuntimeBatchSummary,
+  RuntimeExcelArtifactMemberKind,
+  RuntimeExcelPersistedFile,
   RuntimeFileBayCandidate,
   RuntimeFileBayStatusResponse,
   RuntimeFileBayUploadItem,
@@ -161,6 +166,34 @@ export function FileManagerBrowser() {
   const [connection, setConnection] = useState<ConnectionState>("ok");
   const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // R-closeout (工作包 C): per-artifact Excel manifest members. Download
+  // actions render only for kinds actually present in the manifest.
+  const [excelMembers, setExcelMembers] = useState<
+    Record<string, RuntimeExcelPersistedFile[] | "loading" | "error">
+  >({});
+  const excelMembersFetchedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!detail) return;
+    let cancelled = false;
+    for (const file of detail.files) {
+      if (file.artifact_kind !== "excel_bundle_manifest" || !file.artifact_id) continue;
+      const artifactId = file.artifact_id;
+      if (excelMembersFetchedRef.current.has(artifactId)) continue;
+      excelMembersFetchedRef.current.add(artifactId);
+      setExcelMembers((current) => ({ ...current, [artifactId]: "loading" }));
+      void fetchRuntimeExcelArtifactMembers(artifactId).then((result) => {
+        if (cancelled) return;
+        setExcelMembers((current) => ({
+          ...current,
+          [artifactId]: result.ok ? result.data.persisted_files : "error",
+        }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
 
   const loadBatches = useCallback(async () => {
     setListState({ kind: "loading" });
@@ -293,6 +326,24 @@ export function FileManagerBrowser() {
         result.reason === "network"
           ? "当前连不上本地服务，请确认服务已启动后再试。"
           : result.message ?? "下载没有成功，请稍后再试。"
+      );
+    }
+  };
+
+  const downloadExcelArtifactMember = async (
+    artifactId: string,
+    memberKind: RuntimeExcelArtifactMemberKind
+  ) => {
+    if (downloadingArtifactId) return;
+    setDownloadingArtifactId(artifactId);
+    setDownloadError(null);
+    const result = await downloadRuntimeExcelArtifactMemberRequest(artifactId, memberKind);
+    setDownloadingArtifactId(null);
+    if (!result.ok) {
+      setDownloadError(
+        result.reason === "network"
+          ? "当前连不上本地服务，请确认服务已启动后再试。"
+          : result.message ?? "Excel 产物下载没有成功，请稍后再试。"
       );
     }
   };
@@ -533,7 +584,9 @@ export function FileManagerBrowser() {
                         <td className="px-4 py-3">{file.masked_entity_count ?? "—"}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            {file.status === "Completed" && file.artifact_id && (
+                            {file.status === "Completed" &&
+                            file.artifact_id &&
+                            file.artifact_kind !== "excel_bundle_manifest" && (
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -543,6 +596,41 @@ export function FileManagerBrowser() {
                               >
                                 {downloadingArtifactId === file.artifact_id ? "下载中…" : "下载 Markdown"}
                               </Button>
+                            )}
+                            {file.status === "Completed" &&
+                            file.artifact_id &&
+                            file.artifact_kind === "excel_bundle_manifest" && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {excelMemberActionsForKinds(excelMembers[file.artifact_id]).map(
+                                  (kind) => (
+                                    <Button
+                                      key={kind}
+                                      variant="secondary"
+                                      size="sm"
+                                      icon={Download}
+                                      disabled={downloadingArtifactId === file.artifact_id}
+                                      onClick={() =>
+                                        void downloadExcelArtifactMember(
+                                          file.artifact_id as string,
+                                          kind
+                                        )
+                                      }
+                                    >
+                                      {downloadingArtifactId === file.artifact_id
+                                        ? "下载中…"
+                                        : EXCEL_ARTIFACT_ACTION_LABELS.find(
+                                            (action) => action.kind === kind
+                                          )?.label ?? "下载"}
+                                    </Button>
+                                  )
+                                )}
+                                {excelMembers[file.artifact_id] === "loading" && (
+                                  <span className="text-xs text-gray-400">加载产物清单…</span>
+                                )}
+                                {excelMembers[file.artifact_id] === "error" && (
+                                  <span className="text-xs text-red-400">产物清单加载失败</span>
+                                )}
+                              </div>
                             )}
                             {file.status === "Completed" && file.artifact_id && file.restore_available ? (
                               <Button

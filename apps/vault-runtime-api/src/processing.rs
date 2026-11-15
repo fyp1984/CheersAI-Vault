@@ -11,9 +11,14 @@
 
 use component_runtime::OcrConfig;
 use engine_core::{
-    get_builtin_rules, ocr_result_to_markdown, parse_input, sensitive_term_rules, InputFormat,
-    MappingEntry, MaskingRequest, MaskingService, SensitiveTermDefinition,
+    get_builtin_rules, ocr_result_to_markdown, parse_input, sensitive_term_rules,
+    DeterministicFinding, InputFormat, MappingEntry, MaskingRequest, MaskingService,
+    SensitiveTermDefinition,
 };
+use once_cell::sync::Lazy;
+use regex::Regex;
+use std::collections::HashSet;
+use std::path::Path;
 
 use crate::legacy_powerpoint;
 
@@ -31,6 +36,30 @@ use crate::legacy_powerpoint;
 /// snapshot never reaches any public API response, DOM, log or event; it
 /// only ever travels through this internal, same-process channel.
 const SENSITIVE_TERMS_SNAPSHOT_RULE_PREFIX: &str = "__sensitive_terms_snapshot__:";
+
+static CHINESE_NAME_CONTEXT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new(
+            r"(?m)(?:客户姓名|联系人姓名|联系人|负责人|项目负责人|对接人|接口人|姓名)\s*[:：]\s*([一-龥]{2,4})",
+        )
+        .unwrap(),
+        Regex::new(r"(?m)([一-龥]{2,4})(?:先生|女士|老师)").unwrap(),
+    ]
+});
+
+const COMMON_CHINESE_SURNAMES: &[&str] = &[
+    "王", "李", "张", "刘", "陈", "杨", "黄", "赵", "周", "吴", "徐", "孙", "朱", "马", "胡",
+    "郭", "林", "何", "高", "梁", "郑", "罗", "宋", "谢", "唐", "韩", "曹", "许", "邓", "萧",
+    "冯", "曾", "程", "蔡", "彭", "潘", "袁", "于", "董", "余", "苏", "叶", "吕", "魏", "蒋",
+    "田", "杜", "丁", "沈", "姜", "范", "江", "傅", "钟", "卢", "汪", "戴", "崔", "任", "陆",
+    "廖", "姚", "方", "金", "邱", "夏", "谭", "韦", "贾", "邹", "石", "熊", "孟", "秦", "阎",
+    "薛", "侯", "雷", "白", "龙", "段", "郝", "孔", "邵", "史", "毛", "常", "万", "顾", "赖",
+    "武", "康", "贺", "严", "尹", "钱", "施", "牛", "洪", "龚",
+];
+
+const COMPOUND_CHINESE_SURNAMES: &[&str] = &[
+    "欧阳", "司马", "上官", "诸葛", "东方", "夏侯", "尉迟", "公孙", "慕容", "司徒",
+];
 
 /// Wrap an already-serialized sensitive-term snapshot (a JSON array of
 /// [`SensitiveTermDefinition`]) into the opaque `rule_ids` entry this module
@@ -54,6 +83,108 @@ fn decode_sensitive_terms_snapshot(rule_ids: &[String]) -> Vec<SensitiveTermDefi
         .find_map(|id| id.strip_prefix(SENSITIVE_TERMS_SNAPSHOT_RULE_PREFIX))
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default()
+}
+
+fn rule_enabled(rule_ids: &[String], id: &str) -> bool {
+    rule_ids.iter().any(|rule_id| rule_id == id)
+}
+
+fn looks_like_chinese_name(candidate: &str) -> bool {
+    let chars: Vec<char> = candidate.chars().collect();
+    if !(2..=4).contains(&chars.len()) {
+        return false;
+    }
+    if !chars.iter().all(|ch| matches!(ch, '\u{4e00}'..='\u{9fa5}')) {
+        return false;
+    }
+
+    if COMPOUND_CHINESE_SURNAMES
+        .iter()
+        .any(|surname| candidate.starts_with(surname) && chars.len() >= surname.chars().count() + 1)
+    {
+        return true;
+    }
+
+    COMMON_CHINESE_SURNAMES
+        .iter()
+        .any(|surname| candidate.starts_with(surname))
+}
+
+fn collect_deterministic_findings(content: &str, rule_ids: &[String]) -> Vec<DeterministicFinding> {
+    if !rule_enabled(rule_ids, "chinese_name") {
+        return vec![];
+    }
+
+    let mut findings = Vec::new();
+    let mut seen = HashSet::new();
+
+    for pattern in CHINESE_NAME_CONTEXT_PATTERNS.iter() {
+        for captures in pattern.captures_iter(content) {
+            let Some(name_match) = captures.get(1) else {
+                continue;
+            };
+            let candidate = name_match.as_str();
+            if !looks_like_chinese_name(candidate) {
+                continue;
+            }
+            if !seen.insert((name_match.start(), name_match.end())) {
+                continue;
+            }
+            findings.push(DeterministicFinding {
+                text: candidate.to_string(),
+                entity_type: "姓名".to_string(),
+                start: name_match.start(),
+                end: name_match.end(),
+            });
+        }
+    }
+
+    findings.sort_by_key(|finding| finding.start);
+    findings
+}
+
+fn active_rules_for_rule_ids(
+    rule_ids: &[String],
+    sensitive_terms: &[SensitiveTermDefinition],
+) -> Vec<engine_core::MaskingRule> {
+    let mut rules: Vec<_> = get_builtin_rules()
+        .iter()
+        .filter(|rule| rule_ids.iter().any(|rule_id| rule_id == &rule.id))
+        .cloned()
+        .map(|mut rule| {
+            rule.enabled = true;
+            rule
+        })
+        .collect();
+    if !sensitive_terms.is_empty() || rule_enabled(rule_ids, crate::store::SENSITIVE_TERMS_RULE_ID) {
+        rules.extend(sensitive_term_rules(sensitive_terms));
+    }
+    rules
+}
+
+pub fn mask_display_name(
+    display_name: &str,
+    rule_ids: &[String],
+    sensitive_terms: &[SensitiveTermDefinition],
+) -> String {
+    let sanitized = crate::sanitize_display_name(display_name);
+    let path = Path::new(&sanitized);
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    let original_stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("upload");
+    let rules = active_rules_for_rule_ids(rule_ids, sensitive_terms);
+    let findings = engine_core::collect_filename_findings(original_stem, &rules);
+    let masked_stem = engine_core::mask_filename(original_stem, &rules, &findings).masked;
+    let final_stem = if masked_stem.trim_matches([' ', '.']).is_empty() {
+        "upload".to_string()
+    } else {
+        masked_stem
+    };
+
+    let rebuilt = match extension.filter(|ext| !ext.is_empty()) {
+        Some(ext) => format!("{final_stem}.{ext}"),
+        None => final_stem,
+    };
+    crate::sanitize_display_name(&rebuilt)
 }
 
 /// Inputs required to process one file. `bytes` must already be the raw
@@ -149,27 +280,14 @@ pub async fn process_input(
         }
     };
 
-    let mut rules: Vec<_> = get_builtin_rules()
-        .iter()
-        .filter(|rule| input.rule_ids.iter().any(|rule_id| rule_id == &rule.id))
-        .cloned()
-        .map(|mut rule| {
-            rule.enabled = true;
-            rule
-        })
-        .collect();
-    // Enabled sensitive terms frozen at batch/preview creation time (6.1);
-    // both this worker and the preview worker route through here, so B1
-    // holds without preview.rs needing any change.
-    rules.extend(sensitive_term_rules(&decode_sensitive_terms_snapshot(
-        input.rule_ids,
-    )));
+    let rules = active_rules_for_rule_ids(input.rule_ids, &decode_sensitive_terms_snapshot(input.rule_ids));
 
+    let deterministic_findings = collect_deterministic_findings(&content, input.rule_ids);
     let result = MaskingService::mask(MaskingRequest {
         input_format: input.input_format,
         content,
         rules,
-        deterministic_findings: vec![],
+        deterministic_findings,
     })
     .map_err(|_| ProcessingFailure {
         code: "MASKING_FAILED".to_string(),
@@ -239,6 +357,41 @@ mod tests {
         assert!(!output.markdown.contains("13900000000"));
         assert_eq!(output.mappings.len(), 1);
         assert_eq!(output.mappings[0].original, "13900000000");
+    }
+
+    #[test]
+    fn collect_deterministic_findings_extracts_contextual_chinese_names_only() {
+        let findings = collect_deterministic_findings(
+            "客户姓名：张三\n项目负责人：流程验证\n请联系张三老师完成确认\n",
+            &["chinese_name".to_string()],
+        );
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].text, "张三");
+        assert_eq!(findings[0].entity_type, "姓名");
+    }
+
+    #[tokio::test]
+    async fn process_input_masks_chinese_name_from_contextual_findings() {
+        let rule_ids = vec![
+            "chinese_name".to_string(),
+            "phone".to_string(),
+            "email".to_string(),
+        ];
+        let output = process_input(ProcessingInput {
+            bytes: "客户姓名：张三\n联系电话：13900000000\n电子邮箱：zhangsan@example.com\n".as_bytes(),
+            display_name: "name.txt",
+            input_format: InputFormat::Text,
+            rule_ids: &rule_ids,
+            ocr_config: None,
+        })
+        .await
+        .unwrap();
+
+        assert!(output.markdown.contains("客户姓名：姓名1"));
+        assert!(output.markdown.contains("联系电话：***PHONE***2"));
+        assert!(output.markdown.contains("电子邮箱：***EMAIL***3"));
+        assert!(!output.markdown.contains("客户姓名：张三"));
     }
 
     #[tokio::test]
@@ -332,5 +485,36 @@ mod tests {
         assert!(output.markdown.contains("***PHONE***1"));
         assert!(!output.markdown.contains("内部代号"));
         assert!(!output.markdown.contains("13900000000"));
+    }
+
+    #[test]
+    fn mask_display_name_masks_builtin_rules_and_keeps_extension() {
+        let masked = mask_display_name(
+            "张三-13900000000-报价单.txt",
+            &["chinese_name".to_string(), "phone".to_string()],
+            &[],
+        );
+
+        assert!(masked.ends_with(".txt"));
+        assert!(!masked.contains("张三"));
+        assert!(!masked.contains("13900000000"));
+        assert!(masked.contains("张*"));
+        assert!(masked.contains("139****0000"));
+    }
+
+    #[test]
+    fn mask_display_name_masks_enabled_sensitive_terms() {
+        let masked = mask_display_name(
+            "机密项目-交付清单.txt",
+            &[crate::store::SENSITIVE_TERMS_RULE_ID.to_string()],
+            &[SensitiveTermDefinition {
+                id: "term-1".into(),
+                term: "机密项目".into(),
+                category: "机密".into(),
+                enabled: true,
+            }],
+        );
+
+        assert_eq!(masked, "[机密]-交付清单.txt");
     }
 }

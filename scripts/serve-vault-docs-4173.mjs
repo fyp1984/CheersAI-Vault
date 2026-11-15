@@ -6,7 +6,7 @@ import url from "node:url";
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const root = path.resolve(repoRoot, "dist");
-const port = 4173;
+const port = Number(process.env.VAULT_PREVIEW_PORT || "4173");
 const host = "127.0.0.1";
 const runtimeTarget = process.env.VAULT_RUNTIME_TARGET || "http://127.0.0.1:8787";
 
@@ -116,7 +116,7 @@ function proxyRuntime(req, res) {
   upstream.on("error", () => {
     sendJson(res, 502, {
       code: "RUNTIME_UNAVAILABLE",
-      message: "本地 Runtime 暂不可用，请确认 8787 端口服务已启动。",
+      message: `本地 Runtime 暂不可用，请确认 ${runtimeTarget} 已启动。`,
       retryable: true,
     });
   });
@@ -152,6 +152,17 @@ const server = http.createServer((req, res) => {
     }
     sendFile(res, requested);
   });
+});
+
+server.on("error", (error) => {
+  if (error && typeof error === "object" && "code" in error && error.code === "EADDRINUSE") {
+    console.warn(`[docs-test] port ${port} already in use, keep using the existing preview server.`);
+    console.warn(`[docs-test] expected URL: http://${host}:${port}`);
+    console.warn(`[docs-test] expected /api proxy target: ${runtimeTarget}`);
+    process.exit(0);
+  }
+
+  throw error;
 });
 
 server.listen(port, host, () => {

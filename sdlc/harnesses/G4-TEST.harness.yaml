@@ -1,0 +1,63 @@
+# G4-TEST Harness 驱动定义（四象限全覆盖）
+harness_id: G4-TEST
+harness_version: v2.0
+related_he_principles: [HE-1, HE-2, HE-3, HE-4, HE-6, HE-7]
+
+scope:
+  phase: testing-and-acceptance
+  actor: QA (测试验收)
+  input_artifact: "sdlc/artifacts/test-report-<TICKET>.json + sdlc/docs/TEST-<TICKET>.md"
+  upstream_bound: "G3-CODE 必须先 PASS"
+  forbidden_upstream_bypass: [RO]
+  quadrants_mandatory: [functional, performance, security_sast_sca_dast, compatibility]
+
+deterministic:
+  command_template: "python3 {{sdlc_root}}/bin/gate-test.py --test-report {{test_report}} --ticket {{ticket}} --actor {{actor_email}}"
+  required_env: [SDLC_SESSION_ID]
+  # 允许 demo 模式自动生成最小占位 test-report.json，但必须提示用户（gate-test.py 会问 y/N）
+  demo_mode_allowed: true
+  demo_mode_flag_env: "G4_DEMO_ALLOWED"
+
+observability:
+  trace_9_fields_required: true
+  mandatory_metrics:
+    - p0_pass_rate        # 1.0 = 100% (必须)
+    - p1_pass_rate        # 1.0 = 100%
+    - p0_fix_rate         # 1.0
+    - p1_fix_rate         # 1.0
+    - sast_critical_count # 0
+    - sca_critical_count  # 0
+    - dast_high_count     # 0
+    - tp99_regression_ratio # ≤ 1.10
+  security_compliance_quadrant_must_all_zero: [sast_critical_count, sca_critical_count, dast_high_count]
+
+zerotrust_gate:
+  exit_code_map:
+    0: PASS
+    1: MISSING_OR_EMPTY_REPORT
+    6: ANY_TEST_THRESHOLD_BREACH    # 任一上面 mandatory 未达标
+  immediate_terminate_on_nonzero: true
+
+hac:
+  file_globs_included_in_manifest:
+    - "sdlc/harnesses/G4-TEST.harness.yaml"
+    - "sdlc/gates/G4-TEST.spec.yaml"
+    - "sdlc/bin/gate-test.py"
+    - "sdlc/templates/TEST-TEMPLATE.md"
+  change_require_approvals: [QA, RO]
+
+# HE-6：G4 对反馈驱动最强，任何 FP/FN 漏误判必须立刻反哺
+regression_registry:
+  auto_ingest_fail_evidence_to: "sdlc/audit/{date}/regression-harness-registry.jsonl"
+  mandatory_fix_days_for_fn: 3    # FN(漏判) 必须 3 天内加入回归 harness
+  tuning_policy:
+    - trigger: 任何 1 次 FN
+      action: 自动创建 issue「在 G4 阈值 + 对应象限用例中新增该反例回归 harness」
+    - trigger: 任何 2 次 FP（同一个非缺陷报 2 次缺陷）
+      action: 补充 threshold 噪声过滤（放宽 1 档阈值 或 加入用例黑名单）
+
+coverage:
+  min_triggers_per_sprint: 2
+  weight_in_overall_coverage: 0.2
+  # HE-7：Harness Coverage 必须 ≥ 代码覆盖率的 90%
+  min_ratio_vs_code_coverage: 0.90

@@ -48,6 +48,8 @@ export interface PreviewResult {
   original_rows: string[][];
   masked_rows: string[][];
   headers: string[];
+  original_file_stem: string;
+  original_file_name: string;
   masked_file_stem: string;
   masked_file_name: string;
   detected_entities?: RowEntities[];
@@ -161,6 +163,13 @@ export interface PlatformContext {
   ocrStrategy: "embedded_python" | "system_python_venv" | "system_python" | string;
   ollamaStrategy: "binary_check_plus_background_serve" | "binary_check_plus_app_launch" | "binary_check_plus_cli_serve" | string;
 }
+
+export interface UpdateBackupSummary {
+  backupPath: string;
+  sourcePath: string;
+  copiedFiles: number;
+  createdAt: string;
+}
 // FileBay Config types
 export interface FileBayConfig {
   url: string;
@@ -225,4 +234,96 @@ export interface SyncConfigRequest {
   email: string;
   token?: string;
   user_id?: string;
+}
+
+export type MaskingStrategyId =
+  | 'FULL_MASK'
+  | 'PHONE_MID4'
+  | 'IDCARD_MID10'
+  | 'BANKCARD_LAST4'
+  | 'EMAIL_USER_MASK'
+  | 'DEFAULT_VALUE'
+  | 'CLEAR_COL'
+  | 'BANK_CARD'
+  | 'EMAIL'
+  | 'ADDRESS'
+  | 'COMPLIANCE_ID';
+
+export interface CellOverrideRule {
+  sheet: string;
+  row: number;
+  col: number;
+  strategy: MaskingStrategyId;
+  replacement?: string;
+}
+
+export interface ColumnMaskRule {
+  sheet: string;
+  colIndex: number;
+  headerText: string;
+  strategy: MaskingStrategyId;
+  replacement?: string;
+}
+
+export type EncSourceKeyMode = 'SANDBOX_REUSED' | 'SECONDARY_PASSPHRASE' | 'DEVICE_KEY';
+
+export interface ExcelParseStructureOptions {
+  file_path: string;
+}
+
+export interface SheetDef {
+  name: string;
+  headers: string[];
+  column_samples: string[][];
+  /** @deprecated 保留以兼容旧 Runtime/旧桌面端解析结果；新代码一律优先使用 column_samples。 */
+  data_hint?: string[];
+  max_row: number;
+  max_col: number;
+}
+
+export interface ExcelMaskingConfig {
+  file_path: string;
+  sheet_policies: {
+    sheet: string;
+    column_rules: ColumnMaskRule[];
+    cell_overrides: CellOverrideRule[];
+  }[];
+  retain_encrypted_source: boolean;
+  key_mode: EncSourceKeyMode;
+  secondary_passphrase?: string;
+  processing_time_ms?: number;
+  excel_config_sha256?: string;
+}
+
+export interface ExcelMaskPreview {
+  preview_rows: {
+    original_preview: (string | null)[];
+    masked: string[];
+    row_index: number;
+    sheet: string;
+  }[];
+  conflicts: string[];
+}
+
+export interface ExcelApplyResult {
+  masked_path: string;
+  ecmap_path: string | null;
+  encrypted_source_path: string | null;
+  report_md: string;
+  status: 'APPLIED' | 'DOWNGRADE_APPLIED' | 'ERROR';
+}
+
+export interface ExcelRestoreReq {
+  restore_mode: 'A' | 'B';
+  masked_file_path: string;
+  ecmap_file_path: string;
+  encrypted_source_path?: string;
+  user_original_file_path?: string;
+  passphrase?: string;
+  output_path: string;
+}
+
+export interface ExcelRestoreResult {
+  restored_path: string;
+  sha256_verified: boolean;
 }

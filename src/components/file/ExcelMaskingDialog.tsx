@@ -1,0 +1,1587 @@
+/* Copyright 2026 CheersAI Team. Licensed under Apache-2.0 */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Grid3X3,
+  Info,
+  Key,
+  Lock,
+  RefreshCw,
+  Shield,
+  Sparkles,
+  Table2,
+  X,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
+import { PassphraseBox } from "@/components/common/PassphraseBox";
+import { tauriCommands } from "@/lib/tauri";
+import { normalizeCaughtRuntimeErrorMessage } from "@/lib/runtime/errorClassification";
+import { classifyDesktopExcelPreviewError, hasUsableSandboxPassphrase } from "@/lib/excelMaskingContract";
+import { useExcelMaskingStore } from "@/store/excelMaskingStore";
+import type {
+  CellOverrideRule,
+  ColumnMaskRule,
+  EncSourceKeyMode,
+  ExcelMaskingConfig,
+  ExcelMaskPreview,
+  MaskingStrategyId,
+  SheetDef,
+} from "@/types/commands";
+import { cn } from "@/lib/utils";
+
+export const RETAIN_MESSAGES = {
+  tab0: "加密源留存可选：不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用），但仍可正常完成脱敏。如需反脱敏，可提供用户原件并通过路径 B 还原——要求原件 SHA-256 与 .ecmap header 完全匹配，不支持凭空猜测恢复。",
+  confirm: "不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用）；如需反脱敏，可改用用户原件通过路径 B 还原，要求原件 SHA-256 与 .ecmap header 完全匹配，不支持凭空猜测恢复。",
+  unmask_missing: "反脱敏材料不足：不勾选加密留存将无法仅凭 .ecmap 还原（路径 A 不可用，需要 .ecmap + 加密源 + 口令三者齐全）；请提供与原始文件 SHA-256 完全匹配的用户原件以尝试路径 B，不支持凭空猜测恢复。",
+};
+
+export const PLACEHOLDER_STRATEGIES: MaskingStrategyId[] = [
+  "BANK_CARD",
+  "EMAIL",
+  "ADDRESS",
+  "COMPLIANCE_ID",
+];
+
+const STRATEGY_LABELS: Record<MaskingStrategyId, string> = {
+  FULL_MASK: "全掩码（***）",
+  PHONE_MID4: "手机中间 4 位",
+  IDCARD_MID10: "身份证掩码（18 位 6+8+4 / 15 位 3+8+4）",
+  BANKCARD_LAST4: "银行卡后 4 位",
+  EMAIL_USER_MASK: "邮箱用户名掩码",
+  DEFAULT_VALUE: "默认值替换",
+  CLEAR_COL: "清空整列",
+  BANK_CARD: "银行卡（预留占位）",
+  EMAIL: "邮箱（预留占位）",
+  ADDRESS: "地址（预留占位）",
+  COMPLIANCE_ID: "合规 ID（预留占位）",
+};
+
+const ACTIVE_STRATEGIES: MaskingStrategyId[] = [
+  "FULL_MASK",
+  "PHONE_MID4",
+  "IDCARD_MID10",
+  "BANKCARD_LAST4",
+  "EMAIL_USER_MASK",
+  "DEFAULT_VALUE",
+  "CLEAR_COL",
+];
+
+export function isSelectableMaskingStrategy(
+  strategy: MaskingStrategyId
+): boolean {
+  return ACTIVE_STRATEGIES.includes(strategy);
+}
+
+export function getMaskingStrategyOptionState(strategy: MaskingStrategyId): {
+  disabled: boolean;
+  className?: string;
+} {
+  const disabled = !isSelectableMaskingStrategy(strategy);
+  return {
+    disabled,
+    className: disabled ? "text-gray-400" : undefined,
+  };
+}
+
+interface ExcelMaskingDialogProps {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  filePaths?: string[];
+  files?: File[];
+  onCancel: () => void;
+  onConfirm: (
+    configs: ExcelMaskingConfig[],
+    outputDirOverride?: string
+  ) => void | Promise<void>;
+  defaultPassphrase?: string;
+  defaultOutputDir?: string;
+  onParseStructure?: (file: File) => Promise<SheetDef[]>;
+  onPreviewMasking?: (
+    file: File,
+    config: ExcelMaskingConfig,
+    maxRows?: number
+  ) => Promise<ExcelMaskPreview>;
+}
+
+/**
+ * Retention is optional (scope B): whether masking can proceed only depends
+ * on having at least one rule, never on `retainChecked`.
+ */
+export function hasAnyExcelMaskingRule(rulesCount: number): boolean {
+  return rulesCount > 0;
+}
+
+export function canConfirmExcelMasking(
+  rulesCount: number,
+  confirmSecondCheck: boolean
+): boolean {
+  return hasAnyExcelMaskingRule(rulesCount) && confirmSecondCheck;
+}
+
+/**
+ * R-closeout (工作包 D): 预览失败的安全分类文案。预览是 Excel 配置流程的
+ * 第一个失败层；此前 `loadPreview` 的 catch 只清空预览、不展示任何错误，
+ * 用户只能看到"没有预览"而无法定位失败原因。本函数把失败映射为固定安全
+ * 文案（复用 `excelMaskingContract` 的分类器，绝不回显路径、口令、堆栈或
+ * 密文），使该层的最小修复可被纯函数测试钉住。
+ */
+export function excelPreviewFailureMessage(error: unknown): string {
+  return classifyDesktopExcelPreviewError(error);
+}
+
+export const MAX_CELL_OVERRIDE_CELLS = 10_000;
+export const CELL_RANGE_LIMIT_ERROR =
+  "单次单元格覆盖最多 10,000 个单元格，请缩小范围后重试";
+const CELL_RANGE_FORMAT_ERROR =
+  "单元格引用格式不正确，请使用如 A1、B3:D5 或 Sheet1!A2:B3 的格式";
+
+export interface ParsedCellRange {
+  sheet: string;
+  cells: { row: number; col: number }[];
+}
+
+type CellRangeParseResult =
+  | { status: "valid"; value: ParsedCellRange }
+  | { status: "invalid" }
+  | { status: "too-large" };
+
+function inspectCellRange(input: string, defaultSheet: string): CellRangeParseResult {
+  const trimmed = input.trim();
+  if (!trimmed) return { status: "invalid" };
+
+  const colLetterToIndex = (letters: string): number | null => {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+      result = result * 26 + (letters.charCodeAt(i) - 64);
+      if (!Number.isSafeInteger(result)) return null;
+    }
+    return result - 1;
+  };
+
+  const parseRef = (ref: string): { col: number; row: number } | null => {
+    const match = ref.match(/^([A-Za-z]+)(\d+)$/);
+    if (!match) return null;
+    const oneBasedRow = Number(match[2]);
+    const col = colLetterToIndex(match[1].toUpperCase());
+    if (!Number.isSafeInteger(oneBasedRow) || oneBasedRow < 1 || col === null) {
+      return null;
+    }
+    return { col, row: oneBasedRow - 1 };
+  };
+
+  const separatorIndex = trimmed.indexOf("!");
+  let sheetName = defaultSheet;
+  let refPart = trimmed;
+  if (separatorIndex >= 0) {
+    sheetName = trimmed.slice(0, separatorIndex);
+    refPart = trimmed.slice(separatorIndex + 1);
+  }
+  if (!sheetName.trim()) return { status: "invalid" };
+
+  const colonIndex = refPart.indexOf(":");
+  if (colonIndex >= 0) {
+    const start = parseRef(refPart.slice(0, colonIndex));
+    const end = parseRef(refPart.slice(colonIndex + 1));
+    if (!start || !end || start.row > end.row || start.col > end.col) {
+      return { status: "invalid" };
+    }
+
+    const rowCount = end.row - start.row + 1;
+    const colCount = end.col - start.col + 1;
+    if (
+      rowCount > MAX_CELL_OVERRIDE_CELLS ||
+      colCount > MAX_CELL_OVERRIDE_CELLS ||
+      rowCount > Math.floor(MAX_CELL_OVERRIDE_CELLS / colCount)
+    ) {
+      return { status: "too-large" };
+    }
+
+    const cells: ParsedCellRange["cells"] = [];
+    for (let row = start.row; row <= end.row; row++) {
+      for (let col = start.col; col <= end.col; col++) {
+        cells.push({ row, col });
+      }
+    }
+    return { status: "valid", value: { sheet: sheetName, cells } };
+  }
+
+  const single = parseRef(refPart);
+  if (!single) return { status: "invalid" };
+  return { status: "valid", value: { sheet: sheetName, cells: [single] } };
+}
+
+/**
+ * Parses a cell-override reference: a single cell (`A1`), a rectangle
+ * (`B3:D5`), optionally prefixed with an explicit sheet (`Sheet1!A2:B3`,
+ * defaulting to `defaultSheet` when omitted). Returns `null` for any input
+ * that doesn't match this grammar, including empty/whitespace-only input.
+ */
+export function parseCellRange(
+  input: string,
+  defaultSheet: string
+): ParsedCellRange | null {
+  const result = inspectCellRange(input, defaultSheet);
+  return result.status === "valid" ? result.value : null;
+}
+
+export function mergeCellOverrides(
+  existing: CellOverrideRule[],
+  parsed: ParsedCellRange,
+  strategy: MaskingStrategyId,
+  replacement: string
+): CellOverrideRule[] {
+  const targetKeys = new Set(
+    parsed.cells.map((cell) => `${parsed.sheet}\0${cell.row}\0${cell.col}`)
+  );
+  const retained = existing.filter(
+    (rule) => !targetKeys.has(`${rule.sheet}\0${rule.row}\0${rule.col}`)
+  );
+  const additions = parsed.cells.map((cell) => ({
+    sheet: parsed.sheet,
+    row: cell.row,
+    col: cell.col,
+    strategy,
+    replacement: replacement || undefined,
+  }));
+  return retained.concat(additions);
+}
+
+/**
+ * A fixed, safe (no internal parser detail/path/stack trace) error message
+ * for a cell-reference input that is non-empty but fails to parse; `null`
+ * while the input is empty or already valid, so the caller can clear the
+ * error the moment the input is corrected.
+ */
+export function cellRangeValidationError(
+  input: string,
+  defaultSheet: string
+): string | null {
+  if (!input.trim()) return null;
+  const result = inspectCellRange(input, defaultSheet);
+  if (result.status === "valid") return null;
+  return result.status === "too-large"
+    ? CELL_RANGE_LIMIT_ERROR
+    : CELL_RANGE_FORMAT_ERROR;
+}
+
+/**
+ * True when a preview response's request id no longer matches the most
+ * recently issued request: a fast repeated refresh must not let an earlier
+ * (slower) response overwrite a newer one.
+ */
+export function isStalePreviewResponse(
+  requestIdAtCallTime: number,
+  latestRequestId: number
+): boolean {
+  return requestIdAtCallTime !== latestRequestId;
+}
+
+/**
+ * AC-14: the independent secondary passphrase must be cleared the moment the
+ * key mode switches away from `SECONDARY_PASSPHRASE` (sandbox-reused and
+ * device-key modes never need it, and must not keep it lingering in memory),
+ * and switching back later must start empty rather than resurface a value
+ * typed during an earlier visit to this mode. Staying in
+ * `SECONDARY_PASSPHRASE` (mode unchanged, still selected) leaves the current
+ * in-progress value untouched.
+ */
+export function nextSecondaryPassphraseForKeyMode(
+  mode: EncSourceKeyMode,
+  currentSecondaryPassphrase: string
+): string {
+  return mode === "SECONDARY_PASSPHRASE" ? currentSecondaryPassphrase : "";
+}
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-6): fixed, safe
+ * explanation rendered while the shared sandbox default encryption passphrase
+ * is unavailable and the reuse mode is therefore disabled. It guides the user
+ * to set the 默认加密口令 in 沙箱管理 or to fall back to the independent
+ * secondary passphrase, and states that the sandbox PIN only locks/unlocks
+ * the sandbox and is never the encryption passphrase (FR-011). It must never
+ * echo any passphrase value, path, stack or internal response.
+ */
+export const SANDBOX_PASSPHRASE_UNAVAILABLE_HINT =
+  "当前没有可复用的默认加密口令，暂不能选择“复用沙箱口令”。请前往「沙箱管理」设置默认加密口令后重试，或改用「独立二级口令」并填写二级口令。沙箱 PIN 仅用于锁定与解锁沙箱，不是文件加密口令。";
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3): initial key
+ * mode when the dialog's key state is first created. A usable (non-blank)
+ * shared sandbox default encryption passphrase keeps the recommended reuse
+ * mode; `undefined`, empty or pure-whitespace values must start in the
+ * independent secondary passphrase mode instead of a reuse mode that could
+ * only fail later at the Rust apply step.
+ */
+export function initialKeyModeForSandboxPassphrase(
+  defaultPassphrase: string | undefined
+): EncSourceKeyMode {
+  return hasUsableSandboxPassphrase(defaultPassphrase)
+    ? "SANDBOX_REUSED"
+    : "SECONDARY_PASSPHRASE";
+}
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-5): pure
+ * decision for the forced fallback while the dialog is open. When the shared
+ * sandbox default encryption passphrase is unavailable, a stale
+ * `SANDBOX_REUSED` selection must not survive: it falls back to
+ * `SECONDARY_PASSPHRASE` and the stale in-memory secondary value (a mount
+ * prefill, never a user-typed one — AC-14 already cleared that when leaving
+ * the mode) is reset. Every other mode is kept so the user's deliberate
+ * choice stands (`DEVICE_KEY` needs no passphrase at all).
+ */
+export function nextKeyModeForSandboxAvailability(
+  open: boolean,
+  sandboxPassphraseAvailable: boolean,
+  keyMode: EncSourceKeyMode
+): { keyMode: EncSourceKeyMode; resetSecondaryPassphrase: boolean } {
+  if (!open || sandboxPassphraseAvailable || keyMode !== "SANDBOX_REUSED") {
+    return { keyMode, resetSecondaryPassphrase: false };
+  }
+  return { keyMode: "SECONDARY_PASSPHRASE", resetSecondaryPassphrase: true };
+}
+
+/**
+ * TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-4/AC-8): a key
+ * mode may only take part in the final confirm while its key material exists
+ * right now — `SANDBOX_REUSED` needs a usable sandbox default encryption
+ * passphrase, `SECONDARY_PASSPHRASE` needs a non-blank secondary passphrase,
+ * and `DEVICE_KEY` never needs either. Blocking here (button disabled and
+ * `handleConfirm` guarded) keeps a blank-passphrase run from ever reaching
+ * the Rust apply command, which is what produced the late
+ * “沙箱口令不能为空” failure the teacher saw.
+ */
+export function isKeyModeReadyForConfirm(
+  keyMode: EncSourceKeyMode,
+  options: { sandboxPassphraseAvailable: boolean; secondaryPassphrase: string }
+): boolean {
+  switch (keyMode) {
+    case "SANDBOX_REUSED":
+      return options.sandboxPassphraseAvailable;
+    case "SECONDARY_PASSPHRASE":
+      return hasUsableSandboxPassphrase(options.secondaryPassphrase);
+    case "DEVICE_KEY":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isExcelFile(p: string): boolean {
+  const lower = p.toLowerCase();
+  return (
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".xlsm") ||
+    lower.endsWith(".csv")
+  );
+}
+
+export default function ExcelMaskingDialog({
+  open,
+  onOpenChange,
+  filePaths = [],
+  files,
+  onCancel,
+  onConfirm,
+  defaultPassphrase = "",
+  defaultOutputDir,
+  onParseStructure,
+  onPreviewMasking,
+}: ExcelMaskingDialogProps) {
+  const excelFiles = useMemo(
+    () => (files ?? []).filter((file) => isExcelFile(file.name)),
+    [files]
+  );
+  const excelPaths = useMemo(
+    () => filePaths.filter(isExcelFile),
+    [filePaths]
+  );
+
+  const excelIdentifiers = useMemo(
+    () =>
+      excelFiles.length > 0
+        ? excelFiles.map((file) => file.name)
+        : excelPaths,
+    [excelFiles, excelPaths]
+  );
+  const primaryFile = excelFiles[0] ?? null;
+  const primaryPath = excelPaths[0] ?? "";
+  const { privacy } = useExcelMaskingStore();
+
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-2/AC-3): only a
+  // non-blank shared sandbox default encryption passphrase (fileStore
+  // .passphrase, passed in as `defaultPassphrase`) may back the reuse mode.
+  const sandboxPassphraseAvailable = hasUsableSandboxPassphrase(
+    defaultPassphrase
+  );
+
+  const [activeTab, setActiveTab] = useState("retain");
+  const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [sheets, setSheets] = useState<SheetDef[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string>("");
+
+  const [retainChecked, setRetainChecked] = useState(
+    privacy.excelDefaultRetainEncryptedSource
+  );
+  const [keyMode, setKeyMode] = useState<EncSourceKeyMode>(() =>
+    initialKeyModeForSandboxPassphrase(defaultPassphrase)
+  );
+  const [secondaryPassphrase, setSecondaryPassphrase] = useState(
+    defaultPassphrase
+  );
+
+  // AC-14: leaving SECONDARY_PASSPHRASE must clear the in-memory secondary
+  // passphrase immediately, not just hide the field — switching back to
+  // SECONDARY_PASSPHRASE later must start from empty, never re-surface the
+  // value typed in a previous visit to this mode.
+  const handleKeyModeChange = useCallback((mode: EncSourceKeyMode) => {
+    setKeyMode(mode);
+    setSecondaryPassphrase((prev) => nextSecondaryPassphraseForKeyMode(mode, prev));
+  }, []);
+
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-3/AC-5): on open,
+  // or whenever the default encryption passphrase becomes unavailable while
+  // the dialog is open, a stale reuse-mode selection must not survive — the
+  // mode falls back to the independent secondary passphrase automatically
+  // (and the stale in-memory secondary value is reset). When a passphrase
+  // becomes available again the user's current choice is never overridden.
+  useEffect(() => {
+    const next = nextKeyModeForSandboxAvailability(
+      open,
+      sandboxPassphraseAvailable,
+      keyMode
+    );
+    if (next.keyMode !== keyMode) {
+      setKeyMode(next.keyMode);
+    }
+    if (next.resetSecondaryPassphrase) {
+      setSecondaryPassphrase("");
+    }
+  }, [open, sandboxPassphraseAvailable, keyMode]);
+
+  const [columnRules, setColumnRules] = useState<ColumnMaskRule[]>([]);
+  const [cellOverrides, setCellOverrides] = useState<CellOverrideRule[]>([]);
+
+  const [overrideCellInput, setOverrideCellInput] = useState("");
+  const [overrideStrategy, setOverrideStrategy] =
+    useState<MaskingStrategyId>("FULL_MASK");
+  const [overrideReplacement, setOverrideReplacement] = useState("");
+
+  const [preview, setPreview] = useState<ExcelMaskPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  // R-closeout (工作包 D): 固定安全 preview error 状态。预览失败不再静默
+  // 吞掉，而是展示分类后的固定安全文案（不包含路径/口令/堆栈/密文）。
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [confirmSecondCheck, setConfirmSecondCheck] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadingProgress(10);
+    setPreviewError(null);
+    const load = primaryFile
+      ? (onParseStructure
+          ? onParseStructure(primaryFile)
+          : Promise.reject(new Error("Browser parse adapter missing")))
+      : primaryPath
+        ? tauriCommands.excelParseStructure(primaryPath)
+        : Promise.resolve([]);
+    load
+      .then((defs) => {
+        if (cancelled) return;
+        setSheets(defs);
+        setSelectedSheet(defs[0]?.name ?? "");
+        setLoadingProgress(100);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSheets([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, primaryFile, primaryPath, onParseStructure]);
+
+  useEffect(() => {
+    if (!open) return;
+    setRetainChecked(Boolean(privacy.excelDefaultRetainEncryptedSource));
+  }, [open, privacy.excelDefaultRetainEncryptedSource]);
+
+  const currentSheetDef = useMemo(
+    () => sheets.find((s) => s.name === selectedSheet),
+    [sheets, selectedSheet]
+  );
+
+  const resolvedColumnSamples = useMemo<(string[] | undefined)[]>(() => {
+    if (!currentSheetDef) return [];
+    const { headers, column_samples, data_hint } = currentSheetDef;
+    const width = headers.length;
+    if (
+      Array.isArray(column_samples) &&
+      column_samples.length === width &&
+      column_samples.every(Array.isArray)
+    ) {
+      return column_samples;
+    }
+    if (Array.isArray(data_hint) && data_hint.length > 0) {
+      const perCol: string[][] = [];
+      for (let c = 0; c < width; c += 1) {
+        const values: string[] = [];
+        for (const rowBlob of data_hint.slice(0, 5)) {
+          const cells: string[] =
+            typeof rowBlob === "string" && rowBlob.includes(" | ")
+              ? rowBlob.split(" | ")
+              : [typeof rowBlob === "string" ? rowBlob : ""];
+          const v = cells[c] ?? "";
+          if (typeof v === "string" && v.trim().length > 0) values.push(v);
+        }
+        perCol.push(values);
+      }
+      return perCol;
+    }
+    return new Array(width).fill(undefined);
+  }, [currentSheetDef]);
+
+  const checkedColIndices = useMemo(() => {
+    return new Set(
+      columnRules
+        .filter((r) => r.sheet === selectedSheet)
+        .map((r) => r.colIndex)
+    );
+  }, [columnRules, selectedSheet]);
+
+  const rulesCount = useMemo(() => {
+    return columnRules.length + cellOverrides.length;
+  }, [columnRules, cellOverrides]);
+
+  // TASK-EXCEL-SANDBOX-PASSPHRASE-CLIENT-CLOSEOUT-001 (AC-4): besides the
+  // rule/final-check requirements, the selected key mode must currently have
+  // its key material — a blank secondary passphrase (or an unavailable reuse
+  // mode) disables the confirm button so a blank-passphrase run is blocked on
+  // the frontend instead of failing at the Rust write stage.
+  const canConfirm =
+    canConfirmExcelMasking(rulesCount, confirmSecondCheck) &&
+    isKeyModeReadyForConfirm(keyMode, {
+      sandboxPassphraseAvailable,
+      secondaryPassphrase,
+    });
+
+  const toggleColumnChecked = useCallback(
+    (colIndex: number, headerText: string) => {
+      setColumnRules((prev) => {
+        const existing = prev.find(
+          (r) => r.sheet === selectedSheet && r.colIndex === colIndex
+        );
+        if (existing) {
+          return prev.filter((r) => r !== existing);
+        }
+        return [
+          ...prev,
+          {
+            sheet: selectedSheet,
+            colIndex,
+            headerText,
+            strategy: "FULL_MASK" as MaskingStrategyId,
+          },
+        ];
+      });
+    },
+    [selectedSheet]
+  );
+
+  const updateColumnRule = useCallback(
+    (
+      colIndex: number,
+      patch: Partial<Pick<ColumnMaskRule, "strategy" | "replacement">>
+    ) => {
+      setColumnRules((prev) =>
+        prev.map((r) =>
+          r.sheet === selectedSheet && r.colIndex === colIndex
+            ? { ...r, ...patch }
+            : r
+        )
+      );
+    },
+    [selectedSheet]
+  );
+
+  // A fixed, safe (no internal parser detail/path/stack trace) error shown
+  // while the cell-reference input is non-empty but fails to parse; clears
+  // automatically once the input is empty or corrected to a valid reference.
+  const cellInputError = useMemo(() => {
+    return cellRangeValidationError(overrideCellInput, selectedSheet);
+  }, [overrideCellInput, selectedSheet]);
+
+  const addCellOverride = useCallback(() => {
+    const parsed = parseCellRange(overrideCellInput, selectedSheet);
+    if (!parsed) return;
+    setCellOverrides((prev) =>
+      mergeCellOverrides(prev, parsed, overrideStrategy, overrideReplacement)
+    );
+    setOverrideCellInput("");
+    setOverrideReplacement("");
+  }, [overrideCellInput, overrideStrategy, overrideReplacement, selectedSheet]);
+
+  const removeCellOverride = useCallback((idx: number) => {
+    setCellOverrides((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const conflictCells = useMemo(() => {
+    const set = new Set<string>();
+    for (const cr of columnRules) {
+      set.add(`${cr.sheet}::col:${cr.colIndex}`);
+    }
+    const result = new Set<string>();
+    for (const co of cellOverrides) {
+      if (set.has(`${co.sheet}::col:${co.col}`)) {
+        result.add(`${co.sheet}!${co.row}:${co.col}`);
+      }
+    }
+    return result;
+  }, [columnRules, cellOverrides]);
+
+  const buildConfigs = useCallback((): ExcelMaskingConfig[] => {
+    const policies = sheets.map((s) => {
+      return {
+        sheet: s.name,
+        column_rules: columnRules.filter((r) => r.sheet === s.name),
+        cell_overrides: cellOverrides.filter((o) => o.sheet === s.name),
+      };
+    });
+
+    return excelIdentifiers.map((fp) => ({
+      file_path: fp,
+      sheet_policies: policies,
+      retain_encrypted_source: retainChecked,
+      key_mode: keyMode,
+      secondary_passphrase:
+        keyMode === "SECONDARY_PASSPHRASE" ? secondaryPassphrase : undefined,
+    }));
+  }, [
+    sheets,
+    columnRules,
+    cellOverrides,
+    excelIdentifiers,
+    retainChecked,
+    keyMode,
+    secondaryPassphrase,
+  ]);
+
+  // Guards against a fast repeated refresh where an earlier (slower) preview
+  // request resolves after a newer one and clobbers it with stale data: each
+  // call claims the next id, and a response is only applied if its id is
+  // still the most recently issued one by the time it resolves.
+  const previewRequestIdRef = useRef(0);
+
+  const loadPreview = useCallback(async () => {
+    if (!primaryFile && !primaryPath) return;
+    const requestId = ++previewRequestIdRef.current;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const config: ExcelMaskingConfig = buildConfigs()[0] ?? {
+        file_path: primaryFile?.name ?? primaryPath,
+        sheet_policies: [],
+        retain_encrypted_source: retainChecked,
+        key_mode: keyMode,
+        secondary_passphrase:
+          keyMode === "SECONDARY_PASSPHRASE" ? secondaryPassphrase : undefined,
+      };
+      const res = primaryFile
+        ? onPreviewMasking
+          ? await onPreviewMasking(primaryFile, config, 20)
+          : null
+        : await tauriCommands.excelPreviewMasking(config, 20, defaultPassphrase);
+      if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
+      setPreview(res);
+    } catch (error) {
+      if (isStalePreviewResponse(requestId, previewRequestIdRef.current)) return;
+      setPreview(null);
+      // R-closeout (工作包 D): 首个失败层（预览加载）的最小修复——不再静默
+      // 吞错，展示分类后的固定安全文案。
+      setPreviewError(excelPreviewFailureMessage(error));
+    } finally {
+      if (!isStalePreviewResponse(requestId, previewRequestIdRef.current)) {
+        setPreviewLoading(false);
+      }
+    }
+  }, [
+    primaryFile,
+    primaryPath,
+    retainChecked,
+    keyMode,
+    secondaryPassphrase,
+    onPreviewMasking,
+    defaultPassphrase,
+    buildConfigs,
+  ]);
+
+  const handleConfirm = useCallback(async () => {
+    if (!canConfirm) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const configs = buildConfigs();
+      await onConfirm(configs, defaultOutputDir);
+    } catch (error) {
+      setSubmitError(
+        normalizeCaughtRuntimeErrorMessage(error, "Excel 脱敏执行失败，请稍后重试。")
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [canConfirm, buildConfigs, onConfirm, defaultOutputDir]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Shield className="w-5 h-5 text-blue-500" />
+            Excel 脱敏配置
+            {excelIdentifiers.length > 1 && (
+              <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                批量 {excelIdentifiers.length} 个文件
+              </span>
+            )}
+          </DialogTitle>
+          <DialogDescription>
+            配置列策略、单元格覆盖规则和加密源选项；当前以第一个文件预览结构，批量文件应用同一套规则。
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="py-12 px-6 space-y-4">
+            <Progress value={loadingProgress} />
+            <p className="text-xs text-gray-500 text-center">
+              正在解析 Excel 结构...
+            </p>
+          </div>
+        ) : (
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="flex-1 flex flex-col overflow-hidden"
+          >
+            <TabsList className="mx-6 shrink-0">
+              <TabsTrigger value="retain">加密源 &amp; 密钥</TabsTrigger>
+              <TabsTrigger value="columns">列策略</TabsTrigger>
+              <TabsTrigger value="cells">单元格覆盖</TabsTrigger>
+              <TabsTrigger value="preview">预览 &amp; 应用</TabsTrigger>
+            </TabsList>
+
+            <div className="flex-1 overflow-auto px-6 py-2">
+              <TabsContent value="retain" className="mt-0 h-full">
+                <EncRetainTab
+                  retainChecked={retainChecked}
+                  onRetainChange={setRetainChecked}
+                  keyMode={keyMode}
+                  onKeyModeChange={handleKeyModeChange}
+                  sandboxPassphraseAvailable={sandboxPassphraseAvailable}
+                  secondaryPassphrase={secondaryPassphrase}
+                  onSecondaryPassphraseChange={setSecondaryPassphrase}
+                />
+              </TabsContent>
+
+              <TabsContent value="columns" className="mt-0 h-full">
+                <ColumnMaskTab
+                  sheets={sheets}
+                  selectedSheet={selectedSheet}
+                  onSelectedSheetChange={setSelectedSheet}
+                  currentSheetDef={currentSheetDef}
+                  resolvedColumnSamples={resolvedColumnSamples}
+                  checkedColIndices={checkedColIndices}
+                  onToggleColumnChecked={toggleColumnChecked}
+                  columnRules={columnRules.filter(
+                    (r) => r.sheet === selectedSheet
+                  )}
+                  onUpdateColumnRule={updateColumnRule}
+                />
+              </TabsContent>
+
+              <TabsContent value="cells" className="mt-0 h-full">
+                <CellOverrideTab
+                  overrideCellInput={overrideCellInput}
+                  onOverrideCellInputChange={setOverrideCellInput}
+                  overrideStrategy={overrideStrategy}
+                  onOverrideStrategyChange={setOverrideStrategy}
+                  overrideReplacement={overrideReplacement}
+                  onOverrideReplacementChange={setOverrideReplacement}
+                  onAdd={addCellOverride}
+                  cellOverrides={cellOverrides}
+                  onRemove={removeCellOverride}
+                  conflictCells={conflictCells}
+                  cellInputError={cellInputError}
+                />
+              </TabsContent>
+
+              <TabsContent value="preview" className="mt-0 h-full">
+                <PreviewTab
+                  preview={preview}
+                  previewLoading={previewLoading}
+                  previewError={previewError}
+                  onReload={loadPreview}
+                  rulesCount={rulesCount}
+                  canConfirmBase={hasAnyExcelMaskingRule(rulesCount)}
+                  confirmSecondCheck={confirmSecondCheck}
+                  onConfirmSecondCheckChange={setConfirmSecondCheck}
+                />
+              </TabsContent>
+            </div>
+          </Tabs>
+        )}
+
+        {submitError && (
+          <div className="px-6">
+            <Alert variant="default" className="border-red-200 bg-red-50">
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+              <AlertTitle className="text-red-800">执行失败</AlertTitle>
+              <AlertDescription className="text-red-700 text-sm">
+                {submitError}
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
+        <DialogFooter className="shrink-0 gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={submitting}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              void handleConfirm();
+            }}
+            disabled={!canConfirm || loading || submitting}
+          >
+            <Check className="w-4 h-4 mr-1" />
+            {submitting ? "处理中..." : "应用并脱敏"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface EncRetainTabProps {
+  retainChecked: boolean;
+  onRetainChange: (v: boolean) => void;
+  keyMode: EncSourceKeyMode;
+  onKeyModeChange: (v: EncSourceKeyMode) => void;
+  sandboxPassphraseAvailable: boolean;
+  secondaryPassphrase: string;
+  onSecondaryPassphraseChange: (v: string) => void;
+}
+
+function EncRetainTab({
+  retainChecked,
+  onRetainChange,
+  keyMode,
+  onKeyModeChange,
+  sandboxPassphraseAvailable,
+  secondaryPassphrase,
+  onSecondaryPassphraseChange,
+}: EncRetainTabProps) {
+  return (
+    <div className="space-y-5">
+      <Alert variant="default" className="bg-blue-50 border-blue-200">
+        <Info className="w-4 h-4 text-blue-600" />
+        <AlertTitle className="text-blue-800">关于保留加密源</AlertTitle>
+        <AlertDescription className="text-blue-700 text-sm leading-6">
+          {RETAIN_MESSAGES.tab0}
+        </AlertDescription>
+      </Alert>
+
+      <Card>
+        <CardContent className="pt-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <input
+              id="retain-enc-source"
+              type="checkbox"
+              checked={retainChecked}
+              onChange={(e) => onRetainChange(e.target.checked)}
+              className="mt-1.5 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <Label
+              htmlFor="retain-enc-source"
+              className="text-sm leading-6 cursor-pointer"
+            >
+              <span className="font-medium">保留加密源（.encrypted_src）</span>
+              <span className="block text-xs text-gray-500 mt-1">
+                勾选后额外生成加密源文件，可启用路径 A 自动反脱敏；不勾选也可正常完成脱敏，仅路径 A 不可用——仍可通过路径 B（用户原件 SHA-256 与 .ecmap header 完全匹配）反脱敏。
+              </span>
+            </Label>
+          </div>
+
+          <div className="border-t pt-4 space-y-3">
+            <Label className="text-sm font-medium flex items-center gap-1.5">
+              <Key className="w-4 h-4" />
+              密钥派生模式
+            </Label>
+
+            <div className="space-y-2">
+              <label
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border p-3 transition-colors",
+                  sandboxPassphraseAvailable ? "cursor-pointer" : "cursor-not-allowed",
+                  keyMode === "SANDBOX_REUSED"
+                    ? "border-blue-400 bg-blue-50"
+                    : sandboxPassphraseAvailable
+                      ? "border-gray-200 hover:bg-gray-50"
+                      : "border-gray-200"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="key-mode"
+                  checked={keyMode === "SANDBOX_REUSED"}
+                  onChange={() => onKeyModeChange("SANDBOX_REUSED")}
+                  disabled={!sandboxPassphraseAvailable}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">复用沙箱口令（推荐）</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    直接使用「沙箱管理」中设置的默认加密口令加密映射文件，减少记忆负担。
+                  </div>
+                  {!sandboxPassphraseAvailable && (
+                    <p
+                      role="note"
+                      className="mt-1.5 rounded border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-700"
+                    >
+                      {SANDBOX_PASSPHRASE_UNAVAILABLE_HINT}
+                    </p>
+                  )}
+                </div>
+              </label>
+
+              <label
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors",
+                  keyMode === "SECONDARY_PASSPHRASE"
+                    ? "border-blue-400 bg-blue-50"
+                    : "border-gray-200 hover:bg-gray-50"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="key-mode"
+                  checked={keyMode === "SECONDARY_PASSPHRASE"}
+                  onChange={() => onKeyModeChange("SECONDARY_PASSPHRASE")}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 space-y-2">
+                  <div className="text-sm font-medium">独立二级口令</div>
+                  <div className="text-xs text-gray-500">
+                    ecmap 和 encrypted_source 使用独立口令，跨用户分享时更安全。
+                  </div>
+                  {keyMode === "SECONDARY_PASSPHRASE" && (
+                    <PassphraseBox
+                      value={secondaryPassphrase}
+                      onChange={onSecondaryPassphraseChange}
+                      label="二级口令"
+                    />
+                  )}
+                  {keyMode === "SECONDARY_PASSPHRASE" &&
+                    secondaryPassphrase.trim().length === 0 && (
+                      <p
+                        role="note"
+                        className="text-xs text-amber-700"
+                      >
+                        独立二级口令不能为空或纯空白，填写后才能应用脱敏。
+                      </p>
+                    )}
+                </div>
+              </label>
+
+              <label
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors",
+                  keyMode === "DEVICE_KEY"
+                    ? "border-blue-400 bg-blue-50"
+                    : "border-gray-200 hover:bg-gray-50"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="key-mode"
+                  checked={keyMode === "DEVICE_KEY"}
+                  onChange={() => onKeyModeChange("DEVICE_KEY")}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">设备绑定密钥</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    与本机硬件指纹绑定，跨设备反脱敏会直接失败，适用单机严格场景。
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+interface ColumnMaskTabProps {
+  sheets: SheetDef[];
+  selectedSheet: string;
+  onSelectedSheetChange: (n: string) => void;
+  currentSheetDef: SheetDef | undefined;
+  resolvedColumnSamples: (string[] | undefined)[];
+  checkedColIndices: Set<number>;
+  onToggleColumnChecked: (colIndex: number, headerText: string) => void;
+  columnRules: ColumnMaskRule[];
+  onUpdateColumnRule: (
+    colIndex: number,
+    patch: Partial<Pick<ColumnMaskRule, "strategy" | "replacement">>
+  ) => void;
+}
+
+function ColumnMaskTab({
+  sheets,
+  selectedSheet,
+  onSelectedSheetChange,
+  currentSheetDef,
+  resolvedColumnSamples,
+  checkedColIndices,
+  onToggleColumnChecked,
+  columnRules,
+  onUpdateColumnRule,
+}: ColumnMaskTabProps) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Label className="text-sm font-medium">Sheet 选择</Label>
+        <Select value={selectedSheet} onValueChange={onSelectedSheetChange}>
+          <SelectTrigger className="w-56">
+            <Table2 className="w-4 h-4 mr-2 opacity-60" />
+            <SelectValue placeholder="选择 Sheet" />
+          </SelectTrigger>
+          <SelectContent>
+            {sheets.map((s) => (
+              <SelectItem key={s.name} value={s.name}>
+                {s.name}（{s.max_row} 行 / {s.max_col} 列）
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {!currentSheetDef ? (
+        <Alert>
+          <AlertTriangle className="w-4 h-4" />
+          <AlertTitle>没有可用的 Sheet</AlertTitle>
+          <AlertDescription>
+            当前文件结构未成功解析，请关闭对话框后重试。
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader className="bg-gray-50">
+              <TableRow>
+                <TableHead className="w-12 text-center">脱敏</TableHead>
+                <TableHead className="w-24">列号</TableHead>
+                <TableHead>表头</TableHead>
+                <TableHead className="w-48">示例值</TableHead>
+                <TableHead className="w-64">脱敏策略</TableHead>
+                <TableHead className="w-44">替换默认值</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {currentSheetDef.headers.map((header, idx) => {
+                const checked = checkedColIndices.has(idx);
+                const rule = columnRules.find((r) => r.colIndex === idx);
+                const strategy = rule?.strategy ?? "FULL_MASK";
+                const isPlaceholder = PLACEHOLDER_STRATEGIES.includes(strategy);
+                return (
+                  <TableRow key={idx}>
+                    <TableCell className="text-center">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleColumnChecked(idx, header)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                    </TableCell>
+                    <TableCell className="text-xs text-gray-500 font-mono">
+                      {String.fromCharCode(65 + idx)}
+                    </TableCell>
+                    <TableCell className="font-medium text-sm">
+                      {header || <span className="text-gray-400">(空)</span>}
+                    </TableCell>
+                    <TableCell className="text-xs text-gray-500 max-w-xs">
+                      {(() => {
+                        const samples = resolvedColumnSamples[idx] ?? [];
+                        const nonEmpty = samples.filter((s) => s && s.trim().length > 0);
+                        if (nonEmpty.length === 0) return "—";
+                        const displayed = nonEmpty.slice(0, 3);
+                        const suffix = nonEmpty.length > 3 ? ` 等 ${nonEmpty.length} 个` : "";
+                        return (
+                          <div className="space-y-0.5 leading-tight">
+                            {displayed.map((sample, i) => (
+                              <div key={i} className="truncate">
+                                {sample}
+                              </div>
+                            ))}
+                            {suffix && (
+                              <div className="text-[10px] text-gray-400">{suffix}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        disabled={!checked}
+                        value={strategy}
+                        onValueChange={(v) => {
+                          const nextStrategy = v as MaskingStrategyId;
+                          if (!isSelectableMaskingStrategy(nextStrategy)) return;
+                          onUpdateColumnRule(idx, {
+                            strategy: nextStrategy,
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ACTIVE_STRATEGIES.map((sid) => (
+                            <SelectItem key={sid} value={sid}>
+                              {STRATEGY_LABELS[sid]}
+                            </SelectItem>
+                          ))}
+                          <div className="px-2 py-1 text-[11px] text-gray-400">
+                            ——— DSG 预留占位 ———
+                          </div>
+                          {PLACEHOLDER_STRATEGIES.map((sid) => {
+                            const optionState = getMaskingStrategyOptionState(sid);
+                            return (
+                              <SelectItem
+                                key={sid}
+                                value={sid}
+                                disabled={optionState.disabled}
+                                className={optionState.className}
+                              >
+                                {STRATEGY_LABELS[sid]}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      {checked && isPlaceholder && (
+                        <p className="mt-1 text-[11px] text-amber-600">
+                          预留占位策略：当前按 DEFAULT_VALUE 或 CLEAR 降级处理
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        disabled={!checked}
+                        value={rule?.replacement ?? ""}
+                        onChange={(e) =>
+                          onUpdateColumnRule(idx, {
+                            replacement: e.target.value || undefined,
+                          })
+                        }
+                        placeholder="策略需要时填入"
+                        className="h-8 text-xs"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface CellOverrideTabProps {
+  overrideCellInput: string;
+  onOverrideCellInputChange: (v: string) => void;
+  overrideStrategy: MaskingStrategyId;
+  onOverrideStrategyChange: (v: MaskingStrategyId) => void;
+  overrideReplacement: string;
+  onOverrideReplacementChange: (v: string) => void;
+  onAdd: () => void;
+  cellOverrides: CellOverrideRule[];
+  onRemove: (idx: number) => void;
+  conflictCells: Set<string>;
+  cellInputError: string | null;
+}
+
+function CellOverrideTab({
+  overrideCellInput,
+  onOverrideCellInputChange,
+  overrideStrategy,
+  onOverrideStrategyChange,
+  overrideReplacement,
+  onOverrideReplacementChange,
+  onAdd,
+  cellOverrides,
+  onRemove,
+  conflictCells,
+  cellInputError,
+}: CellOverrideTabProps) {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="pt-5 space-y-3">
+          <Label className="text-sm font-medium flex items-center gap-1.5">
+            <Grid3X3 className="w-4 h-4" />
+            新增单元格覆盖（支持 A1 或 Sheet1!A1:B3）
+          </Label>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="md:col-span-4">
+              <Input
+                value={overrideCellInput}
+                onChange={(e) => onOverrideCellInputChange(e.target.value)}
+                placeholder="例：Sheet1!A2 或 B3:D5"
+                aria-invalid={cellInputError ? true : undefined}
+                className={
+                  cellInputError
+                    ? "border-red-500 focus-visible:ring-red-500"
+                    : undefined
+                }
+              />
+            </div>
+            <div className="md:col-span-4">
+              <Select
+                value={overrideStrategy}
+                onValueChange={(v) =>
+                  onOverrideStrategyChange(v as MaskingStrategyId)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACTIVE_STRATEGIES.map((sid) => (
+                    <SelectItem key={sid} value={sid}>
+                      {STRATEGY_LABELS[sid]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-3">
+              <Input
+                value={overrideReplacement}
+                onChange={(e) => onOverrideReplacementChange(e.target.value)}
+                placeholder="替换默认值（可选）"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <Button
+                onClick={onAdd}
+                className="w-full"
+                disabled={Boolean(cellInputError)}
+              >
+                <Sparkles className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+          {cellInputError && (
+            <p className="text-sm text-red-600" role="alert">
+              {cellInputError}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {conflictCells.size > 0 && (
+        <Alert variant="default" className="bg-amber-50 border-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-600" />
+          <AlertTitle className="text-amber-800">检测到冲突</AlertTitle>
+          <AlertDescription className="text-amber-700 text-xs">
+            以下单元格同时被列策略与单元格覆盖命中：
+            <span className="font-mono ml-1">
+              {[...conflictCells].join("、")}
+            </span>
+            。单元格覆盖优先级更高。
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {cellOverrides.length === 0 ? (
+        <div className="text-sm text-gray-400 text-center py-8">
+          暂无单元格覆盖规则
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader className="bg-gray-50">
+              <TableRow>
+                <TableHead>位置</TableHead>
+                <TableHead>策略</TableHead>
+                <TableHead>替换值</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {cellOverrides.map((o, idx) => {
+                const colLetter = String.fromCharCode(65 + o.col);
+                const key = `${o.sheet}!${o.row}:${o.col}`;
+                const conflict = conflictCells.has(key);
+                return (
+                  <TableRow
+                    key={idx}
+                    className={conflict ? "bg-amber-50" : undefined}
+                  >
+                    <TableCell>
+                      <span className="font-mono text-xs">
+                        {o.sheet}!{colLetter}
+                        {o.row + 1}
+                      </span>
+                      {conflict && (
+                        <span className="ml-2 text-[10px] text-amber-600">
+                          冲突
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {STRATEGY_LABELS[o.strategy]}
+                    </TableCell>
+                    <TableCell className="text-xs text-gray-600">
+                      {o.replacement ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => onRemove(idx)}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface PreviewTabProps {
+  preview: ExcelMaskPreview | null;
+  previewLoading: boolean;
+  previewError: string | null;
+  onReload: () => void;
+  rulesCount: number;
+  canConfirmBase: boolean;
+  confirmSecondCheck: boolean;
+  onConfirmSecondCheckChange: (v: boolean) => void;
+}
+
+function PreviewTab({
+  preview,
+  previewLoading,
+  previewError,
+  onReload,
+  rulesCount,
+  canConfirmBase,
+  confirmSecondCheck,
+  onConfirmSecondCheckChange,
+}: PreviewTabProps) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-gray-600">
+          当前共 <b>{rulesCount}</b> 条规则；仅展示前 20 行差异作为预览。
+        </div>
+        <Button size="sm" variant="outline" onClick={onReload}>
+          <RefreshCw
+            className={cn("w-4 h-4 mr-1", previewLoading && "animate-spin")}
+          />
+          刷新预览
+        </Button>
+      </div>
+
+      {previewError && !previewLoading && (
+        <Alert variant="default" className="border-red-200 bg-red-50">
+          <AlertTriangle className="w-4 h-4 text-red-600" />
+          <AlertTitle className="text-red-800">预览失败</AlertTitle>
+          <AlertDescription className="text-red-700 text-sm">
+            {previewError}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {!canConfirmBase && (
+        <Alert variant="default" className="bg-amber-50 border-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-600" />
+          <AlertTitle className="text-amber-800">还不能应用</AlertTitle>
+          <AlertDescription className="text-amber-700 text-sm">
+            请先至少添加 1 条列策略或单元格覆盖规则；是否保留加密源不影响本次脱敏是否可执行。
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {canConfirmBase && (
+        <Card>
+          <CardContent className="pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmSecondCheck}
+                onChange={(e) =>
+                  onConfirmSecondCheckChange(e.target.checked)
+                }
+                className="mt-1 w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+              />
+              <div className="text-sm leading-6">
+                <div className="font-medium text-amber-800">
+                  最终确认：我已知晓三提示并同意执行
+                </div>
+                <div className="text-xs text-amber-700 mt-0.5">
+                  {RETAIN_MESSAGES.confirm}
+                </div>
+              </div>
+            </label>
+          </CardContent>
+        </Card>
+      )}
+
+      {previewLoading ? (
+        <div className="py-10 text-center text-sm text-gray-500">
+          正在生成预览...
+        </div>
+      ) : !preview ? (
+        <div className="py-10 text-center text-sm text-gray-400 border border-dashed rounded-lg">
+          点击上方「刷新预览」查看前 20 行脱敏效果
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {preview.conflicts.length > 0 && (
+            <Alert variant="default" className="bg-amber-50 border-amber-200">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              <AlertTitle className="text-amber-800">
+                预览提示（{preview.conflicts.length}）
+              </AlertTitle>
+              <AlertDescription className="text-amber-700 text-xs">
+                {preview.conflicts.slice(0, 5).join("；")}
+                {preview.conflicts.length > 5 &&
+                  ` 等 ${preview.conflicts.length} 项`}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="border rounded-lg overflow-hidden max-h-[50vh] overflow-auto">
+            <Table>
+              <TableHeader className="bg-gray-50 sticky top-0">
+                <TableRow>
+                  <TableHead className="w-16 text-xs">行#</TableHead>
+                  <TableHead className="w-24 text-xs">Sheet</TableHead>
+                  <TableHead className="text-xs">原值（前 5 列抽样）</TableHead>
+                  <TableHead className="text-xs">脱敏后</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {preview.preview_rows.map((row, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="text-xs text-gray-500 font-mono">
+                      {row.row_index}
+                    </TableCell>
+                    <TableCell className="text-xs text-gray-500">
+                      {row.sheet}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="flex flex-wrap gap-1">
+                        {row.original_preview.slice(0, 5).map((v, i) => (
+                          <span
+                            key={i}
+                            className="inline-block px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded truncate max-w-[140px]"
+                          >
+                            {v ?? "∅"}
+                          </span>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="flex flex-wrap gap-1">
+                        {row.masked.slice(0, 5).map((v, i) => {
+                          const orig = row.original_preview[i];
+                          const changed = v !== orig;
+                          return (
+                            <span
+                              key={i}
+                              className={cn(
+                                "inline-block px-1.5 py-0.5 rounded truncate max-w-[140px]",
+                                changed
+                                  ? "bg-red-50 text-red-700 font-semibold border border-red-200"
+                                  : "bg-gray-50 text-gray-500"
+                              )}
+                            >
+                              {v}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

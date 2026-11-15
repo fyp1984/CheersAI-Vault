@@ -1,7 +1,6 @@
 /// 从 Desktop 在线工作区的 WebView 中提取配置
-/// 
+///
 /// 通过执行 JavaScript 代码从 Desktop 页面中提取当前用户的配置信息
-
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -17,9 +16,9 @@ pub struct ExtractedConfig {
 /// 从 Desktop WebView 中提取配置
 #[tauri::command]
 pub async fn extract_config_from_desktop_webview(app: AppHandle) -> Result<String, String> {
-
     // 查找 Desktop 子 webview（使用 get_webview 而不是 get_webview_window）
-    let webview = app.get_webview("desktop_child")
+    let webview = app
+        .get_webview("desktop_child")
         .ok_or_else(|| "Desktop 窗口未打开，请先打开 CheersAI 页面".to_string())?;
 
     // 注入 JavaScript 代码，让它通过 Tauri 事件发送配置
@@ -111,27 +110,25 @@ pub async fn extract_config_from_desktop_webview(app: AppHandle) -> Result<Strin
     "#;
 
     // 执行 JavaScript
-    webview.eval(js_code)
+    webview
+        .eval(js_code)
         .map_err(|e| format!("执行 JavaScript 失败: {}", e))?;
-    
+
     Ok("配置提取脚本已注入，正在从 Desktop 页面提取配置...".to_string())
 }
 
 /// 从 Desktop WebView 中执行 JavaScript 并获取结果
 #[tauri::command]
-pub async fn eval_js_in_desktop_webview(
-    app: AppHandle,
-    js_code: String,
-) -> Result<String, String> {
-
+pub async fn eval_js_in_desktop_webview(app: AppHandle, js_code: String) -> Result<String, String> {
     // 查找 Desktop 子 webview（使用 get_webview 而不是 get_webview_window）
-    let webview = app.get_webview("desktop_child")
+    let webview = app
+        .get_webview("desktop_child")
         .ok_or_else(|| "Desktop 窗口未打开，请先打开 CheersAI 页面".to_string())?;
 
-
     // 执行 JavaScript
-    webview.eval(&js_code)
+    webview
+        .eval(&js_code)
         .map_err(|e| format!("执行 JavaScript 失败: {}", e))?;
-    
+
     Ok("JavaScript 已执行，请在 Desktop 页面的控制台查看结果".to_string())
 }
